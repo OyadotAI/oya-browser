@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { BrowserWindow, BrowserView, session } = require('electron');
 const { ShareSheet } = require('../../src/main/screen-share/window.ts');
-const { ScreenPicker } = require('../../src/main/screen-share/index.ts');
+const { ScreenPicker, ShareIndicator } = require('../../src/main/screen-share/index.ts');
 
 /** Bounded observation of native windows and rendered controls. */
 async function until(read) {
@@ -186,4 +186,31 @@ async function brokenPreviews(deps, page) {
   assert.equal(await picker.result, null);
 }
 
-module.exports = { installPicker, categories, captureChecks, permissionRecovery, brokenPreviews };
+/** How soon the ring must clear after the call stops sharing: two polls. */
+const SHARE_END_MS = 2000;
+
+/** Until `read` is true or `ms` pass; whether it became true. */
+async function within(ms, read) {
+  for (const end = Date.now() + ms; Date.now() < end; await new Promise((resolve) => setTimeout(resolve, 50)))
+    if (read()) return true;
+  return read();
+}
+
+/** A real tab share is tracked while live, and Electron's capture count ending it is what clears the ring. */
+async function sharingChecks(deps, window) {
+  deps.tabs.sendTabList = () => {};
+  deps.shell.send = () => {};
+  deps.shareIndicator = new ShareIndicator(deps);
+  const live = window.webContents.executeJavaScript(
+    `navigator.mediaDevices.getDisplayMedia({video:true}).then(s => (window.s = s, 'live'), e => e.name)`,
+    true,
+  );
+  await choose('tab');
+  assert.equal(await live, 'live');
+  assert.equal(deps.shareIndicator.has(1), true, 'the shared tab is tracked');
+  assert.equal(window.webContents.isBeingCaptured(), true, 'a live tab share holds the capture count');
+  await window.webContents.executeJavaScript('window.s.getTracks().forEach((t) => t.stop())');
+  assert.ok(await within(SHARE_END_MS, () => !deps.shareIndicator.has(1)), 'stopping the share clears it');
+}
+
+module.exports = { installPicker, categories, captureChecks, permissionRecovery, brokenPreviews, sharingChecks };

@@ -39,6 +39,19 @@ export interface StartOptions {
    *   <id>     , a specific persona
    */
   persona?: 'default' | 'auto' | (string & {});
+  /**
+   * A persona group to run as instead of one persona: the start runs as one of
+   * the group's personas, the one with the fewest running browsers, then the one
+   * used longest ago, skipping those at their cap. Make groups with
+   * `oya.personaGroups.create`. Not with `persona` or `profile`. When every
+   * member is full, `queueMs` waits on the least busy one.
+   *
+   * Needs Oya server 1.0.205 or later: an older server ignores it and starts as
+   * the default persona.
+   */
+  personaGroup?: string;
+  /** The same as `personaGroup`, matching the `profile` alias of `persona`. */
+  profileGroup?: string;
   /** Solve CAPTCHAs as they appear rather than waiting to be asked. */
   captcha?: 'auto' | 'off';
   /** Override the key's configured provider for this browser only. */

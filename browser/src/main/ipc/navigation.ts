@@ -2,11 +2,13 @@
 import { bookmarksBar, setBookmarksBar } from '../shell/bookmarks-bar.ts';
 import type { AppServices } from '../app/services.ts';
 import type { HandlersOf } from './handle.ts';
-import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary } from '../library/index.ts';
+import { LibraryMenu, addressSuggestions, readLibrary, changeLibrary, runDownloadAction } from '../library/index.ts';
 import { HOME_URL } from '../tabs/constants.ts';
+import { isIncognito } from '../incognito/index.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
 import type { Tab } from '../tabs/types.ts';
+import { zoomShownPage } from '../shell/page-zoom.ts';
 
 /** The services navigation uses. */
 type Deps = Pick<
@@ -26,6 +28,8 @@ type Deps = Pick<
   | 'windows'
   | 'agentTab'
   | 'translation'
+  | 'shareIndicator'
+  | 'findBar'
 >;
 
 /** The channels this group answers. */
@@ -34,9 +38,14 @@ type Channel =
   | 'show-library'
   | 'read-library'
   | 'library-action'
+  | 'download-action'
   | 'bookmarks-bar-state'
   | 'set-bookmarks-bar'
   | 'toggle-bookmark'
+  | 'find-in-page'
+  | 'find-step'
+  | 'close-find'
+  | 'reset-zoom'
   | 'navigate'
   | 'go-back'
   | 'go-forward'
@@ -44,11 +53,13 @@ type Channel =
   | 'enter-browsing'
   | 'new-tab'
   | 'new-window'
+  | 'new-incognito-window'
   | 'detach-tab'
   | 'begin-tab-drag'
   | 'end-tab-drag'
   | 'close-tab'
   | 'activate-tab'
+  | 'go-to-share-call'
   | 'move-tab'
   | 'tab-menu'
   | 'translate-page'
@@ -62,9 +73,14 @@ export class NavigationHandlers {
     'show-library': (_e, kind) => new LibraryMenu(this.deps).show(kind),
     'read-library': (_e, id) => readLibrary(this.deps, id),
     'library-action': (_e, id, action, url) => changeLibrary(this.deps, id, action, url),
+    'download-action': (_e, id, action) => runDownloadAction(this.deps, id, action),
     'bookmarks-bar-state': () => bookmarksBar(this.deps as AppServices),
     'set-bookmarks-bar': (_e, shown) => setBookmarksBar(this.deps as AppServices, shown === true),
     'toggle-bookmark': () => new LibraryMenu(this.deps).toggle(),
+    'find-in-page': (_e, text) => this.deps.findBar.search(text),
+    'find-step': (_e, forward) => this.deps.findBar.step(forward === true),
+    'close-find': () => this.deps.findBar.dismiss(),
+    'reset-zoom': () => zoomShownPage(this.deps, () => 0),
     navigate: (_e, url) => this.navigate(url),
     'go-back': () => this.goInHistory('go_back'),
     'go-forward': () => this.goInHistory('go_forward'),
@@ -72,14 +88,17 @@ export class NavigationHandlers {
     'enter-browsing': () => this.deps.tabs.enterBrowsingMode(HOME_URL),
     'new-tab': (_e, url) => this.newTab(url),
     'new-window': () => this.deps.windows?.newWindow(),
+    'new-incognito-window': () => this.deps.windows?.newIncognitoWindow(),
     'detach-tab': (_e, id) => this.detach(id),
     'begin-tab-drag': (_e, id) => this.deps.windows?.drag.begin(this.deps as AppServices, id),
-    'end-tab-drag': () => this.deps.windows?.drag.stop(this.deps as AppServices),
+    'end-tab-drag': () => this.deps.windows?.drag.drop(),
     'close-tab': (_e, id) => {
       this.deps.agentTab.requireFor(id);
       this.deps.tabs.closeTab(id);
     },
     'activate-tab': (_e, id) => this.deps.tabs.activateTab(id),
+    // No tab id from the shell: main already knows which tab the call is in.
+    'go-to-share-call': () => this.deps.shareIndicator?.goToCall(),
     // A drag on the strip: the main process owns the order, and the strip redraws from it.
     'move-tab': (_e, id, toIndex) => (this.deps.agentTab.requireFor(id), moveTabTo(this.deps.tabs, id, toIndex)),
     'tab-menu': (_e, id) => {
@@ -97,15 +116,12 @@ export class NavigationHandlers {
     this.deps = deps;
   }
 
-  /** The sender can only transfer a tab that still belongs to its own window. */
+  /** A tab let go off the strip: a tear-off under way lands where it was let go; otherwise the sender can only transfer a tab still in its own window. */
   private async detach(id: number): Promise<void> {
     this.deps.agentTab.requireFor(id);
+    if (this.deps.windows?.drag.carrying(id)) return this.deps.windows.drag.drop();
     if (!Number.isSafeInteger(id) || !this.deps.tabs.find(id)) throw new Error('Tab is not in this window');
-    try {
-      await this.deps.windows?.detach(id, this.deps.electron.screen.getCursorScreenPoint());
-    } finally {
-      this.deps.windows?.drag.stop(this.deps as AppServices);
-    }
+    await this.deps.windows?.detach(id, this.deps.electron.screen.getCursorScreenPoint());
   }
 
   /** The person's tab `id` in this window; throws when an agent holds it or it is not here. */
@@ -130,23 +146,23 @@ export class NavigationHandlers {
     await this.deps.tabs.navigateActive(url);
   }
 
-  /** Back or forward in the active tab, recorded as a step when a recording is running. */
+  /** Back or forward in the active tab, recorded as a step when a recording is running (never from incognito). */
   private async goInHistory(action: 'go_back' | 'go_forward'): Promise<void> {
     this.requireShownTab();
     const contents = this.deps.tabs.getActiveView()?.webContents;
     const back = action === 'go_back';
     const history = contents?.navigationHistory;
     if (!contents || (history && !(back ? history.canGoBack() : history.canGoForward()))) return;
-    await this.deps.recorder.recordHistory(action);
+    if (!isIncognito(contents.session)) await this.deps.recorder.recordHistory(action);
     if (back) contents.goBack();
     else contents.goForward();
   }
 
-  /** Opens a tab; the start page loads nothing, so a recording keeps only a real address. */
+  /** Opens a tab; the start page loads nothing, so a recording keeps only a real address, and never an incognito one. */
   private newTab(url: string | undefined): number {
     this.deps.agentTab.requireFor(null);
     const id = this.deps.tabs.createTab(url || HOME_URL, true);
-    if (url) this.deps.recorder.recordNavigation(url);
+    if (url && !this.deps.tabs.privateSession) this.deps.recorder.recordNavigation(url);
     return id;
   }
 }

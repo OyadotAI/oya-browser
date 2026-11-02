@@ -297,6 +297,29 @@ describe('chat', () => {
     }
   });
 
+  /** The chat's answer when the model replies once with `reply`. */
+  async function answeredWith(reply: object) {
+    mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(reply), { status: 200 }));
+    stubControl();
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      return JSON.parse((await talk({ messages: [{ role: 'user', content: 'go' }] })).ended);
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
+  }
+
+  it('the chat answer carries the run’s usage', async () => {
+    const message = { role: 'assistant', content: 'DONE: all good' };
+    const body = await answeredWith({ choices: [{ message }], usage: { prompt_tokens: 120, completion_tokens: 30 } });
+    assert.deepEqual(body.usage, { input: 120, output: 30 });
+  });
+
+  it('an answer whose model reported no tokens leaves usage out', async () => {
+    const body = await answeredWith({ choices: [{ message: { role: 'assistant', content: 'DONE: all good' } }] });
+    assert.equal('usage' in body, false);
+  });
+
   it('announces a chat that throws as run.failed with its error', async () => {
     mock.method(globalThis, 'fetch', async () => {
       throw new Error('network is off in tests');

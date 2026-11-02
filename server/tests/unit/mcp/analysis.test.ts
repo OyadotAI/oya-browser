@@ -81,8 +81,16 @@ describe('analysis', () => {
     const page = analysis({ format: 'toon', facts: { url: 'https://a.test/' }, blocks, elements: [] }).page;
     const kept = Number(/blocks\[(\d+)\]/.exec(page)[1]);
     assert.ok(page.length <= 30_000 && kept < 4000);
-    assert.equal(page.split('\n').filter((line) => line.startsWith('  "",main,text,')).length, kept);
-    assert.match(page, /truncated: "showing \d+ of 4000 blocks/);
+    // The header counts every row under it, gap rows included; the note counts only the blocks shown.
+    const lines = page.split('\n');
+    const rows = lines
+      .slice(lines.findIndex((line) => line.startsWith('blocks[')) + 1)
+      .filter((line) => line.startsWith('  '));
+    const gapRows = rows.filter((line) => line.startsWith('  "","",gap,'));
+    assert.equal(rows.length, kept, 'the header counts every row written');
+    assert.equal(gapRows.length, 1, 'exactly one gap row: the trailing gap');
+    assert.ok(rows[rows.length - 1].startsWith('  "","",gap,'), 'the gap is the last row');
+    assert.match(page, new RegExp(`truncated: "showing ${rows.length - gapRows.length} of 4000 blocks`));
   });
 
   it('warns when the page was cut short', () => {

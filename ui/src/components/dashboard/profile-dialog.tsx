@@ -73,15 +73,15 @@ export default function ProfileDialog({ open, onClose }: Props) {
         </label>
         <Details s={s} />
         <PlanSection open={open} />
-        {s.error && <p className="text-xs text-red-400">{s.error}</p>}
-        {s.saved && !s.error && <p className="text-xs text-emerald-400">Saved.</p>}
+        {s.error && <p className="text-xs text-red">{s.error}</p>}
+        {s.saved && !s.error && <p className="text-xs text-accent">Saved.</p>}
         <div className="flex items-center justify-between gap-3 pt-1">
           <button
             onClick={() => {
               s.logout();
               onClose();
             }}
-            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-red-400 transition-colors hover:bg-red-500/10"
+            className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-red transition-colors hover:bg-red/10"
           >
             <LogOut className="h-4 w-4" />
             Log out

@@ -116,13 +116,13 @@ body {
 
 /* Selection */
 ::selection {
-  background: rgba(57, 237, 53, 0.2);
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
   color: var(--foreground);
 }
 
-/* Focus visible */
+/* Focus visible. Solid primary: a translucent ring falls under 3:1 in light. */
 :focus-visible {
-  outline: 1px solid rgba(57, 237, 53, 0.55);
+  outline: 1px solid var(--primary);
   outline-offset: 2px;
 }
 
@@ -185,7 +185,8 @@ textarea {
   @apply inline-block h-2 w-2 shrink-0 rounded-full;
 }
 .dot-ok {
-  @apply bg-accent shadow-[0_0_8px_rgba(57,237,53,0.7)];
+  @apply bg-accent;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 70%, transparent);
 }
 .dot-stale {
   @apply bg-yellow;
@@ -195,14 +196,6 @@ textarea {
 }
 .dot-dead {
   @apply bg-text/25;
-}
-
-/* Landing page subtle grid */
-.landing-grid {
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 64px 64px;
 }
 
 /* ─── Entrance & high-end motion animations ─── */
@@ -267,54 +260,9 @@ textarea {
   }
 }
 
-@keyframes beam-travel {
-  0% {
-    left: -30%;
-    opacity: 0;
-  }
-  30% {
-    opacity: 1;
-  }
-  70% {
-    opacity: 1;
-  }
-  100% {
-    left: 130%;
-    opacity: 0;
-  }
-}
-
 .flow-anim {
   stroke-dasharray: 6 6;
   animation: flow-line 1.2s linear infinite;
-}
-
-.beam-effect {
-  position: relative;
-  overflow: hidden;
-}
-.beam-effect::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 35%;
-  background: linear-gradient(90deg, transparent, rgba(57, 237, 53, 0.15), transparent);
-  animation: beam-travel 3.5s ease-in-out infinite;
-  pointer-events: none;
-}
-
-/* Glassmorphism & double-bezel */
-.double-bezel {
-  border-radius: 1.5rem;
-  padding: 3px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
-  box-shadow:
-    0 20px 50px -20px rgba(0, 0, 0, 0.5),
-    inset 0 1px 1px rgba(255, 255, 255, 0.1);
-}
-.double-bezel-inner {
-  border-radius: calc(1.5rem - 3px);
 }
 
 /* Toast */
@@ -536,6 +484,9 @@ textarea {
 .profile-data {
   min-width: 1160px;
 }
+.routine-data {
+  min-width: 1040px;
+}
 .data-table tbody tr {
   height: 60px;
 }
@@ -677,4 +628,59 @@ textarea {
     width: 40px;
     height: 40px;
   }
+}
+
+/* The playbook editor's CodeMirror syntax (classHighlighter's tok-* classes), in the shared code palette. */
+.cm-editor .tok-comment {
+  color: #8d9689;
+  font-style: italic;
+}
+.cm-editor .tok-keyword {
+  color: #c5aff4;
+}
+.cm-editor .tok-string {
+  color: #afd79b;
+}
+.cm-editor .tok-number,
+.cm-editor .tok-bool,
+.cm-editor .tok-null {
+  color: #edbd86;
+}
+.cm-editor .tok-propertyName {
+  color: #8fc7ee;
+}
+.cm-editor .tok-typeName,
+.cm-editor .tok-className {
+  color: #d6c49e;
+}
+.cm-editor .tok-variableName {
+  color: #90d3cb;
+}
+.cm-editor .tok-punctuation,
+.cm-editor .tok-operator {
+  color: #b1b2a8;
+}
+:root[data-theme='light'] .cm-editor .tok-comment {
+  color: #687364;
+}
+:root[data-theme='light'] .cm-editor .tok-keyword {
+  color: #7849a1;
+}
+:root[data-theme='light'] .cm-editor .tok-string {
+  color: #3d6a2a;
+}
+:root[data-theme='light'] .cm-editor :is(.tok-number, .tok-bool, .tok-null) {
+  color: #99541f;
+}
+:root[data-theme='light'] .cm-editor .tok-propertyName {
+  color: #226797;
+}
+:root[data-theme='light'] .cm-editor :is(.tok-typeName, .tok-className) {
+  color: #80601b;
+}
+:root[data-theme='light'] .cm-editor .tok-variableName {
+  color: #21746b;
+}
+:root[data-theme='light'] .cm-editor :is(.tok-punctuation, .tok-operator) {
+  color: #65695f;
 }

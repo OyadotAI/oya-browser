@@ -8,9 +8,8 @@ import { CDPDriver } from '../../../drivers/cdp.ts';
 import { getAll as getAllCookies, getStorage, mergeStorage } from '../../personas/cookies.ts';
 import * as keyConfig from '../../config/service.ts';
 import { container } from '../../../app/container.ts';
-import * as usage from '../../../platform/usage.ts';
 import { browserCdpUrl } from './cdp-url.ts';
-import { countBrowsers, forget } from './fleet.ts';
+import { countBrowsers, forget, forgetDriver } from './fleet.ts';
 import { acquireSession, addCdpBrowser, claimSession, releaseQuietly } from './sessions.ts';
 import { started, type Start } from './start-reply.ts';
 
@@ -36,7 +35,7 @@ export async function launchCdp(start: Start) {
 /** Registers the connected browser and answers 201. */
 async function register(start: Start, { browserId, session, driver }) {
   const { req, key, persona } = start;
-  const release = releaseBoth(session, persona, browserId);
+  const release = () => session.release();
   addCdpBrowser(req, key, browserId, session, { engine: driver, persona, release });
   countBrowsers();
   started(start, await ready(start, browserId, session));
@@ -48,17 +47,10 @@ async function register(start: Start, { browserId, session, driver }) {
  * caller was told failed must not keep billing browser-seconds. Otherwise the
  * driver is closed and the slot and session are let go of here.
  */
-async function letGo({ key, persona }: Start, { browserId, session, driver }) {
-  if (registry.isConnected(browserId)) return dropRegistered(key, browserId);
+async function letGo({ persona }: Start, { browserId, session, driver }) {
+  if (registry.isConnected(browserId)) return forget(browserId, driver);
   driver.close();
   await releaseBoth(session, persona, browserId)().catch((err) => console.error('[start] release:', err.message));
-}
-
-/** Removes a browser that got as far as the registry, and ends its usage clock. */
-function dropRegistered(key, browserId) {
-  registry.remove(browserId);
-  usage.browserDisconnected(key, browserId);
-  countBrowsers();
 }
 
 /** Everything up to a connected driver. */
@@ -120,7 +112,7 @@ function driverOptions(persona, browserId, session) {
     fingerprint: personas.fingerprintFor(persona),
     login: { cookies: getAllCookies(persona.id), origins: structuredClone(getStorage(persona.id)) },
     onStorage: (values) => mergeStorage(persona.id, values),
-    onClose: () => forget(browserId),
+    onClose: forgetDriver(browserId),
   };
 }
 

@@ -27,6 +27,8 @@ export const DEFAULT_PERSONA_MAX_CONCURRENT = Number(process.env.OYA_DEFAULT_PER
 
 /** Longest persona display name kept. */
 export const MAX_NAME_CHARS = 100;
+/** The longest persona group name: what a caller's code passes to a start. */
+export const GROUP_NAME_MAX = 64;
 /** Longest device choice (platform, timezone, locale) kept. */
 export const MAX_PREF_CHARS = 64;
 /** How often changed personas are written out. */

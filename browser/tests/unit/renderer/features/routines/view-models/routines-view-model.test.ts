@@ -70,6 +70,9 @@ class FakePanel extends ViewModel<PanelState> {
   }
 }
 
+/** A saved playbook with a value, a default and a secret. */
+const PRICES = { name: 'check-prices', variables: ['item', 'shop', 'pw'], defaults: { shop: 'acme' }, secrets: ['pw'] };
+
 /** Lets pending promises settle. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -80,7 +83,14 @@ async function pane(state: unknown = snapshot([]), after: unknown = state, shown
   const fake = fakeBridge({
     listRoutines: state,
     stopRoutine: true,
-    playbooks: { playbooks: [{ name: 'check-prices' }, { name: 'inbox-zero' }] },
+    playbooks: { playbooks: [PRICES, { name: 'inbox-zero' }] },
+    listPersonas: {
+      personas: [
+        { id: 'd', name: 'Default', isDefault: true },
+        { id: 'p1', name: 'Work' },
+      ],
+      active: 'default',
+    },
     ...Object.fromEntries(names.map((n) => [n, answer])),
   });
   const panel = new FakePanel({ pane: shown });
@@ -254,12 +264,47 @@ describe('the routine editor', () => {
     const { fake, vm } = await pane(snapshot([]), snapshot([INBOX]));
     vm.edit(null);
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(vm.editor.state.playbooks, ['check-prices', 'inbox-zero']);
+    assert.deepEqual(
+      vm.editor.state.playbooks.map((p) => p.name),
+      ['check-prices', 'inbox-zero'],
+    );
     vm.editor.setField('name', 'Prices');
     vm.editor.setField('playbook', 'check-prices');
     await vm.editor.submit();
     const [[saved]] = fake.called('saveRoutine');
     assert.deepEqual([saved.playbook, saved.prompt], ['check-prices', '']);
+  });
+
+  it('saves the playbook values typed, never a secret, a blank or one the playbook does not use', async () => {
+    const { fake, vm } = await pane(snapshot([]), snapshot([INBOX]));
+    vm.edit({ ...INBOX, playbook: 'check-prices', values: { gone: 'x' } });
+    await settle();
+    vm.editor.setValue('item', 'tea');
+    vm.editor.setValue('shop', '');
+    vm.editor.setValue('pw', 'hunter2');
+    await vm.editor.submit();
+    assert.deepEqual((fake.called('saveRoutine')[0][0] as any).values, { item: 'tea' });
+  });
+
+  it('offers the named profiles after the default, and saves the one picked (the default as none)', async () => {
+    const { fake, vm } = await pane(snapshot([]), snapshot([INBOX]));
+    vm.edit(null);
+    await settle();
+    assert.deepEqual(vm.editor.state.personas, [{ value: 'p1', label: 'Work' }]);
+    vm.editor.setField('persona', 'p1');
+    await vm.editor.submit();
+    vm.edit(null);
+    await vm.editor.submit();
+    assert.deepEqual(
+      fake.called('saveRoutine').map(([r]) => (r as any).persona),
+      ['p1', null],
+    );
+  });
+
+  it('says a due desktop routine for another profile is waiting for it', () => {
+    const due = { ...INBOX, nextRunAt: NOW - 1, persona: 'p1' };
+    assert.match(statusLine(due, 'due', snapshot([due]), NOW), /Waiting: switch to this routine’s profile/);
+    assert.match(statusLine(due, 'due', { ...snapshot([due]), persona: 'p1' }, NOW), /Due now/);
   });
 
   it('saves a new daily routine, on, and closes', async () => {
@@ -279,6 +324,7 @@ describe('the routine editor', () => {
           enabled: true,
           schedule: { kind: 'daily', at: '08:30' },
           target: 'desktop',
+          persona: null,
         },
       ],
     ]);

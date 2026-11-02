@@ -90,4 +90,13 @@ describe('pinned tab math', () => {
     assert.equal(M.pinnedCount([{ pinned: true }, { pinned: true }, {}]), 2);
     assert.equal(M.pinnedCount([]), 0);
   });
+  it("opens a carried tab's gap at the slot it covers most, the tab drawn centred on the pointer", () => {
+    assert.deepEqual(M.incomingSlot(230, 8, 0, 3, 100), { to: 2, slot: 208, left: 180 });
+    assert.deepEqual(M.incomingSlot(160, 8, 0, 3, 100), { to: 1, slot: 108, left: 110 });
+  });
+
+  it('keeps a carried tab after the pinned tabs and no further than the end', () => {
+    assert.deepEqual(M.incomingSlot(0, 52, 1, 2, 100), { to: 1, slot: 52, left: 52 });
+    assert.deepEqual(M.incomingSlot(900, 52, 1, 2, 100), { to: 3, slot: 252, left: 252 });
+  });
 });

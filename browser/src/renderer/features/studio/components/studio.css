@@ -594,6 +594,20 @@
 .finish-connection:empty {
   display: none;
 }
+/* A new name renames the saved playbook: say which, and offer to keep it. */
+.record-finish .finish-rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.record-finish .finish-rename p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  color: var(--secondary);
+}
 .record-finish .studio-details {
   margin: 8px 0 0;
   padding: 8px 0 0;
@@ -609,6 +623,12 @@
   background: var(--muted-surface);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
   color: var(--text);
+}
+/* Once saved, the way to the playbook, centred under the save card. */
+.studio-view-playbook {
+  display: flex;
+  justify-content: center;
+  padding: 0 16px 12px;
 }
 /* Stage: an empty draft shows how to start; a recording shows only its live steps. */
 #pane-record[data-stage='empty'] .studio-tabs,
@@ -727,4 +747,66 @@
 }
 #pane-record:has(#record-finish:not([hidden])) #record-toggle:not(.recording):hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+/* The wide pane fits the panel's height: the controls and the Steps/Run/Code tabs stay put,
+   the step list and each tab's content scroll on their own, and the parts that can grow are
+   capped so none pushes another out of reach. The compact pane above scrolls as a whole. */
+#pane-record {
+  --studio-top-max: 40%;
+  --studio-editor-max: 45%;
+  --studio-variables-max: 30%;
+}
+@media (min-width: 960px) {
+  #pane-record.active {
+    overflow: hidden;
+  }
+  #pane-record .studio-top {
+    flex: none;
+    max-height: var(--studio-top-max);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #pane-record .studio-scroll {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #pane-record .studio-scroll > [role='tabpanel'] {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #pane-record #studio-steps {
+    overflow: hidden;
+  }
+  #studio-steps > * {
+    flex: none;
+  }
+  #pane-record .rec-steps {
+    flex: 1;
+    min-height: 80px;
+    max-height: none;
+    overflow-y: auto;
+  }
+  #studio-steps #step-editor {
+    display: flex;
+    flex-direction: column;
+    max-height: var(--studio-editor-max);
+  }
+  #step-editor .editor-body {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #studio-steps #variables-details {
+    max-height: var(--studio-variables-max);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #studio-code .rec-code {
+    max-height: none;
+  }
 }

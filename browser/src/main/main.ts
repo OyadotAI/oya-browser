@@ -29,12 +29,15 @@ declare const __OYA_WEBAUTHN_GROUP__: string;
 import { MediaPermissions } from './app/media-permissions.ts';
 import { CallGuard } from './app/call-guard.ts';
 import { ScreenShare } from './app/screen-share.ts';
-import { ScreenPicker } from './screen-share/index.ts';
+import { ScreenPicker, ShareIndicator } from './screen-share/index.ts';
 import { SitePermissionStore } from './app/site-permissions.ts';
 import { JsonFile } from './app/json-file.ts';
 import { SessionTabs } from './tabs/session-tabs.ts';
-import { SESSION_TABS_FILE } from './tabs/constants.ts';
-import { Downloads, DOWNLOADS_FILE, closeDownloadOnlyTab, personMayUse } from './downloads/index.ts';
+import { SESSION_TABS_FILE, TAB_HEALTH_FILE } from './tabs/constants.ts';
+import { TabHealthLog } from './tabs/tab-health.ts';
+import { WindowBounds } from './shell/window-bounds.ts';
+import { WINDOW_BOUNDS_FILE } from './shell/constants.ts';
+import { Downloads, DownloadBubble, DOWNLOADS_FILE, closeDownloadOnlyTab, personMayUse } from './downloads/index.ts';
 import { ExternalApps } from './app/external-apps.ts';
 import { Notifications } from './notifications/index.ts';
 import type { AppServices } from './app/services.ts';
@@ -68,6 +71,7 @@ import { CommandRunner } from './connection/commands.ts';
 import { Mirror } from './mirror/mirror.ts';
 import { ChatgptAuth, Onboarding } from './chatgpt/index.ts';
 import { BrowserWindows } from './windows/index.ts';
+import { IncognitoSession } from './incognito/index.ts';
 import { type AnalysisResult } from './shell/control-shield.ts';
 import type { ActionParams } from './shell/narration.ts';
 import { BrowsingLibrary } from './library/index.ts';
@@ -153,6 +157,7 @@ const ctx = {
   validationTabs: undefined,
 } as AppServices;
 ctx.config = new ConfigStore({ dir: () => app.getPath('userData'), safe: electron.safeStorage });
+ctx.incognito = new IncognitoSession(ctx);
 ctx.windows = new BrowserWindows(ctx);
 ctx.passkeys = new Passkeys(ctx);
 // Small per-state files beside config.json, named lazily: userData is reset before the app is ready.
@@ -161,8 +166,15 @@ ctx.sitePermissions = new SitePermissionStore(new JsonFile(userFile(SITE_PERMISS
 ctx.mediaPermissions = new MediaPermissions(ctx);
 ctx.callGuard = new CallGuard(ctx);
 ctx.screenPicker = new ScreenPicker(ctx);
+ctx.shareIndicator = new ShareIndicator(ctx);
+// Every strip change re-sends the share chip, and drops a shared tab the moment it closes.
+ctx.windows.tabEvents.subscribe(() => ctx.shareIndicator!.tabsChanged());
 ctx.screenShare = new ScreenShare(ctx);
 ctx.sessionTabs = new SessionTabs(ctx, new JsonFile(userFile(SESSION_TABS_FILE)));
+ctx.windowBounds = new WindowBounds(ctx, new JsonFile(userFile(WINDOW_BOUNDS_FILE)));
+ctx.tabHealthLog = new TabHealthLog(ctx, new JsonFile(userFile(TAB_HEALTH_FILE)));
+// A GPU or audio process that dies blanks pages or stops their sound with no tab event: the log keeps it.
+app.on('child-process-gone', (_event, details) => ctx.tabHealthLog!.processGone(details));
 // Every strip change, from any window, schedules a save of the session.
 ctx.windows.tabEvents.subscribe(() => ctx.sessionTabs!.changed());
 ctx.externalApps = new ExternalApps(ctx);
@@ -187,7 +199,9 @@ app.once('will-quit', () => ctx.persona.disposeStorage());
 ctx.library = new BrowsingLibrary(ctx);
 ctx.library.changed = () => announceBookmarks(ctx);
 ctx.downloads = new Downloads(ctx, new JsonFile(userFile(DOWNLOADS_FILE)));
-ctx.downloads.changed = () => announceBookmarks(ctx);
+ctx.downloadBubble = new DownloadBubble(ctx);
+ctx.downloads.changed = () => (announceBookmarks(ctx), ctx.downloadBubble.announce());
+ctx.downloads.listedFrom = (id, contents) => ctx.downloadBubble.began(id, contents);
 ctx.downloads.started = (contents) => closeDownloadOnlyTab(ctx, contents);
 ctx.downloads.mayAutoSave = (contents) => personMayUse(ctx, contents);
 ctx.recorder = new Recorder(ctx);
@@ -202,6 +216,7 @@ ctx.agentTab = new AgentTab(ctx, () => {
   void ctx.translation.sync();
   ctx.windows?.each((scope) => {
     scope.shield.sync();
+    scope.findBar.sync();
     scope.tabs.sendTabList();
   });
 });
@@ -212,6 +227,7 @@ ctx.control = new DesktopControl({
     void ctx.translation.sync();
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
+    ctx.windows?.each((scope) => scope.findBar.sync());
   },
 });
 ctx.cookies = new CookieSync({

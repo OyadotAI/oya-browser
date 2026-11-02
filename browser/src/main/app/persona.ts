@@ -19,6 +19,8 @@ import { NOISE_SEED_DIGITS } from './constants.ts';
 type Deps = Pick<
   AppServices,
   | 'nativeBrowsing'
+  | 'windows'
+  | 'downloadBubble'
   | 'passkeys'
   | 'mediaPermissions'
   | 'externalApps'
@@ -162,6 +164,15 @@ function createPersonaStorage(deps: Deps): PersonaStorage {
   });
 }
 
+/** Same immutable persona: verify protection on every live surface, in every window, incognito included. */
+function reprotectTabs(deps: Deps): void {
+  deps.workers?.cover();
+  const managers = new Set([deps.tabs]);
+  deps.windows?.each((scope) => managers.add(scope.tabs));
+  for (const tabs of managers)
+    for (const tab of tabs.list) if (!tab.view.webContents.isDestroyed()) deps.protection.setupTabCDP(tab.view);
+}
+
 /** The active persona and everything bound to it. */
 export class Persona {
   /** The fingerprint profile in use, or null before the server sends one. */
@@ -272,11 +283,12 @@ export class Persona {
     throw error;
   }
 
-  /** Never publish an activation superseded in the final promise continuation. */
+  /** Never publish an activation superseded in the final promise continuation; a switch re-tells the latest download. */
   private publishProfile(epoch: symbol, profile: FingerprintProfile, switched: boolean): void {
     if (this.policyEpoch !== epoch) throw Error('Native persona changed during activation');
-    if (!switched) this.reprotectTabs();
+    if (!switched) reprotectTabs(this.deps);
     this.deps.shell.send('fingerprint-changed', fingerprintSummary(profile));
+    if (switched) this.deps.downloadBubble?.announce();
   }
 
   /** Restore the previous identity if native setup refuses a changed or incomplete policy. */
@@ -314,8 +326,9 @@ export class Persona {
     if (this.policyEpoch === epoch) this.active = previous;
   }
 
-  /** Closes every tab of the old jar and returns their addresses to reopen in the new one. */
+  /** Closes every tab of the old jar and returns their addresses to reopen in the new one; incognito windows just close. */
   private leaveJar(): string[] {
+    this.deps.windows?.closeIncognito();
     const tabs = this.deps.tabs.list;
     const reopen = tabs.map(addressOf);
     // Drop the pending batch rather than flushing it. Those changes were seen
@@ -352,13 +365,5 @@ export class Persona {
     for (const url of reopen) this.deps.tabs.createTab(url);
     // The cookies are in the jar now, so the last session's pages can load signed in; a switch reopened its own above.
     this.deps.sessionTabs?.restore();
-  }
-
-  /** Same immutable persona: verify protection on every live surface. */
-  private reprotectTabs(): void {
-    this.deps.workers?.cover();
-    for (const tab of this.deps.tabs.list) {
-      if (!tab.view.webContents.isDestroyed()) this.deps.protection.setupTabCDP(tab.view);
-    }
   }
 }

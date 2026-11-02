@@ -71,6 +71,10 @@ export interface Routine {
   target?: 'desktop' | 'cloud';
   /** The time zone its daily time is in, for the server running it in the cloud. */
   tz?: string;
+  /** The playbook's variable values each run plays with; secrets come from the playbook. */
+  values?: Record<string, string>;
+  /** The profile it runs as; absent for the default. A desktop runs it only while it is on that profile. */
+  persona?: string;
 }
 
 /** What the agent answered a run. */
@@ -152,6 +156,8 @@ export interface RoutinesSnapshot {
   error: string;
   /** Why a routine cannot run now, or ''. */
   busy: string;
+  /** The profile this desktop runs as, or null for the default; a desktop routine for another one waits. */
+  persona: string | null;
   /** Lets the pane read it as a payload (src/shared/ipc.ts). */
   [key: string]: unknown;
 }
@@ -202,6 +208,21 @@ function endingOf(answer: ChatAnswer | undefined): RunEnding {
   return { status: runStatusOf(answer), result: text.slice(0, ROUTINE_RESULT_CHARS), steps };
 }
 
+/** The profile this desktop runs as, or null for the project's default. */
+const currentPersona = (ctx: Deps): string | null =>
+  ctx.config.values.persona && ctx.config.values.persona !== 'default' ? ctx.config.values.persona : null;
+
+/**
+ * Why this desktop will not run `routine` now because of its profile, or ''.
+ * Switching profile reconnects the whole browser, which a routine must not do
+ * behind the person's open tabs, so a routine for another profile waits here.
+ */
+function profileReason(ctx: Deps, routine: Routine): string {
+  // One with no profile runs as whichever this desktop is on, as routines always have.
+  if (routine.target === 'cloud' || !routine.persona || routine.persona === currentPersona(ctx)) return '';
+  return "Switch to this routine's profile to run it here.";
+}
+
 /** What Run now and the pane say when this app cannot run a routine now, or '' when it can. */
 function busyReason(api: ServerApi, ctx: Deps, running: unknown): string {
   if (!api.canCall()) return 'Connect to Oya to run routines.';
@@ -235,24 +256,29 @@ export class Routines {
   private readonly ctx: Deps;
   /** Asks the agent. */
   private readonly run: RunChat;
-  /** Plays a saved playbook. */
-  private readonly play: (playbook: string) => Promise<ChatAnswer>;
+  /** Plays a saved playbook with the routine's values. */
+  private readonly play: (playbook: string, values: Record<string, string>) => Promise<ChatAnswer>;
   /** The server's API, as this browser. */
   private readonly api: ServerApi;
 
   /** `ctx` is the main-process services (see src/main/main.ts); `run` asks the agent (an Ask through Chat, faked in tests). */
-  constructor(ctx: Deps, run?: RunChat, play?: (playbook: string) => Promise<ChatAnswer>) {
+  constructor(
+    ctx: Deps,
+    run?: RunChat,
+    play?: (playbook: string, values: Record<string, string>) => Promise<ChatAnswer>,
+  ) {
     this.ctx = ctx;
     this.api = new ServerApi(ctx);
-    this.run = run ?? ((messages) => new Chat(ctx).send(messages, undefined, this.current?.tab));
-    this.play = play ?? ((playbook) => playOnServer(this.api, playbook, () => !!this.current?.stopped));
+    this.run = run ?? ((messages) => new Chat(ctx).send(messages, undefined, this.current?.tab, false));
+    this.play = play ?? ((playbook, values) => playOnServer(this.api, playbook, values, () => !!this.current?.stopped));
   }
 
   /** The list with each routine's next run, and what this app is doing, as the Routines pane shows it. */
   snapshot(): RoutinesSnapshot {
     const routines = this.list.map((r) => ({ ...r, nextRunAt: r.enabled ? nextRunAt(r) : null }));
     const running = this.current?.routineId || null;
-    const state = { online: this.api.canCall(), error: this.error, busy: busyReason(this.api, this.ctx, running) };
+    const busy = busyReason(this.api, this.ctx, running);
+    const state = { online: this.api.canCall(), error: this.error, busy, persona: currentPersona(this.ctx) };
     return { routines, running, browserId: this.ctx.socket.browserId, ...state };
   }
 
@@ -316,10 +342,11 @@ export class Routines {
 
   /** Adds a routine, or changes the one with its id (its history is kept). */
   save(input: Partial<Routine> | null | undefined): Promise<RoutinesSnapshot | Refusal> {
-    const { id, name, prompt, playbook, schedule, enabled, target } = input || {};
+    const { id, name, prompt, playbook, schedule, enabled, target, values, persona } = input || {};
     // This desktop's time zone, so a daily time means the same hour when the server runs it in the cloud.
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const body = { name, prompt, playbook: playbook || null, schedule, enabled, target, tz };
+    const task = { prompt, playbook: playbook || null, values: playbook ? (values ?? {}) : undefined };
+    const body = { name, ...task, schedule, enabled, target, tz, persona: persona || null };
     return id ? this.change('PATCH', routineRoute(id), body) : this.change('POST', 'routines', body);
   }
 
@@ -350,15 +377,15 @@ export class Routines {
   async tick(now = Date.now()): Promise<void> {
     if (!this.api.canCall()) return;
     await this.refresh();
-    const due = this.list.find((r) => isDue(r, now));
+    const due = this.list.find((r) => isDue(r, now) && !profileReason(this.ctx, r));
     if (due && !busyReason(this.api, this.ctx, this.current))
       await this.perform(due, await this.claim(due).catch(() => null));
   }
 
   /** Runs one routine now: answers at once with the snapshot, or `{ error }` saying why it cannot run. */
   async runNow(id: string): Promise<RoutinesSnapshot | Refusal> {
-    const reason = busyReason(this.api, this.ctx, this.current);
     const routine = this.list.find((r) => r.id === id);
+    const reason = busyReason(this.api, this.ctx, this.current) || (routine ? profileReason(this.ctx, routine) : '');
     if (reason || !routine) return { error: reason || 'That routine is gone.' };
     const claimed = await this.claim(routine).then(String, (e: Error) => ({ error: e.message }));
     if (typeof claimed !== 'string') return (await this.refresh(), claimed);
@@ -379,11 +406,16 @@ export class Routines {
     if (!runId) return this.refresh();
     this.current = { routineId: routine.id, runId, tab: this.ctx.tabs.activeTabId ?? undefined };
     await this.refresh();
-    const work = routine.playbook ? this.play(routine.playbook) : this.run([{ role: 'user', content: routine.prompt }]);
-    const answer = await work.catch((e: Error) => ({ error: e.message }));
+    const answer = await this.work(routine).catch((e: Error) => ({ error: e.message }));
     this.current = null;
     await this.end(routine.id, runId, endingOf(answer));
     await this.refresh();
+  }
+
+  /** Plays the routine's playbook with its values, or asks the agent its prompt. */
+  private work(routine: Routine): Promise<ChatAnswer> {
+    if (routine.playbook) return this.play(routine.playbook, routine.values ?? {});
+    return this.run([{ role: 'user', content: routine.prompt }]);
   }
 
   /** Records a run's ending on the server; one that cannot be sent is left to the server's lease. */

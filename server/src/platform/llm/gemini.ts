@@ -7,6 +7,7 @@
  */
 import type { ChatRequest, LlmProvider } from './types.ts';
 import { baseOf, postJson } from './transport.ts';
+import { geminiSchema } from './gemini-schema.ts';
 
 /**
  * The native Gemini endpoint, recognised by its base URL rather than by llm_provider:
@@ -39,19 +40,6 @@ export const gemini: LlmProvider = {
 const callId = (name, index) => `${name}:${index}`;
 /** The tool name carried in a call id made by callId. */
 const callName = (id) => String(id).split(':')[0];
-
-/** Gemini's function declarations take an OpenAPI subset and reject the rest outright. */
-const UNSUPPORTED = new Set(['additionalProperties', 'default', '$schema']);
-/** A JSON schema with the keys Gemini rejects removed, recursively. */
-function schemaFor(value) {
-  if (Array.isArray(value)) return value.map(schemaFor);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter(([key]) => !UNSUPPORTED.has(key))
-      .map(([key, inner]) => [key, schemaFor(inner)]),
-  );
-}
 
 /** What toGemini reads from a request: the messages, and the tools when there are any. */
 type GeminiInput = Pick<ChatRequest, 'tools'> & Partial<Pick<ChatRequest, 'messages'>>;
@@ -138,7 +126,11 @@ function functionDeclarations(tools) {
 
 /** One OpenAI tool as a Gemini function declaration, its schema trimmed to what Gemini accepts. */
 function declarationFor(t) {
-  return { name: t.function.name, description: t.function.description, parameters: schemaFor(t.function.parameters) };
+  return {
+    name: t.function.name,
+    description: t.function.description,
+    parameters: geminiSchema(t.function.parameters),
+  };
 }
 
 /** A Gemini generateContent response in OpenAI chat-completions shape, including tool calls and token usage. */
@@ -151,9 +143,13 @@ export function fromGemini(body) {
   };
 }
 
-/** Gemini's token counts in OpenAI's usage shape, zero when absent. */
+/**
+ * Gemini's token counts in OpenAI's usage shape, zero when absent. A thinking model reports its thoughts
+ * apart from the answer and bills them as output, so they count as completion tokens, as OpenAI's do.
+ */
 function tokenUsage(meta) {
-  return { prompt_tokens: meta?.promptTokenCount || 0, completion_tokens: meta?.candidatesTokenCount || 0 };
+  const output = (meta?.candidatesTokenCount || 0) + (meta?.thoughtsTokenCount || 0);
+  return { prompt_tokens: meta?.promptTokenCount || 0, completion_tokens: output };
 }
 
 /** The text parts of a Gemini response, concatenated. */

@@ -81,14 +81,14 @@ export function SetupView({ s }: ViewProps) {
 export function ManageView({ s }: ViewProps) {
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-emerald-400">Two-factor authentication is on.</p>
+      <p className="text-sm text-accent">Two-factor authentication is on.</p>
       <ul className="flex flex-col gap-2">
         {s.status?.factors
           .filter((f) => f.status === 'verified')
           .map((f) => (
             <li key={f.id} className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
               <span className="truncate text-sm text-text">{f.name || 'Authenticator app'}</span>
-              <button onClick={() => void s.remove(f.id)} disabled={s.busy} className="text-sm text-red-400">
+              <button onClick={() => void s.remove(f.id)} disabled={s.busy} className="text-sm text-red">
                 Remove
               </button>
             </li>

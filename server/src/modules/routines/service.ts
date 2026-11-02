@@ -13,6 +13,7 @@ import { fingerprint } from '../../platform/audit.ts';
 import { registry } from '../browsers/registry.ts';
 import { announce } from '../../app/http.ts';
 import { control, projectId } from '../control/service.ts';
+import { container } from '../../app/container.ts';
 import * as repository from './repository.ts';
 import { definitionFrom, endingFrom, importedRoutine, type Routine, type Run } from './rules.ts';
 import { ROUTINE_MAX_PER_KEY, ROUTINE_RUN_LEASE_MS, ROUTINE_RUNS_KEPT, ROUTINE_WRITE_TRIES } from './constants.ts';
@@ -31,9 +32,19 @@ export async function list(apiKey: string): Promise<Routine[]> {
   return stored.map((s) => s.routine).sort((a, b) => a.createdAt - b.createdAt);
 }
 
+/**
+ * The definition, refused (404) when it names a profile that is not the caller's:
+ * a cloud run starts its browser on it, and must never start one on another key's.
+ */
+function owned<T extends Pick<Routine, 'persona'>>(apiKey: string, definition: T): T {
+  if (definition.persona && !container.personas.get(apiKey, definition.persona))
+    throw new HttpError(Status.NOT_FOUND, `No such profile: ${definition.persona}`, { code: 'not_found' });
+  return definition;
+}
+
 /** A routine just made from a client's definition, with no runs yet. */
 function newRoutine(apiKey: string, input: unknown): Routine {
-  const definition = { ...definitionFrom(input), project: projectId(apiKey) };
+  const definition = { ...owned(apiKey, definitionFrom(input)), project: projectId(apiKey) };
   return { id: randomUUID(), createdAt: Date.now(), ...definition, lastRunAt: null, runs: [] };
 }
 
@@ -76,9 +87,22 @@ async function readyForCloud(apiKey: string, routine: Routine) {
   if (routine.target === 'cloud') await control().project(apiKey);
 }
 
-/** Changes a routine's name, prompt, schedule or on/off; its history is kept. */
+/**
+ * An edit's definition. Only a profile given now is checked: one deleted since
+ * must not stop the routine being turned off or fixed (a cloud run re-checks it).
+ */
+function editedFrom(apiKey: string, input: any, current: Routine) {
+  const definition = definitionFrom(input, current);
+  return input?.persona ? owned(apiKey, definition) : definition;
+}
+
+/** Changes a routine's name, prompt or playbook and its values, schedule, profile or on/off; its history is kept. */
 export async function edit(apiKey: string, id: string, input: unknown): Promise<Routine> {
-  const routine = await change(apiKey, id, (r) => ({ ...r, ...definitionFrom(input, r), project: projectId(apiKey) }));
+  const routine = await change(apiKey, id, (r) => ({
+    ...r,
+    ...editedFrom(apiKey, input, r),
+    project: projectId(apiKey),
+  }));
   await readyForCloud(apiKey, routine);
   announce(apiKey, 'routine.updated', null, { routineId: id, fields: Object.keys(input ?? {}) });
   return routine;

@@ -5,14 +5,20 @@
  */
 import { useLayoutEffect, useRef } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
-import { cardAddress, tabTitle } from '../model/tab-model.ts';
+import { cardAddress, tabTitle, type Tab } from '../model/tab-model.ts';
 import { cardLeft } from '../model/tab-math.ts';
+import { TEXT } from '../model/constants.ts';
 import type { TabCardViewModel } from '../view-models/tab-card-view-model.ts';
 
 /** What the card is given. */
 export interface TabCardProps {
   /** The card's ViewModel. */
   vm: TabCardViewModel;
+}
+
+/** The address line, noting a share on the same line: the card must fit in the toolbar's height. */
+function cardLine(tab: Tab): string {
+  return tab.sharing ? cardAddress(tab) + TEXT.noteSeparator + TEXT.sharing : cardAddress(tab);
 }
 
 /** The hover card. */
@@ -26,7 +32,7 @@ export function TabCard({ vm }: TabCardProps) {
   return (
     <div className="tab-card" id="tab-card" role="tooltip" hidden={!tab} ref={card}>
       <strong>{tab ? tabTitle(tab) : ''}</strong>
-      <span>{tab ? cardAddress(tab) : ''}</span>
+      <span>{tab ? cardLine(tab) : ''}</span>
     </div>
   );
 }

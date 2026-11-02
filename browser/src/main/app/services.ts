@@ -24,6 +24,7 @@ import type { Observer } from '../observe/observer.ts';
 import type { Recorder } from '../recording/recorder.ts';
 import type { Routines } from '../routines/routines.ts';
 import type { ControlShield } from '../shell/control-shield.ts';
+import type { FindBar } from '../shell/find-bar.ts';
 import type { PanelLayout } from '../shell/layout.ts';
 import type { Overlays } from '../shell/overlays.ts';
 import type { Shortcuts } from '../shell/shortcuts.ts';
@@ -44,6 +45,8 @@ import type { Translator } from '../translate/index.ts';
 export interface AppServices {
   /** Native window ownership, absent only in isolated unit-test contexts. */
   windows?: import('../windows/index.ts').BrowserWindows;
+  /** The incognito windows' shared throwaway session (src/main/incognito/). */
+  incognito: import('../incognito/index.ts').IncognitoSession;
   /** Native session lifecycle; production requires complete engine-owned persona protection. */
   nativeBrowsing?: boolean;
 
@@ -57,10 +60,16 @@ export interface AppServices {
   screenShare?: import('./screen-share.ts').ScreenShare;
   /** Native tab/window/display previews and an explicit source choice on each share. */
   screenPicker: import('../screen-share/index.ts').ScreenPicker;
+  /** Which tabs a call is capturing, for the strip's ring and the toolbar's share chip. */
+  shareIndicator?: import('../screen-share/index.ts').ShareIndicator;
   /** The sites each profile allowed a device on, on disk. */
   sitePermissions: import('./site-permissions.ts').SitePermissionStore;
   /** The tabs open at quit, brought back at the next sign-in. */
   sessionTabs?: import('../tabs/session-tabs.ts').SessionTabs;
+  /** The log of tab renderer deaths, Reload recoveries and helper-process deaths (tabs/tab-health.ts). */
+  tabHealthLog?: import('../tabs/tab-health.ts').TabHealthLog;
+  /** The main window's position and size at quit, reopened at the next launch. */
+  windowBounds?: import('../shell/window-bounds.ts').WindowBounds;
   /** Human-approved desktop app protocol handoff. */
   externalApps: import('./external-apps.ts').ExternalApps;
   /** Session-only alert inbox. */
@@ -69,6 +78,8 @@ export interface AppServices {
   library: import('../library/index.ts').BrowsingLibrary;
   /** The person's downloads, listed on the Downloads page. */
   downloads: import('../downloads/index.ts').Downloads;
+  /** Each window's download chip: what started there, told only to that window. */
+  downloadBubble: import('../downloads/index.ts').DownloadBubble;
   /** Electron's main-process API; only the composition root imports it. */
   electron: typeof Electron;
   /** The app's folder: the package root in development, the asar when packaged. */
@@ -99,6 +110,8 @@ export interface AppServices {
   layout: PanelLayout;
   /** Overlays over the page (src/main/shell/overlays.ts). */
   overlays: Overlays;
+  /** Find in page on the shown tab (src/main/shell/find-bar.ts). */
+  findBar: FindBar;
   /** The tabs (src/main/tabs/tabs.ts). */
   tabs: TabManager;
   /** A tab's protection before its first page (src/main/tabs/protection.ts). */

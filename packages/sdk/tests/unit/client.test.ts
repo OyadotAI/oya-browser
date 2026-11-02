@@ -114,6 +114,20 @@ describe('Oya construction', () => {
     await oya.browser.list();
     assert.equal(calls[0].headers.Authorization, 'Bearer k-test');
   });
+
+  it('withholds the saved key from another deployment, and says which one it is for', () => {
+    const home = join(scratch, 'elsewhere');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ apiKey: 'k-file', baseUrl: BASE }));
+    process.env.OYA_CONFIG_HOME = home;
+    delete process.env.OYA_API_KEY;
+    process.env.OYA_BASE_URL = 'https://other.test';
+    const why = 'the key saved in ~/.oya/config.json is for https://oya.test and is only sent there';
+    assert.throws(
+      () => new Oya({ fetch: fakeFetch().fetch }),
+      new RegExp(`^Error: No API key for https://other.test: ${why}`),
+    );
+  });
 });
 
 describe('Http.request', () => {

@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { atCapacity, spentUsd } from '../../../../../src/modules/control/service/capacity.ts';
+import { atCapacity, leastLoaded, spentUsd } from '../../../../../src/modules/control/service/capacity.ts';
 
 /** A project with the given cap. */
 const project = (maxConcurrent = null, costUsd = 0) => ({ settings: { maxConcurrent }, costUsd });
@@ -50,5 +50,51 @@ describe('spentUsd', () => {
     ];
     assert.equal(spentUsd(sessions, project(null, 2)), 2.5);
     assert.equal(spentUsd([], { settings: {} }), 0);
+  });
+});
+
+describe('leastLoaded', () => {
+  const choices = [
+    { persona: 'a', personaLimit: 1 },
+    { persona: 'b', personaLimit: 2 },
+    { persona: 'c', personaLimit: null },
+  ];
+
+  it('keeps the given order (used longest ago first) when nothing runs', () => {
+    assert.equal(leastLoaded([], choices).persona, 'a');
+  });
+
+  it('picks the member with the fewest slot-holding sessions among those under their cap', () => {
+    const sessions = [
+      { id: '1', state: 'ready', persona: 'a' },
+      { id: '2', state: 'ready', persona: 'c' },
+      { id: '3', state: 'disconnected', persona: 'b' },
+    ];
+    assert.equal(leastLoaded(sessions, choices).persona, 'b');
+  });
+
+  it('skips a member at its cap even when it runs fewer than an uncapped one', () => {
+    const sessions = [
+      { id: '1', state: 'ready', persona: 'a' },
+      { id: '2', state: 'ready', persona: 'b' },
+      { id: '3', state: 'ready', persona: 'b' },
+      { id: '4', state: 'ready', persona: 'c' },
+      { id: '5', state: 'ready', persona: 'c' },
+      { id: '6', state: 'ready', persona: 'c' },
+    ];
+    assert.equal(leastLoaded(sessions, choices).persona, 'c');
+  });
+
+  it('falls back to the least busy member when every one is at its cap, for a start that will queue', () => {
+    const capped = [
+      { persona: 'a', personaLimit: 1 },
+      { persona: 'b', personaLimit: 1 },
+    ];
+    const sessions = [
+      { id: '1', state: 'ready', persona: 'a' },
+      { id: '2', state: 'queued', persona: 'a' },
+      { id: '3', state: 'ready', persona: 'b' },
+    ];
+    assert.equal(leastLoaded(sessions, capped).persona, 'b');
   });
 });

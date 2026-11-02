@@ -137,6 +137,9 @@ export type RouteResponse = {
   cleared: string[];
 };
 
+/** What app/api.ts answers for an error: its message, and its code when it carries one. */
+const errorBody = (err) => ({ error: err.message, ...(err.code ? { code: err.code } : {}) });
+
 /**
  * Calls an Express router in-process with a fake request and response, and
  * resolves with what it answered. An error passed to `next` (or thrown by an
@@ -174,6 +177,6 @@ export function callRoute(router, { method = 'GET', url, key, body, headers = {}
       setTimeout: () => req,
       ...extra,
     };
-    router(req, res, (err) => done(err ? ((out.status = err.status || 500), { error: err.message }) : 'unhandled'));
+    router(req, res, (err) => done(err ? ((out.status = err.status || 500), errorBody(err)) : 'unhandled'));
   });
 }

@@ -63,6 +63,15 @@ describe('workspace runs', () => {
     assert.deepEqual([saved.name, saved.repairedFrom, repair.stepId], ['Login-repair', 'd', 'a']);
   });
 
+  it('a repair does not carry the playbook name the original was saved as, so saving it adds a playbook', () => {
+    const store = new MemoryStore();
+    const workspace = { draft, store, run: { events: [], repairs: [] } };
+    const saved = { ...draft, publishedName: 'Login', publishedTo: 'acct' };
+    runs.applyMessage(workspace, { type: 'repair', stepId: 'a', draft: saved });
+    const repair = store.load(workspace.run.repairs[0].draftId);
+    assert.deepEqual([repair.publishedName, repair.publishedTo], [undefined, undefined]);
+  });
+
   it('notes a repair it could not save', () => {
     const workspace = { draft, store: new MemoryStore({}, { failSave: true }), run: { events: [], repairs: [] } };
     runs.applyMessage(workspace, { type: 'repair', stepId: 'a', draft });

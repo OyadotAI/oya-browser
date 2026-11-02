@@ -43,6 +43,29 @@ function startDrag(ctx: TabContext, event: PointerEvent<HTMLElement>): void {
   const press = { id, agent: !!agent, pointerId: event.pointerId, x: event.clientX, y: event.clientY, ...group(ctx) };
   ctx.drag.start({ ...press, ...measureSlots(list, event.currentTarget) }, stripPort(list));
   event.currentTarget.setPointerCapture?.(event.pointerId);
+  followPointer(ctx, event.pointerId);
+}
+
+/**
+ * Hears the press's moves and release on the whole window, not only on the tab. The
+ * tab loses pointer capture when a tear-off takes it off this strip, or moves this
+ * window under the pointer, and the release then never reached the tab, so the
+ * drop was never made. A second release on the tab finds the press already over.
+ */
+function followPointer(ctx: TabContext, pointerId: number): void {
+  const mine = (event: globalThis.PointerEvent) => event.pointerId === pointerId;
+  const move = (event: globalThis.PointerEvent) =>
+    mine(event) && ctx.drag.move(pointerId, event.clientX, event.clientY);
+  const up = (event: globalThis.PointerEvent) =>
+    mine(event) && (stopFollowing(move, up), ctx.strip.endPress(pointerId));
+  window.addEventListener('pointermove', move, true);
+  window.addEventListener('pointerup', up, true);
+}
+
+/** The press is over: the window stops passing its moves and release to the strip. */
+function stopFollowing(move: (event: globalThis.PointerEvent) => unknown, up: typeof move): void {
+  window.removeEventListener('pointermove', move, true);
+  window.removeEventListener('pointerup', up, true);
 }
 
 /** Where the pressed tab may go: within its own group (pinned or not), and off the strip only when it is not pinned. */

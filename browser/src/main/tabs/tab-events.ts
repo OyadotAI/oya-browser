@@ -4,19 +4,22 @@
  * along with its protection before the first page (tab-protector.ts).
  */
 import { privateSession } from '../native-contexts/index.ts';
+import { isIncognito } from '../incognito/index.ts';
 import type { AppServices } from '../app/services.ts';
 import { watchContents } from '../observe/install.ts';
 import { ERR_ABORTED } from './constants.ts';
 import { wireHome } from './home.ts';
 import { wireFavicon } from './favicon.ts';
 import { TabProtector } from './tab-protector.ts';
+import { rendererGone } from './tab-recovery.ts';
+import { sendZoom } from '../shell/page-zoom.ts';
 import { TabWindows, joinRecording, type TabWindowsDeps } from './tab-windows.ts';
 import type { Tab, TabView } from './types.ts';
 
 /** The services a tab's listeners use. */
 export type TabEventsDeps = TabWindowsDeps &
   Pick<AppServices, 'shortcuts' | 'shield' | 'observer' | 'library' | 'agentTab'> &
-  Partial<Pick<AppServices, 'translation'>>;
+  Partial<Pick<AppServices, 'tabHealthLog' | 'translation'>>;
 
 /**
  * Makes view-source pages readable (forces the light theme). This text runs
@@ -52,6 +55,7 @@ export class TabEvents {
     this.wireLibrary(tab);
     const tabReady = this.protector.protect(tab);
     this.wirePage(tab, tabReady);
+    this.wireZoom(tab);
     this.windows.wire(tab);
     return tabReady;
   }
@@ -62,9 +66,28 @@ export class TabEvents {
     this.wireLoadState(tab);
     this.wireFailures(tab);
     this.wireRendererLoss(tab);
-    wireHome(this.deps.tabs, tab);
-    wireFavicon(this.deps.tabs, tab);
+    // Read on each event, not now: `deps` resolves the tab's current window, which a tear-off changes.
+    wireHome(() => this.deps.tabs, tab);
+    wireFavicon(() => this.deps.tabs, tab);
     this.wireTranslation(tab);
+    if (tab.openedByPage) this.wireOpenedByPage(tab);
+  }
+
+  /**
+   * A page the opener made follows its opener, as in Chrome: when the page on screen
+   * sends it somewhere again (Preview clicked a second time) the tab comes forward rather
+   * than reloading out of sight, and when the opener closes it (`w.close()`) it
+   * leaves the strip.
+   */
+  private wireOpenedByPage(tab: Tab): void {
+    const contents = tab.view.webContents;
+    contents.on('did-start-navigation', ({ isMainFrame, initiator }) => {
+      // Only the page the person is looking at may bring it forward: a background page cannot pull focus.
+      const shown = this.deps.tabs.find(this.deps.tabs.activeTabId)?.view.webContents.mainFrame;
+      const fromShown = !!shown && initiator?.top?.frameTreeNodeId === shown.frameTreeNodeId;
+      if (isMainFrame && fromShown) this.deps.tabs.activateTab(tab.id);
+    });
+    contents.once('destroyed', () => this.deps.tabs.closeTab(tab.id));
   }
 
   /** Translation: a new document drops the last one's, dom-ready reads the language, a finished load keeps translating. */
@@ -110,9 +133,9 @@ export class TabEvents {
       if (!mainFrame || code === ERR_ABORTED) return;
       failed(`Page could not load: ${description}. Try Reload.`);
     });
-    tab.view.webContents.on('render-process-gone', (_event, details) => {
-      failed(`Page renderer stopped (${details.reason}). Reload to recover.`);
-    });
+    tab.view.webContents.on('render-process-gone', (_event, details) =>
+      rendererGone(this.deps, tab, details.reason, failed),
+    );
   }
 
   /** A finished load, the address, the title, and joining a recording in progress. */
@@ -125,12 +148,24 @@ export class TabEvents {
     // New tabs join an active recording before the user can interact with them; one never protected has nothing to record.
     tabReady.then(() => tab.protection === 'protected' && joinRecording(this.deps.recorder, tab.view));
     this.wireTitle(tab);
-    if (this.deps.observer) watchContents(this.deps.observer, contents);
+    // Agents read the observer (read_console), so an incognito page's console never reaches it.
+    if (this.deps.observer && !isIncognito(contents.session)) watchContents(this.deps.observer, contents);
   }
 
-  /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. */
+  /**
+   * A zoom the page asked for itself (Ctrl+wheel) reaches the address bar's chip.
+   * Electron reports the request before the zoom settles, so the chip reads it a tick later.
+   */
+  private wireZoom(tab: Tab): void {
+    tab.view.webContents.on('zoom-changed', () =>
+      setImmediate(() => tab.id === this.deps.tabs.activeTabId && sendZoom(this.deps, true)),
+    );
+  }
+
+  /** Native navigation drives outcome checks; each active recorder owns its native frame subscriptions. Not for incognito. */
   private wireRecording(tab: Tab): void {
     const contents = tab.view.webContents;
+    if (isIncognito(contents.session)) return;
     contents.on('did-navigate', (_e, u) => this.deps.recorder.pageReached?.(tab.id, u));
     contents.on(
       'did-navigate-in-page',

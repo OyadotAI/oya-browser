@@ -47,3 +47,10 @@ export const FAVICON_URL = /^(https?|data):/i;
 
 /** A staged sign-in destination must become usable within this bounded wait. */
 export const GOOGLE_APP_HANDOFF_TIMEOUT = 30000;
+
+/** The file in the user-data folder that tab renderer deaths and Reload recoveries are logged to. */
+export const TAB_HEALTH_FILE = 'tab-health.json';
+/** How many health events the log keeps, newest last. */
+export const TAB_HEALTH_ENTRIES = 200;
+/** How long a person's Reload waits for a page's preload to answer before ending its stuck renderer: a live page answers in milliseconds, even mid-load. */
+export const TAB_PROBE_MS = 2000;

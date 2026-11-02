@@ -6,6 +6,7 @@
  */
 import { commandShortcut } from '../../../../shared/shortcuts.ts';
 import { ViewModel } from '../../../core/view-model.ts';
+import { commandOffered } from '../../../hooks/index.ts';
 import type { RendererServices } from '../../../app/services.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { ShellDialogViewModel } from './shell-dialog-view-model.ts';
@@ -35,6 +36,7 @@ export type CommandId =
   | 'forward'
   | 'address'
   | 'newTab'
+  | 'newIncognitoWindow'
   | 'ask'
   | 'record'
   | 'network'
@@ -63,6 +65,7 @@ const COMMANDS: readonly (readonly [CommandId, string, string])[] = [
   ['address', 'Focus address bar', 'address'],
   ['notifications', 'Notifications', 'notifications'],
   ['newTab', 'New tab', 'new-tab'],
+  ['newIncognitoWindow', 'New incognito window', 'new-incognito-window'],
   ['ask', 'Ask Oya', 'ask'],
   ['record', 'Record a workflow', 'record'],
   ['inspect', 'Inspect this page', 'inspect'],
@@ -91,9 +94,13 @@ export interface PaletteState {
   query: string;
 }
 
-/** Every command for `platform` (navigator.platform): ⌘ on a Mac, Ctrl elsewhere. */
+/** Every command this window offers, for `platform` (navigator.platform): ⌘ on a Mac, Ctrl elsewhere. */
 export function commandsFor(platform: string): Command[] {
-  return COMMANDS.map(([id, label, command]) => ({ id, label, shortcut: commandShortcut(command, platform) }));
+  return COMMANDS.filter(([id]) => commandOffered(id)).map(([id, label, command]) => ({
+    id,
+    label,
+    shortcut: commandShortcut(command, platform),
+  }));
 }
 
 /** The commands whose label holds `query`, ignoring case. */
@@ -105,7 +112,10 @@ export function matching(commands: Command[], query: string): Command[] {
 /** What the palette needs from its neighbours. */
 export interface PaletteDeps extends Pick<RendererServices, 'panel' | 'shell'> {
   /** The main process. */
-  bridge: Pick<OyaBrowser, 'makeDefaultBrowser' | 'newTab' | 'onShellCommand' | 'showLibrary' | 'goBack' | 'goForward'>;
+  bridge: Pick<
+    OyaBrowser,
+    'makeDefaultBrowser' | 'newTab' | 'newIncognitoWindow' | 'onShellCommand' | 'showLibrary' | 'goBack' | 'goForward'
+  >;
   /** The dialog the palette lives in. */
   dialog: Pick<ShellDialogViewModel, 'open' | 'openShortcuts' | 'close' | 'state' | 'subscribe'>;
   /** Check for updates. */
@@ -165,21 +175,27 @@ export class PaletteViewModel extends ViewModel<PaletteState> {
     if (first) await this.run(first.id);
   }
 
-  /** Runs a forwarded shortcut; unknown ones are ignored. */
+  /** Runs a forwarded shortcut; unknown ones, and agent ones in an incognito window, are ignored. */
   shortcut(name: string): void {
-    if (Object.hasOwn(this.shortcuts, name)) void this.shortcuts[name as ShortcutName]();
+    if (Object.hasOwn(this.shortcuts, name) && commandOffered(name)) void this.shortcuts[name as ShortcutName]();
   }
 
   /** What each command does. */
   private commandActions(): Record<CommandId, () => unknown> {
-    const { bridge, dialog, updates } = this.deps;
+    const { dialog, updates } = this.deps;
+    const groups = [this.hostActions(), this.paneActions(), this.libraryActions(), this.browsingActions()];
     return {
-      ...Object.assign({}, this.hostActions(), this.paneActions(), this.libraryActions(), this.browsingActions()),
+      ...Object.assign({}, ...groups, this.windowActions()),
       notifications: () => this.deps.host.openNotifications?.(),
-      newTab: () => bridge.newTab(),
       account: () => dialog.open(true),
       updates: () => updates.check(),
     };
+  }
+
+  /** A new tab, or a new incognito window (offered only where the browser has one). */
+  private windowActions(): Record<'newTab' | 'newIncognitoWindow', () => unknown> {
+    const { bridge } = this.deps;
+    return { newTab: () => bridge.newTab(), newIncognitoWindow: () => bridge.newIncognitoWindow() };
   }
 
   /** Navigation uses the existing human-control-guarded IPC handlers. */

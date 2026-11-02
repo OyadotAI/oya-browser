@@ -3,14 +3,15 @@
  * new tab's page would be. The task box's text is the view's own; Enter or
  * the send button hands it to the agent, Shift+Enter is a new line, and an
  * example runs as if typed. Each arrival replays the page's entrance and puts
- * the address bar in charge of keyboard focus.
+ * the address bar in charge of keyboard focus. An incognito window has no
+ * task box, since no agent works there: it says what the window keeps instead.
  */
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { useViewModel } from '../../../hooks/index.ts';
+import { incognito, useViewModel } from '../../../hooks/index.ts';
 import { IconButton, Orb } from '../../../ui/index.ts';
 import './start-page.css';
 import type { StartViewModel } from '../view-models/start-view-model.ts';
-import { ARRIVING, EXAMPLES, SUBMIT_KEY, TEXT } from '../model/constants.ts';
+import { ARRIVING, EXAMPLES, INCOGNITO_TEXT, SUBMIT_KEY, TEXT } from '../model/constants.ts';
 
 /** What the start page is given. */
 export interface StartPageProps {
@@ -48,8 +49,31 @@ function StartExamples({ vm }: StartPageProps) {
   );
 }
 
-/** The start page. */
+/** The start page: the task box, or in an incognito window what it keeps. */
 export function StartPage({ vm }: StartPageProps) {
+  return incognito() ? <IncognitoStartPage vm={vm} /> : <TaskStartPage vm={vm} />;
+}
+
+/** An incognito window's start page: what is and is not kept, and that it is not another identity. */
+function IncognitoStartPage({ vm }: StartPageProps) {
+  const { home, arrivals } = useViewModel(vm);
+  const { page } = useArrival(arrivals);
+  return (
+    <main className="start-page" id="start-page" aria-labelledby="start-title" hidden={!home} ref={page}>
+      <div className="start-lattice" aria-hidden="true"></div>
+      <div className="start-center">
+        <h1 className="start-title" id="start-title">
+          {INCOGNITO_TEXT.title}
+        </h1>
+        <p className="start-sub">{INCOGNITO_TEXT.kept}</p>
+        <p className="start-sub">{INCOGNITO_TEXT.identity}</p>
+      </div>
+    </main>
+  );
+}
+
+/** The start page's task box, which hands what is typed to the agent. */
+function TaskStartPage({ vm }: StartPageProps) {
   const { home, arrivals } = useViewModel(vm);
   const { page, input } = useArrival(arrivals);
   const [task, setTask] = useState('');

@@ -34,6 +34,16 @@ export interface ChatAnswer {
   toolCalls?: ToolCall[];
   /** Whether the server recorded steps a playbook can replay (absent on an older server). */
   replayable?: boolean;
+  /** The tokens the run used (absent on an older server, or when the model reported none). */
+  usage?: RunUsage;
+}
+
+/** A run's tokens as the server reports them: what was sent to the model and what came back. */
+export interface RunUsage {
+  /** Prompt tokens, cached ones included. */
+  input?: number;
+  /** Completion tokens, reasoning included. */
+  output?: number;
 }
 
 /** One model a provider offers. */
@@ -100,6 +110,10 @@ export interface AgentRunEvent {
   line?: string;
   /** A step's tool, when it has no line. */
   tool?: string;
+  /** A usage event's prompt tokens so far. */
+  input?: number;
+  /** A usage event's completion tokens so far. */
+  output?: number;
 }
 
 /** An activity entry (`onDevLog`). */

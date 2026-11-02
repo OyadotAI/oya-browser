@@ -44,9 +44,7 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
           Plan access granted by support. Any existing paid subscription remains separate.
         </p>
       )}
-      {late && (
-        <p className="text-xs text-red-400">Your last payment failed. Update your card to keep using the cloud.</p>
-      )}
+      {late && <p className="text-xs text-red">Your last payment failed. Update your card to keep using the cloud.</p>}
       <div className="flex flex-wrap gap-2">
         {!(b.canManage ?? b.plan !== 'free') ? (
           UPGRADES.map((p) => (
@@ -56,7 +54,7 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
           <Go onClick={() => void s.manage()}>Change card, see receipts or cancel</Go>
         )}
       </div>
-      {s.error && <p className="text-xs text-red-400">{s.error}</p>}
+      {s.error && <p className="text-xs text-red">{s.error}</p>}
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
         <a className="underline" href={`mailto:${SALES_EMAIL}`}>
@@ -86,7 +84,7 @@ function Bar({ value }: { /** 0 to 1. */ value: number }) {
   return (
     <div className="h-1.5 w-32 rounded-full bg-text/10">
       <div
-        className={`h-1.5 rounded-full ${value >= 1 ? 'bg-red-400' : 'bg-accent'}`}
+        className={`h-1.5 rounded-full ${value >= 1 ? 'bg-red' : 'bg-accent'}`}
         style={{ width: `${Math.round(value * PERCENT)}%` }}
       />
     </div>

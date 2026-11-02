@@ -1,15 +1,16 @@
 /**
- * The address bar (index.html's .address-wrap): the globe, the #url-bar input
- * and the loading status. Enter loads what it says and lets go of the focus;
+ * The address bar (index.html's .address-wrap): the globe, the #url-bar input,
+ * the loading status and the zoom chip. Enter loads what it says and lets go of the focus;
  * a focus request (Cmd/Ctrl L) focuses and selects it. The page's title
  * becomes the window's.
  */
 import { useEffect, useRef, type KeyboardEvent } from 'react';
-import { useViewModel } from '../../../hooks/index.ts';
+import { incognito, useViewModel } from '../../../hooks/index.ts';
 import { Icon, IconButton } from '../../../ui/index.ts';
 import { navLook, windowTitle, type ToolbarViewModel } from '../view-models/toolbar-view-model.ts';
 import { AddressSuggestions } from './address-suggestions.tsx';
 import { TranslateChip } from './translate-chip.tsx';
+import { ZoomChip } from './zoom-chip.tsx';
 import { TEXT } from '../model/constants.ts';
 
 /** What the address bar is given. */
@@ -27,7 +28,7 @@ function addressKey(event: KeyboardEvent<HTMLInputElement>, vm: ToolbarViewModel
   }
   if (event.key === 'Escape') {
     event.preventDefault();
-    vm.completion.dismiss();
+    vm.escape();
   }
   if (event.key === 'Enter') {
     event.preventDefault();
@@ -73,8 +74,8 @@ function AddressInput({ vm }: AddressBarProps) {
       spellCheck={false}
       autoComplete="off"
       value={url + inline}
-      onFocus={() => void vm.completion.search(vm.state.url)}
-      onBlur={() => vm.completion.dismiss()}
+      onFocus={() => vm.focused()}
+      onBlur={() => vm.blurred()}
       onChange={(event) => vm.edit(event.target.value, typed(event.nativeEvent))}
       onKeyDown={(event) => addressKey(event, vm)}
     />
@@ -83,10 +84,11 @@ function AddressInput({ vm }: AddressBarProps) {
 
 /** The star at the address bar's end, as in Chrome: filled when the page is bookmarked; a click saves or removes it. */
 function BookmarkStar({ vm }: AddressBarProps) {
-  const { url } = useViewModel(vm);
+  // The page, not the text: the star toggles the page that is open, whatever is being typed. Incognito keeps no bookmarks.
+  const { page } = useViewModel(vm);
   const { saved } = useViewModel(vm.bookmarks);
-  if (!/^https?:\/\//i.test(url)) return null;
-  const on = saved.includes(url);
+  if (incognito() || !/^https?:\/\//i.test(page)) return null;
+  const on = saved.includes(page);
   return (
     <IconButton
       className={on ? 'bookmark-star saved' : 'bookmark-star'}
@@ -120,6 +122,7 @@ export function AddressBar({ vm }: AddressBarProps) {
         {look.status}
       </span>
       <TranslateChip vm={vm.translate} />
+      <ZoomChip vm={vm.zoom} />
       <BookmarkStar vm={vm} />
       <AddressSuggestions vm={vm} />
     </div>

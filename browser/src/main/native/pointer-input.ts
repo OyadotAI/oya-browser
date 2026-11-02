@@ -1,7 +1,8 @@
 /** External pointer semantics translated to browser-owned input, never an engine debugging protocol. */
 import type { MouseInputEvent, MouseWheelInputEvent } from 'electron';
 import type { NativePage } from './page.ts';
-import { nativePointerExact } from '../input/index.ts';
+import { nativePointerExact, withPointerReadiness } from '../input/index.ts';
+import { evaluateFrame } from './frames.ts';
 import { INPUT_LIMITS, INPUT_MODIFIERS, INPUT_BUTTONS, BUTTON_MODIFIERS } from './constants.ts';
 /** Protocol-independent operation names accepted by the native boundary. */
 const TYPES = {
@@ -69,13 +70,25 @@ function buttonBit(params: Params): number {
   return bit;
 }
 /** Convert CSS pixels using the exact page's zoom, not the focused window or device scale. */
-export function dispatchNativePointer(page: NativePage, params: Params): object {
+export function dispatchNativePointer(page: NativePage, params: Params, guard = () => {}): object | Promise<object> {
   validatePointer(params);
   if (page.webContents.isDestroyed()) throw Error('View is destroyed');
+  if (params.type === 'mouseWheel') return readyWheel(page, { ...params }, guard);
+  sendPointer(page, params);
+  return {};
+}
+/** Renderer frame boundaries commit the updated scroll tree; CSS coordinates precede final native zoom conversion. */
+async function readyWheel(page: NativePage, params: Params, guard: () => void): Promise<object> {
+  const code = `void document.elementFromPoint(${params.x},${params.y});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())))`;
+  const read = (frame: Parameters<typeof evaluateFrame>[0]) => evaluateFrame(frame, code);
+  await withPointerReadiness(page, read, guard, () => sendPointer(page, params));
+  return {};
+}
+/** Read the exact page's current native zoom after readiness, with no retargeting or authored conversion. */
+function sendPointer(page: NativePage, params: Params): void {
   const zoom = page.webContents.getZoomFactor();
   if (!Number.isFinite(zoom) || zoom <= 0) throw Error('Native page zoom is unavailable');
   nativePointerExact(page, pointerEvent(params, zoom));
-  return {};
 }
 /** Native move/wheel events use modifiers for held buttons; no-button does not invent a press. */
 function pointerEvent(params: Params, zoom: number): MouseInputEvent | MouseWheelInputEvent {

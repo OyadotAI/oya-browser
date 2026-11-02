@@ -256,8 +256,12 @@ body.mode-browsing .tab-bar {
   inset: 0;
   opacity: 0;
 }
-/* The active tiny tab swaps its icon for its close button; a pinned one has no close button, so it keeps its icon. */
-.tab-list[data-size='tiny'] .tab-item.active:not(.pinned) .tab-icon {
+/* The active tiny tab swaps its icon for its close button; a pinned one has no close button, so it keeps its icon,
+   and a shared one keeps its icon (and its ring) and drops close: Delete, middle-click and Cmd+W still close it. */
+.tab-list[data-size='tiny'] .tab-item.active:not(.pinned):not(.sharing) .tab-icon {
+  display: none;
+}
+.tab-list[data-size='tiny'] .tab-item.active.sharing .tab-close {
   display: none;
 }
 /* ── Pinned: the icon alone at a fixed width, at every strip size, as in Chrome (matches TAB_PINNED_WIDTH) ── */
@@ -296,6 +300,14 @@ body.mode-browsing .tab-bar {
       0 0 0 1.5px var(--chrome-bar),
       0 0 6px 1px color-mix(in srgb, var(--oya) 70%, transparent);
   }
+}
+/* ── Shared in a call: a still red ring round the icon, like the recording state; the agent light pulses, this does not ── */
+.tab-item.sharing .tab-icon::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid var(--danger);
+  border-radius: 5px;
 }
 /* ── Opening, closing and dragging ── */
 .tab-item.opening {
@@ -412,6 +424,47 @@ body.mode-browsing .tab-bar {
   .tab-bar .tab-new,
   .tab-bar #btn-commands {
     transition: none;
+    animation: none;
+  }
+}
+/* ── A tab carried in from another window: lifted in the gap the strip opened for it, like a dragged tab ── */
+.tab-list .tab-item.incoming {
+  position: absolute;
+  bottom: 0;
+  z-index: 2;
+  border-radius: var(--tab-radius);
+  background: var(--chrome-bar);
+  color: var(--text);
+  font-weight: 500;
+  box-shadow:
+    0 6px 16px #0000002e,
+    0 0 0 0.5px var(--hairline);
+  pointer-events: none;
+  transition: none;
+  animation: tab-incoming-in var(--tab-motion) var(--tab-ease);
+}
+.tab-list .tab-item.incoming::before,
+.tab-list .tab-item.incoming::after {
+  opacity: 0;
+}
+.tab-item.incoming .tab-title {
+  display: flex;
+  align-items: center;
+}
+.tab-incoming-room {
+  flex: none;
+  width: var(--tab-width);
+  animation: tab-open var(--tab-motion) var(--tab-ease);
+}
+@keyframes tab-incoming-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-list .tab-item.incoming,
+  .tab-incoming-room {
     animation: none;
   }
 }

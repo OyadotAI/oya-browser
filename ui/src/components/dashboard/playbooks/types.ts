@@ -9,8 +9,10 @@ export interface PlaybookBody {
   name: string;
   /** Fields a caller can override on replay. */
   variables: string[];
-  /** The values the recording used, which an untouched field replays with. */
+  /** The values the recording used, which an untouched field replays with (never a secret's). */
   defaults: Record<string, string>;
+  /** The fields holding secrets, whose saved values are used and never sent back. */
+  secrets?: string[];
   /** How many steps the replay makes. */
   steps: number;
   /** The same flow as a Playwright module. */

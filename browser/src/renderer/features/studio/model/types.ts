@@ -98,6 +98,8 @@ export interface Draft {
   revision: number;
   /** When it was last saved to Oya, if ever. */
   publishedAt?: number;
+  /** The playbook name it was last saved as, if ever. */
+  publishedName?: string;
 }
 
 /** Something that stops the workflow running. */
@@ -188,6 +190,8 @@ export interface WorkspaceSnapshot {
   library: LibraryItem[];
   /** Whether the draft is what was last saved to Oya. */
   saved: boolean;
+  /** The playbook a save under another name renames: the one saved from this draft on this account, or null. */
+  renameFrom?: string | null;
   /** Why the draft could not be stored, or null. */
   storageError: string | null;
   /** Whether Undo has something to undo. */

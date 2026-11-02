@@ -22,6 +22,12 @@ export const TEXT = {
   closeUntitled: 'Close tab',
   /** What a screen reader adds after a pinned tab's title. */
   pinned: 'Pinned',
+  /** What a screen reader adds after a tab a call is capturing, and the hover card's note on it. */
+  sharing: 'Shared in a call',
+  /** The same, for a pinned tab. */
+  pinnedSharing: 'Pinned, shared in a call',
+  /** Between the hover card's address and that note. */
+  noteSeparator: ' · ',
   /** The card's address line on the start page. */
   home: 'Oya start page',
   /** The card's address line for a tab with no address. */

@@ -8,9 +8,10 @@ import assert from 'node:assert/strict';
 import { TabManager } from '../../../../src/main/tabs/tabs.ts';
 import * as order from '../../../../src/main/tabs/tab-order.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 const { ClosedTabs, reorder, moveTabTo, openBeside, closeOthers, closeToRight, reopenClosed, reopenable } = order;
-const { pinnable, pinnedCount, setPinned } = order;
+const { pinnable, pinnedCount, setPinned, openLink } = order;
 
 describe('reopenable', () => {
   it('excludes the start page, popups, blank tabs and tabs with no address', () => {
@@ -21,6 +22,14 @@ describe('reopenable', () => {
     assert.equal(reopenable({ ...page, url: 'about:blank' } as any), false);
     assert.equal(reopenable({ ...page, url: '' } as any), false);
     assert.equal(reopenable({ url: 'https://a.test/', view: {} } as any), true, 'a tab with no session yet');
+  });
+
+  it('reopens an incognito tab only in its own session, under the same rules as any tab', async () => {
+    const session = await incognitoSession();
+    const tab = { url: 'https://a.test/', view: { webContents: { session } } };
+    assert.equal(reopenable(tab as any), false, 'private to every other window');
+    assert.equal(reopenable(tab as any, session), true);
+    assert.equal(reopenable({ ...tab, home: true } as any, session), false, 'never a start page');
   });
 });
 
@@ -86,6 +95,57 @@ describe('the strip order', () => {
     const id = openBeside(ctx.tabs, 2, 'https://e.test/');
     assert.deepEqual(ids(), [1, 2, id, 3, 4]);
     assert.equal(ctx.tabs.activeTabId, id);
+  });
+
+  describe('opening a link in a new tab', () => {
+    /** Tab `id`'s page, as the link's opener. */
+    const page = (id: number) => ctx.tabs.find(id).view;
+    beforeEach(() => ctx.tabs.activateTab(2));
+
+    it('opens it in the background, so the person stays on the page', () => {
+      const id = openLink(ctx.tabs, { page: page(2), url: 'https://e.test/' });
+      assert.equal(ctx.tabs.activeTabId, 2);
+      assert.equal(ctx.tabs.find(id).openerId, 2);
+    });
+
+    it('puts it right of the page it was on', () => {
+      const id = openLink(ctx.tabs, { page: page(2), url: 'https://e.test/' });
+      assert.deepEqual(ids(), [1, 2, id, 3, 4]);
+    });
+
+    it('keeps links opened in a row in the order they were opened', () => {
+      const first = openLink(ctx.tabs, { page: page(2), url: 'https://e.test/' });
+      const second = openLink(ctx.tabs, { page: page(2), url: 'https://f.test/' });
+      assert.deepEqual(ids(), [1, 2, first, second, 3, 4]);
+    });
+
+    it('keeps the order of links opened in a row from a pinned tab, after the pinned block', () => {
+      setPinned(ctx.tabs, 1, true);
+      setPinned(ctx.tabs, 2, true);
+      const first = openLink(ctx.tabs, { page: page(1), url: 'https://e.test/' });
+      const second = openLink(ctx.tabs, { page: page(1), url: 'https://f.test/' });
+      assert.deepEqual(ids(), [1, 2, first, second, 3, 4]);
+    });
+
+    it('shows it when asked (a plain target=_blank click)', () => {
+      const id = openLink(ctx.tabs, { page: page(2), url: 'https://e.test/', show: true });
+      assert.equal(ctx.tabs.activeTabId, id);
+      assert.deepEqual(ids(), [1, 2, id, 3, 4]);
+    });
+
+    it("opens in the page's session, so a persona or private context carries over", () => {
+      const session = { cookies: {} };
+      page(2).webContents.session = session;
+      const id = openLink(ctx.tabs, { page: page(2), url: 'https://e.test/' });
+      assert.equal(ctx.tabs.find(id).view.options.webPreferences.session, session);
+    });
+
+    it('still opens, at the end, when the page is no longer on the strip', () => {
+      const gone = page(2);
+      ctx.tabs.closeTab(2);
+      const id = openLink(ctx.tabs, { page: gone, url: 'https://e.test/' });
+      assert.equal(ids().at(-1), id);
+    });
   });
 
   it('closes every other tab and shows the one kept', () => {

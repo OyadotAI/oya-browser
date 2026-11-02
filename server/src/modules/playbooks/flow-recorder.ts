@@ -96,7 +96,8 @@ async function begin(browserId, state, dispatch) {
 function schedule(browserId, state, dispatch) {
   state.timer = setInterval(() => {
     if (!state.recording) return settle(browserId, state);
-    if (Date.now() - Date.parse(state.startedAt) > RECORD_MAX_MS) return void stop(browserId, dispatch).catch(() => {});
+    if (Date.now() - Date.parse(state.startedAt) > RECORD_MAX_MS)
+      return void stop(browserId, dispatch).catch(() => endUnanswered(browserId, state));
     poll(state, dispatch).catch(() => {});
   }, RECORD_POLL_MS);
   state.timer.unref?.();
@@ -115,6 +116,12 @@ export async function stop(browserId, dispatch) {
   const final = await poll(state, dispatch, 'stop');
   settle(browserId, state);
   return final;
+}
+
+/** A recording at its time limit whose browser could not take the stop (gone, or no longer the person's) ends with the steps so far. */
+function endUnanswered(browserId, state) {
+  state.recording = false;
+  settle(browserId, state);
 }
 
 /** Forgets the stopped recording after RECORD_MAX_MS, unless a newer one replaced it. */

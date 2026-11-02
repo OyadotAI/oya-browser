@@ -11,7 +11,7 @@ import { matching, sites, dayLabel, type LibrarySort } from './library-model.ts'
 import { heading, emptyState } from './library-copy.ts';
 import { text, row, button, downloadRow } from './library-dom.ts';
 /** Library calls remain on the trusted shell bridge. */
-type LibraryBridge = Pick<OyaBrowser, 'readLibrary' | 'libraryAction' | 'onBookmarksBar'>;
+type LibraryBridge = Pick<OyaBrowser, 'readLibrary' | 'libraryAction' | 'onBookmarksBar' | 'onShellCommand'>;
 /** Filter state belongs to this window and never changes saved data. */
 export class LibraryView {
   /** Cancels global listeners and fences late IPC responses on tab switches. */
@@ -66,6 +66,9 @@ export class LibraryView {
     const options = { signal: this.lifetime.signal };
     const forget = this.bridge.onBookmarksBar(() => void this.refresh());
     this.lifetime.signal.addEventListener('abort', forget, { once: true });
+    // The main process takes Cmd/Ctrl+F before the page sees it, and hands it back here: find is the library's search.
+    const unfind = this.bridge.onShellCommand((name) => name === 'find' && this.element('search').focus());
+    this.lifetime.signal.addEventListener('abort', unfind, { once: true });
     this.root.addEventListener('keydown', (event) => this.key(event), options);
     window.addEventListener('focus', () => void this.refresh(), options);
   }
@@ -109,12 +112,8 @@ export class LibraryView {
     this.search();
     this.element('search').focus();
   }
-  /** Familiar find and close shortcuts work without a page-world bridge. */
+  /** Esc clears the search (Cmd/Ctrl+F arrives as the main process's 'find' command, see events()). */
   private key(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key === 'f') {
-      event.preventDefault();
-      this.element('search').focus();
-    }
     if (event.key === 'Escape') this.reset();
   }
   /** Main verifies the source entry and profile again before any mutation or navigation. */

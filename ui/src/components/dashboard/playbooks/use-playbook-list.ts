@@ -1,8 +1,9 @@
 /**
  * The saved playbooks, refreshed on an interval, with the last load error.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { errorMessage } from '@/lib/api-client';
+import { usePolling } from '@/lib/hooks/use-polling';
 import { listPlaybooks } from './api';
 import { PLAYBOOKS_POLL_MS } from './constants';
 import type { PlaybookInfo } from './types';
@@ -26,20 +27,11 @@ async function loadPlaybooks(apiKey: string, sink: LoadSink) {
   }
 }
 
-/** Runs `refresh` now and on an interval, restarting whenever it changes. */
-function usePolling(refresh: () => void) {
-  useEffect(() => {
-    refresh();
-    const timer = setInterval(refresh, PLAYBOOKS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
-}
-
 /** The playbook list (null until first loaded), its load error, and a refresh. */
 export function usePlaybookList(apiKey: string) {
   const [playbooks, setPlaybooks] = useState<PlaybookInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const refresh = useCallback(() => loadPlaybooks(apiKey, { loaded: setPlaybooks, failed: setLoadError }), [apiKey]);
-  usePolling(refresh);
+  usePolling(refresh, PLAYBOOKS_POLL_MS);
   return { playbooks, loadError, refresh };
 }

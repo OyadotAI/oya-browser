@@ -253,3 +253,40 @@ describe('reserve: governance and budgets', () => {
     await assert.rejects(reserve(A, { provider: 'oya-selfhosted', managed: true }), { code: 'budget_admission' });
   });
 });
+
+describe('reserve: a group start', () => {
+  const choices = [
+    { persona: 'g-1', personaLimit: 1 },
+    { persona: 'g-2', personaLimit: 1 },
+  ];
+
+  it('spreads a burst across the members, choosing under the lock rather than from what has registered', async () => {
+    const first = await reserve(A, { personaChoices: choices });
+    const second = await reserve(A, { personaChoices: choices });
+    assert.deepEqual([first.persona, second.persona], ['g-1', 'g-2']);
+  });
+
+  it('refuses a start when every member is at its cap and it will not queue', async () => {
+    await reserve(A, { personaChoices: choices });
+    await reserve(A, { personaChoices: choices });
+    await assert.rejects(reserve(A, { personaChoices: choices }), { status: 429, code: 'quota_exceeded' });
+  });
+
+  it('queues a start on the least busy member, sealed to run as that member', async () => {
+    await reserve(A, { personaChoices: choices });
+    await reserve(A, { personaChoices: choices });
+    await reserve(A, { personaChoices: choices, request: { queueMs: 60_000 } });
+    const queued = await reserve(A, { personaChoices: choices, request: { queueMs: 60_000 } });
+    assert.deepEqual([queued.state, queued.persona], ['queued', 'g-2']);
+    const sealed = openText(`queue:${queued.id}`, queued.queuedRequest);
+    assert.deepEqual([sealed.persona, sealed.profile], ['g-2', 'g-2']);
+  });
+
+  it('replays a repeated start with the member it chose the first time', async () => {
+    const options = { personaChoices: choices, idempotencyKey: 'idem-group', request: { personaGroup: 'pool' } };
+    const first = await reserve(A, options);
+    await reserve(A, { personaChoices: choices });
+    const again = await reserve(A, options);
+    assert.deepEqual([again.replay, again.persona], [true, first.persona]);
+  });
+});

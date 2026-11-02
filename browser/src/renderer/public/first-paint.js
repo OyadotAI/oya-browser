@@ -12,5 +12,13 @@ if (FIRST_THEME === 'dark' || FIRST_THEME === 'light') document.documentElement.
 /** Shell-only motion policy is established before styles or application code run. */
 document.documentElement.dataset.oyaStill = String(new URLSearchParams(location.search).get('still') === 'true');
 
+/** An incognito window is marked before its first paint, so it never flashes the normal chrome (core/tokens.css). */
+document.documentElement.dataset.incognito = String(new URLSearchParams(location.search).get('incognito') === 'true');
+
+/** Whether this browser offers incognito windows at all; governance is fixed at launch, so this never changes. */
+document.documentElement.dataset.incognitoAvailable = String(
+  new URLSearchParams(location.search).get('incognitoAvailable') === 'true',
+);
+
 /** A detached or new window is already part of a running app; it never replays launch. */
 document.documentElement.dataset.secondary = String(new URLSearchParams(location.search).get('secondary') === 'true');

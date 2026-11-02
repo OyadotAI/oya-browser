@@ -18,15 +18,32 @@ export interface ReadyChecks {
 /** Session states from which a browser will never come up. */
 const ENDED: ControlSession['state'][] = ['failed', 'stopped', 'unknown_outcome'];
 
-/** Resolves once the browser is connected; throws when it ended or the time ran out. */
+/** Sleeps until the next poll, or until `deadline`, whichever is sooner, so a short budget is not overshot by a whole poll. */
+export const pollPause = (deadline: number) => {
+  const left = deadline - Date.now();
+  return left <= 0 ? Promise.resolve() : new Promise((r) => setTimeout(r, Math.min(READY_POLL_MS, left)));
+};
+
+/** The 504 when the browser never dialled in before the budget ran out. */
+const notReady = (id: string, timeoutMs: number) =>
+  new OyaError(
+    `Browser ${id} did not come up within ${Math.round(timeoutMs / MS_PER_SECOND)}s`,
+    Status.GATEWAY_TIMEOUT,
+    null,
+  );
+
+/**
+ * Resolves once the browser is connected; throws when it ended or the time ran
+ * out. Poll sleeps are capped to the remaining budget, and one last check runs
+ * after the deadline so a dial-in during the final pause is not missed.
+ */
 export async function waitUntilConnected(checks: ReadyChecks, id: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  for (;;) {
     if (await isUp(checks, id)) return;
-    await new Promise((r) => setTimeout(r, READY_POLL_MS));
+    if (Date.now() >= deadline) throw notReady(id, timeoutMs);
+    await pollPause(deadline);
   }
-  const seconds = Math.round(timeoutMs / MS_PER_SECOND);
-  throw new OyaError(`Browser ${id} did not come up within ${seconds}s`, Status.GATEWAY_TIMEOUT, null);
 }
 
 /** Whether the browser is in the fleet and alive. */

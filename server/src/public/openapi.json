@@ -1425,6 +1425,67 @@
         }
       }
     },
+    "/persona-groups": {
+      "get": {
+        "summary": "List persona groups",
+        "description": "The caller's persona groups, each with its members that still exist.",
+        "operationId": "listPersonaGroups",
+        "responses": {
+          "200": {
+            "description": "The groups.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "groups": { "type": "array", "items": { "$ref": "#/components/schemas/PersonaGroup" } } } } } }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a persona group",
+        "description": "A named set of the caller's personas that a browser start can name with personaGroup. The name is what the caller's code passes, so it cannot be renamed. Members must be the caller's own personas, never the default one. Answers 409 group_exists for a name the caller already has, 404 for a persona that is not the caller's.",
+        "operationId": "createPersonaGroup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "description": "1-64 letters, digits, dot, dash or underscore." },
+                  "personaIds": { "type": "array", "items": { "type": "string" }, "description": "The member persona ids; may be empty." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "The group.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaGroup" } } } },
+          "400": { "description": "A malformed name or member list, an unknown field, or the default persona as a member.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "404": { "description": "A member is not one of the caller's personas.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "409": { "description": "The caller already has a group of that name (group_exists).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/persona-groups/{name}": {
+      "parameters": [{ "name": "name", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "put": {
+        "summary": "Replace a persona group's members",
+        "operationId": "replacePersonaGroup",
+        "requestBody": {
+          "content": { "application/json": { "schema": { "type": "object", "required": ["personaIds"], "properties": { "personaIds": { "type": "array", "items": { "type": "string" } } } } } }
+        },
+        "responses": {
+          "200": { "description": "The group.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PersonaGroup" } } } },
+          "404": { "description": "No such group, or a member is not the caller's.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      },
+      "delete": {
+        "summary": "Delete a persona group",
+        "description": "Deletes the group; its personas and their browsers are not touched.",
+        "operationId": "deletePersonaGroup",
+        "responses": {
+          "200": { "description": "Deleted.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } } },
+          "404": { "description": "No such group.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
     "/browsers/start": {
       "post": {
         "summary": "Start a browser",
@@ -1437,6 +1498,8 @@
                 "type": "object",
                 "properties": {
                   "persona": { "type": "string", "description": "A persona id, or \"auto\" for a fresh one." },
+                  "personaGroup": { "type": "string", "description": "A persona group to run as instead of one persona: the start runs as the member with the fewest running browsers, then the one used longest ago, skipping members at their cap. Not with persona or profile. When every member is full, queueMs waits on the least busy one; without it the start answers 429 quota_exceeded." },
+                  "profileGroup": { "type": "string", "description": "The same as personaGroup." },
                   "provider": { "type": "string", "description": "cdp, oya-cloud, oya-selfhosted, or a vendor; defaults to the key's configured provider." },
                   "wsUrl": { "type": "string", "description": "For provider cdp: the ws://, wss:// or http:// address of the debugging port." },
                   "name": { "type": "string", "description": "A display name for the browser." }
@@ -1752,6 +1815,14 @@
                     },
                     "data": {
                       "description": "The answer in the shape of the request's schema, when one was given and the agent returned it"
+                    },
+                    "usage": {
+                      "type": "object",
+                      "description": "The tokens the run used, every model call included, as the provider reported them. Left out when the model reported none.",
+                      "properties": {
+                        "input": { "type": "integer", "description": "Prompt tokens, cached ones included" },
+                        "output": { "type": "integer", "description": "Completion tokens, reasoning included" }
+                      }
                     }
                   }
                 }
@@ -2401,6 +2472,15 @@
       }
     },
     "schemas": {
+      "PersonaGroup": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "personaIds": { "type": "array", "items": { "type": "string" }, "description": "Its members that still exist." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
       "ControlSession": {
         "type": "object",
         "required": [
@@ -2462,7 +2542,7 @@
         "required": ["error", "code"],
         "properties": {
           "error": { "type": "string", "description": "What happened, why, and the next step. Stands alone: clients show it as is." },
-          "code": { "type": "string", "description": "A stable reason to branch on: invalid_request, not_found, internal_error, command_outcome_unknown, action_unknown, action_unsupported, action_forbidden, tab_unprotected, endpoint_in_use, provider_failed, quota_exceeded, llm_unconfigured, and others named per route." },
+          "code": { "type": "string", "description": "A stable reason to branch on: invalid_request, not_found, internal_error, command_outcome_unknown, action_unknown, action_unsupported, action_forbidden, tab_unprotected, endpoint_in_use, provider_failed, quota_exceeded, group_exists, llm_unconfigured, and others named per route." },
           "field": { "type": "string", "description": "For invalid_request: the field that was wrong." },
           "ref": { "type": "string", "description": "For internal_error: eight hex characters that also sit in the server's log line for this failure." },
           "browserId": { "type": "string", "description": "For endpoint_in_use: the browser that holds the endpoint." },

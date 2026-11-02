@@ -6,6 +6,7 @@
 import { it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as O from '../../../../src/main/chatgpt/oauth.ts';
+import * as C from '../../../../src/main/chatgpt/constants.ts';
 
 const PLAN = 'openid email offline_access chatgpt.tokens.use.direct';
 
@@ -37,7 +38,9 @@ it('makes a credential only for the sign-in it answers, and only with the plan p
   const credential = O.credentialFrom(tokens, 'oaiapp_x', 'n');
   assert.deepEqual([credential.client_id, credential.email, credential.refresh_token], ['oaiapp_x', 'me@x.test', 'r']);
   assert.throws(() => O.credentialFrom(tokens, 'oaiapp_x', 'other'), /did not match/);
-  assert.throws(() => O.credentialFrom({ ...tokens, scope: 'openid email' }, 'oaiapp_x', 'n'), /use your plan/);
+  assert.throws(() => O.credentialFrom({ ...tokens, scope: 'openid email' }, 'oaiapp_x', 'n'), {
+    message: C.NO_PLAN_SCOPE,
+  });
 });
 
 it('a refresh keeps the refresh token and email the answer leaves out', async () => {
@@ -46,4 +49,12 @@ it('a refresh keeps the refresh token and email the answer leaves out', async ()
   assert.deepEqual([next.access_token, next.refresh_token, next.email], ['a2', 'r', 'me@x.test']);
   const form = new URLSearchParams(String((fake.mock.calls[0].arguments as any[])[1].body));
   assert.deepEqual([form.get('grant_type'), form.get('client_id')], ['refresh_token', 'oaiapp_x']);
+});
+
+it("a refused refresh keeps OpenAI's code and never names a plan", async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const fake = mock.fn(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }));
+  const error = await O.refreshed({ client_id: 'oaiapp_x', refresh_token: 'r' }, fake as never).catch((e) => e);
+  assert.match(error.message, /invalid_grant/);
+  assert.doesNotMatch(error.message, /Plus or Pro/);
 });

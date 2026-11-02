@@ -42,6 +42,19 @@ describe('background runs', () => {
     assert.equal('owner' in run, false);
   });
 
+  it('keeps the steps a replay reports, for the tester’s timeline', async () => {
+    const { id } = runs.start(KEY, 'b-1', async ({ onStep }) => {
+      onStep({ index: 0, action: 'navigate', ok: true });
+      onStep({ index: 1, action: 'click', ok: false });
+      return { steps: 1, total: 2 };
+    });
+    await settle();
+    assert.deepEqual(runs.get(OWNER, id).events, [
+      { index: 0, action: 'navigate', ok: true },
+      { index: 1, action: 'click', ok: false },
+    ]);
+  });
+
   it('records the result when the work succeeds', async () => {
     const { id } = runs.start(KEY, 'b-1', async () => ({ text: 'DONE' }));
     await settle();

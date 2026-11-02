@@ -1,0 +1,116 @@
+/**
+ * The find bar (find-bar.tsx): one quiet row under the toolbar and bookmarks bar,
+ * as tall as the main process leaves for it (FIND_BAR_HEIGHT), styled like the
+ * bookmarks bar so it reads as part of the chrome, not the page.
+ */
+.find-bar {
+  /* The main process grows --chrome-height by the bar's height while it is open; the bar fills that last strip. */
+  --find-bar-height: 32px;
+  position: absolute;
+  top: calc(var(--chrome-height) - var(--find-bar-height));
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  height: var(--find-bar-height);
+  padding: 0 12px 0 14px;
+  background: var(--chrome-bar, var(--surface));
+  border-bottom: 0.5px solid var(--hairline);
+  font-size: var(--text-sm);
+}
+body.mode-browsing .find-bar:not([hidden]) {
+  display: flex;
+}
+.find-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 240px;
+  min-width: 120px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted-surface);
+  -webkit-app-region: no-drag;
+}
+.find-field:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.find-field .icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--secondary);
+}
+.find-field input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+/* The field's border is its focus ring (.find-field:focus-within); the input's own would spill past it. */
+.find-field input:focus,
+.find-field input:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.find-count {
+  flex: none;
+  min-width: 72px;
+  margin-left: 4px;
+  color: var(--secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.find-step,
+.find-close {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  -webkit-app-region: no-drag;
+  transition: background-color var(--t-fast) var(--ease);
+}
+.find-close {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border-radius: 50%;
+}
+.find-step:hover:not(:disabled),
+.find-close:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.find-step:disabled {
+  color: var(--secondary);
+  opacity: 0.5;
+}
+.find-step:focus,
+.find-close:focus {
+  box-shadow: none;
+}
+.find-step:focus-visible,
+.find-close:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.find-step .icon,
+.find-close .icon {
+  width: 13px;
+  height: 13px;
+}

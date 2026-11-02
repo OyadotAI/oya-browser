@@ -28,10 +28,15 @@ interface Choice {
   current: () => boolean;
 }
 
+/** A website's host, or null for anything else: never its credentials, path, query or a local file. */
+export function webHost(address: string): string | null {
+  const url = URL.parse(address);
+  return url?.protocol === 'https:' || url?.protocol === 'http:' ? url.host : null;
+}
+
 /** Titles and origins provide context without exposing URL credentials, query strings or local paths. */
 function tabDetail(tab: Tab): string {
-  const url = URL.parse(tab.url);
-  return url?.protocol === 'https:' || url?.protocol === 'http:' ? url.host : 'Oya tab';
+  return webHost(tab.url) ?? 'Oya tab';
 }
 
 /** Literal tab metadata contains no capture capability. */

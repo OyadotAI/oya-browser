@@ -93,7 +93,12 @@ describe('agentLoop', () => {
 
   it('returns the model’s text once it stops calling tools', async () => {
     const llm = stubLlm([textReply('  DONE: nothing to do  ')]);
-    assert.deepEqual(await agentLoop(ctx(), start()), { text: 'DONE: nothing to do', toolCalls: [], failed: false });
+    assert.deepEqual(await agentLoop(ctx(), start()), {
+      text: 'DONE: nothing to do',
+      toolCalls: [],
+      failed: false,
+      usage: { input: 10, output: 5 },
+    });
     assert.equal(llm.urls[0], 'https://llm.test/v1/chat/completions');
   });
 
@@ -281,6 +286,19 @@ describe('agentLoop', () => {
     assert.doesNotMatch(JSON.stringify(llm.requests[1].messages), /hunter2/);
   });
 
+  it('each tool result reaches onToolResult as the model read it, its arguments and result redacted', async () => {
+    answer = (a) => (a === 'analyze' ? { ok: true, data: { markdown: 'Hello hunter22', elements: [] } } : { ok: true });
+    stubLlm([toolReply(['analyze_page', { note: 'hunter22' }]), textReply('DONE')]);
+    const told: string[][] = [];
+    const run = ctx({ secrets: { pw: 'hunter22' }, onToolResult: (...call: string[]) => told.push(call) });
+    await agentLoop(run, start());
+    assert.equal(told.length, 1);
+    const [name, args, seen] = told[0];
+    assert.equal(name, 'analyze_page');
+    assert.equal(args, '{"note":"{{pw}}"}');
+    assert.match(seen, /Hello \{\{pw\}\}/);
+  });
+
   it('records steps that worked, as placeholders, and not those that failed', async () => {
     answer = (action) => (action === 'click' ? { ok: false, error: 'covered' } : { ok: true });
     stubLlm([
@@ -459,6 +477,7 @@ describe('agentLoop', () => {
       toolCalls: [],
       limited: true,
       failed: true,
+      usage: { input: 20, output: 10 },
     });
   });
 
@@ -480,6 +499,26 @@ describe('agentLoop', () => {
     const after = usage.current(KEY);
     assert.equal(after.chat_input_tokens - before.chat_input_tokens, 20);
     assert.equal(after.chat_output_tokens - before.chat_output_tokens, 10);
+  });
+
+  it('a run’s usage adds up every model call, the check before done included', async () => {
+    stubLlm([
+      toolReply(['navigate', { url: 'https://a.test' }]),
+      textReply('DONE: submitted'),
+      textReply(JSON.stringify({ verdict: 'pass' })),
+    ]);
+    const result = await agentLoop(ctx({ verify: true }), start());
+    assert.deepEqual(result.usage, { input: 30, output: 15 });
+  });
+
+  it('tells the tokens so far after each model call, so a stopped run can still show them', async () => {
+    stubLlm([toolReply(['press_key', { key: 'Tab' }]), textReply('DONE')]);
+    const told: any[] = [];
+    await agentLoop(ctx({ onUsage: (used) => told.push(used) }), start());
+    assert.deepEqual(told, [
+      { input: 10, output: 5 },
+      { input: 20, output: 10 },
+    ]);
   });
 
   it('counts each model call as one agent step, whoever’s model it is', async () => {

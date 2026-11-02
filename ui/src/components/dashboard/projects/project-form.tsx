@@ -112,7 +112,7 @@ function Buttons({ c, form }: FormProps) {
       </button>
       <button
         disabled={busy}
-        className={`flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:opacity-50 ${form === 'delete' ? 'bg-red-500/12 text-red-400 hover:bg-red-500/20' : 'bg-accent text-accent-foreground hover:bg-accent-hover'}`}
+        className={`flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-sm font-medium disabled:opacity-50 ${form === 'delete' ? 'bg-red/12 text-red hover:bg-red/20' : 'bg-accent text-accent-foreground hover:bg-accent-hover'}`}
       >
         {busy && <Loader2 className="h-4 w-4 animate-spin" />}
         {submitLabel(c.ui)}

@@ -1,6 +1,7 @@
-/** Three quiet, persistent collection buttons share one place in the browser chrome. */
+/** Three quiet, persistent collection buttons share one place in the browser chrome; Downloads turns into the download chip. */
 import { Icon } from '../../../ui/index.ts';
 import type { BookmarksBarViewModel } from '../view-models/bookmarks-bar-view-model.ts';
+import { DownloadChip } from './download-chip.tsx';
 import './library-buttons.css';
 /** Searchable collections remain separate actions with explicit visible names. */
 export function LibraryButtons({
@@ -29,15 +30,7 @@ export function LibraryButtons({
         <Icon name="history" />
         <span>History</span>
       </button>
-      <button
-        className="library-button"
-        id="downloads-open"
-        title="Downloads (⌘ Shift J, Ctrl J)"
-        onClick={() => vm.showAll('downloads')}
-      >
-        <Icon name="download" />
-        <span>Downloads</span>
-      </button>
+      <DownloadChip vm={vm.downloads} />
     </div>
   );
 }

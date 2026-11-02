@@ -251,4 +251,23 @@ describe('pinned tabs on the strip layout', () => {
     vm.closeByMouse(3);
     assert.equal(vm.state.frozen, 200);
   });
+  it('a tab carried in from another window takes the gap it was shown in, and the main process hears its place', () => {
+    const { fake, vm } = strip();
+    fake.emit('onTabIncoming', { id: 9, title: 'Moved', favicon: null, home: false, x: 150 });
+    vm.aim(1, -12);
+    fake.emit('onTabsUpdated', [tab(1, { active: true }), tab(2), tab(3), tab(9)]);
+    assert.deepEqual(ids(vm), [1, 9, 2, 3]);
+    assert.deepEqual(fake.called('moveTab'), [[9, 1]]);
+    assert.deepEqual(vm.state.drop, { id: 9, to: 1, offset: -12 });
+    assert.equal(vm.state.incoming, null);
+  });
+
+  it('makes room for a carried tab, and gives it back when the tab leaves without landing', () => {
+    const { fake, vm } = strip();
+    vm.setRoom(300);
+    fake.emit('onTabIncoming', { id: 9, title: 'Moved', favicon: null, home: false, x: 150 });
+    assert.equal(stripLayout(vm.state).width, 75);
+    fake.emit('onTabIncoming', null);
+    assert.equal(stripLayout(vm.state).width, 100);
+  });
 });

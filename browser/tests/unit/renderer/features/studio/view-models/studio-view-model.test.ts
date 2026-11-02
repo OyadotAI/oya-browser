@@ -5,12 +5,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { studioApp, STEPS } from '../studio-app.ts';
+import { ACCOUNT, studioApp, STEPS } from '../studio-app.ts';
 import {
   finishCopy,
   finishTitle,
   isDisabled,
   plural,
+  renameNote,
+  renaming,
   saveHint,
   saveLabel,
   stepLimit,
@@ -35,6 +37,60 @@ describe('StudioViewModel', () => {
     await push();
     assert.equal(saveLabel(vm.state, ws.draft), 'Save changes');
     assert.equal(isDisabled(vm.state, 'record-save'), false);
+  });
+
+  it('says a save will rename the playbook only when the name typed differs from the one it was saved as', async () => {
+    const { vm, ws, push } = await studioApp();
+    ws.edit({ type: 'metadata', name: 'lookup' });
+    Object.assign(ws.draft, { publishedAt: 1, publishedRevision: ws.draft.revision, publishedName: 'lookup' });
+    ws.draft.publishedTo = ACCOUNT;
+    ws.edit({ type: 'metadata', name: 'lookup' });
+    await push();
+    vm.typeField('name', 'lookup');
+    assert.equal(renaming(vm.state), false);
+    assert.equal(saveLabel(vm.state, ws.draft), 'Save changes');
+    vm.typeField('name', 'find-user');
+    assert.equal(renaming(vm.state), true);
+    assert.equal(saveLabel(vm.state, ws.draft), 'Rename and save');
+    assert.equal(
+      renameNote(vm.state),
+      'Rename and save renames “lookup” in Oya. Save as copy keeps “lookup” and saves this as “find-user”. ' +
+        'Routines that play “lookup” need the new name.',
+    );
+    vm.typeField('name', '  ');
+    assert.equal(renaming(vm.state), false, 'an empty name renames nothing');
+  });
+
+  it('turns Save as copy off whenever Save is off, and while a save runs', async () => {
+    const { vm, ws, push } = await studioApp();
+    ws.edit({ type: 'metadata', name: 'lookup' });
+    await push();
+    vm.typeField('name', 'lookup');
+    assert.equal(isDisabled(vm.state, 'record-save'), false);
+    assert.equal(isDisabled(vm.state, 'record-save-copy'), false);
+    vm.mark({ saving: true });
+    assert.equal(isDisabled(vm.state, 'record-save-copy'), true);
+    vm.mark({ saving: false });
+    vm.typeField('name', 'not valid');
+    assert.equal(isDisabled(vm.state, 'record-save-copy'), true);
+  });
+
+  it('never offers to rename a playbook saved to another account', async () => {
+    const { vm, ws, push } = await studioApp();
+    Object.assign(ws.draft, { publishedAt: 1, publishedName: 'lookup', publishedTo: 'another-project' });
+    ws.edit({ type: 'metadata', name: 'lookup' });
+    await push();
+    vm.typeField('name', 'find-user');
+    assert.equal(renaming(vm.state), false);
+  });
+
+  it('never offers to rename a draft that was not saved under a name', async () => {
+    const { vm, ws, push } = await studioApp();
+    ws.edit({ type: 'metadata', name: 'lookup' });
+    await push();
+    vm.typeField('name', 'other');
+    assert.equal(renaming(vm.state), false);
+    assert.equal(saveLabel(vm.state, ws.draft), 'Save playbook');
   });
 
   it('lists the draft being edited even before it is stored, so the picker is never blank', async () => {

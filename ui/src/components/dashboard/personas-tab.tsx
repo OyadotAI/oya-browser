@@ -5,11 +5,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Globe, Plus, Users } from 'lucide-react';
+import { Globe, Layers, Plus, Users } from 'lucide-react';
 import type { Persona, BrowserRow } from './types';
 import PersonaForm from './persona-form';
 import PersonaDrawer from './persona-drawer';
 import ProxiesDialog from './proxies-dialog';
+import GroupsDialog from './groups-dialog';
 import PersonaRow from './personas/persona-row';
 
 /** What the tab needs from the dashboard. */
@@ -89,16 +90,16 @@ function NotLoaded({
   );
 }
 
-/** The heading with the profile count, and the Proxies and New profile buttons. */
+/** The heading with the profile count, and the Groups, Proxies and New profile buttons. */
 function Toolbar(props: {
   /** Profiles this key owns. */
   count: number;
-  /** Opens the proxies dialog. */
-  onProxies: () => void;
+  /** Opens the proxies or groups dialog. */
+  onTool: (tool: 'proxies' | 'groups') => void;
   /** Opens the new-profile form. */
   onCreate: () => void;
 }) {
-  const { count, onProxies, onCreate } = props;
+  const { count, onTool, onCreate } = props;
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-5 lg:px-6">
       <div className="mr-auto">
@@ -109,13 +110,49 @@ function Toolbar(props: {
           Saved account sessions, a consistent device, and an optional second factor.
         </p>
       </div>
-      <button className="btn-ghost h-9" onClick={onProxies}>
+      <button className="btn-ghost h-9" onClick={() => onTool('groups')}>
+        <Layers className="h-3.5 w-3.5" /> Groups
+      </button>
+      <button className="btn-ghost h-9" onClick={() => onTool('proxies')}>
         <Globe className="h-3.5 w-3.5" /> Proxies
       </button>
       <button className="btn-primary h-9" onClick={onCreate}>
         <Plus className="h-3.5 w-3.5" /> New profile
       </button>
     </div>
+  );
+}
+
+/** The toolbar dialog open over the tab: proxies, groups, or none. */
+type Tool = 'proxies' | 'groups' | null;
+
+/** The Proxies and Groups dialogs, whichever the toolbar opened. */
+function ToolDialogs(props: {
+  /** The open one. */
+  tool: Tool;
+  /** Closes it. */
+  onClose: () => void;
+  /** The caller's API key. */
+  apiKey: string;
+  /** The key's profiles. */
+  personas: Persona[];
+  /** Running browsers. */
+  browsers: BrowserRow[];
+  /** Reloads the profiles after a proxy change. */
+  refresh: () => void;
+}) {
+  const { tool, onClose, apiKey, personas, browsers, refresh } = props;
+  return (
+    <>
+      <ProxiesDialog open={tool === 'proxies'} onClose={onClose} apiKey={apiKey} onChanged={refresh} />
+      <GroupsDialog
+        open={tool === 'groups'}
+        onClose={onClose}
+        apiKey={apiKey}
+        personas={personas}
+        browsers={browsers}
+      />
+    </>
   );
 }
 
@@ -135,12 +172,12 @@ export default function PersonasTab({
   now,
 }: Props) {
   const [creating, setCreating] = useState(false);
-  const [proxies, setProxies] = useState(false);
+  const [tool, setTool] = useState<Tool>(null);
   const open = personas.find((p) => p.id === openId) || null;
 
   return (
     <div className="workspace-list flex h-full min-h-0 min-w-0 flex-col">
-      <Toolbar count={personas.length} onProxies={() => setProxies(true)} onCreate={() => setCreating(true)} />
+      <Toolbar count={personas.length} onTool={setTool} onCreate={() => setCreating(true)} />
       <div className="data-scroll mx-4 mb-4 min-h-0 flex-initial overflow-auto rounded-xl border border-border bg-bg-card/25 lg:mx-6 lg:mb-6">
         <table className="data-table profile-data w-full table-fixed border-collapse text-[13px]" aria-label="Profiles">
           <Head />
@@ -153,7 +190,14 @@ export default function PersonasTab({
         {personas.length === 0 && status === 'ready' && <Empty onCreate={() => setCreating(true)} />}
         {personas.length === 0 && status !== 'ready' && <NotLoaded failed={status === 'failed'} onRetry={refresh} />}
       </div>
-      <ProxiesDialog open={proxies} onClose={() => setProxies(false)} apiKey={apiKey} onChanged={refresh} />
+      <ToolDialogs
+        tool={tool}
+        onClose={() => setTool(null)}
+        apiKey={apiKey}
+        personas={personas}
+        browsers={browsers}
+        refresh={refresh}
+      />
       <PersonaForm open={creating} onClose={() => setCreating(false)} apiKey={apiKey} onCreated={() => refresh()} />
       <PersonaDrawer
         persona={open}

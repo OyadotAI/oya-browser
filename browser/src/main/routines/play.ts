@@ -22,9 +22,20 @@ interface PlaybookRun {
 /** Waits `ms`, without holding the app open. */
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
 
-/** Plays `playbook` on this browser and answers how it ended; `stopped` ends the wait early. */
-export async function playOnServer(api: ServerApi, playbook: string, stopped: () => boolean): Promise<ChatAnswer> {
-  let run = (await readApiAnswer(await api.postToBrowser('runs', { playbook }))) as PlaybookRun;
+/** Plays `playbook` on this browser with the routine's `values` and answers how it ended; `stopped` ends the wait early. */
+export async function playOnServer(
+  api: ServerApi,
+  playbook: string,
+  values: Record<string, string>,
+  stopped: () => boolean,
+): Promise<ChatAnswer> {
+  const started = await api.postToBrowser('runs', { playbook, data: values });
+  return followRun(api, (await readApiAnswer(started)) as PlaybookRun, stopped);
+}
+
+/** Polls the run until it ends or `stopped`, and answers how it ended. */
+async function followRun(api: ServerApi, first: PlaybookRun, stopped: () => boolean): Promise<ChatAnswer> {
+  let run = first;
   while (run.status === 'running' && !stopped()) {
     await pause(PLAYBOOK_POLL_MS);
     run = ((await api.get(`runs/${encodeURIComponent(run.id)}`).catch(() => null)) as PlaybookRun | null) ?? run;

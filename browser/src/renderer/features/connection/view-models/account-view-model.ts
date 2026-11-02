@@ -82,10 +82,11 @@ function connection(state: AccountState): Pick<AccountCard, 'connection' | 'conn
   return { connection: 'offline', connectionText: 'Offline' };
 }
 
-/** Log out names the account it signs out of, when it is known. */
+/** Log out names the account it signs out of, when it is known, and warns that it closes incognito windows. */
 function signOutLabel(email: string | null | undefined): SignOutLabel {
-  if (!email) return { text: 'Log out', title: "Forget this browser's key" };
-  return { text: `Log out of ${email}`, title: `Forget this browser's key and sign out of ${email}` };
+  if (!email) return { text: 'Log out', title: "Forget this browser's key. Open incognito windows close." };
+  const title = `Forget this browser's key and sign out of ${email}. Open incognito windows close.`;
+  return { text: `Log out of ${email}`, title };
 }
 
 /** The project line: its name, with "Project" in front unless it already starts so ("Project 1b9258"). */

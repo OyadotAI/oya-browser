@@ -10,6 +10,10 @@ import {
   ROUTINE_MAX_EVERY,
   ROUTINE_MAX_NAME,
   ROUTINE_MAX_PROMPT,
+  ROUTINE_MAX_VALUES,
+  ROUTINE_PERSONA_CHARS,
+  ROUTINE_VALUE_CHARS,
+  ROUTINE_VALUE_NAME_CHARS,
   ROUTINE_RESULT_CHARS,
   ROUTINE_RUNS_KEPT,
   ROUTINE_STEP_CHARS,
@@ -68,6 +72,14 @@ export interface Routine {
   prompt: string;
   /** The saved playbook each run plays, by name, instead of asking a prompt. */
   playbook?: string;
+  /**
+   * The playbook's variable values each run plays with. A variable left out uses
+   * the playbook's saved default, so a secret is never stored here: it stays in
+   * the playbook, saved once.
+   */
+  values?: Record<string, string>;
+  /** The persona each run is the browser of; absent for the key's default one. */
+  persona?: string;
   /** When it runs. */
   schedule: Schedule;
   /** Off: kept, but never run on schedule. */
@@ -88,7 +100,10 @@ export interface Routine {
 export type Target = 'desktop' | 'cloud';
 
 /** The fields a client sets on a routine. */
-export type Definition = Pick<Routine, 'name' | 'prompt' | 'playbook' | 'schedule' | 'enabled' | 'target' | 'tz'>;
+export type Definition = Pick<
+  Routine,
+  'name' | 'prompt' | 'playbook' | 'values' | 'schedule' | 'enabled' | 'target' | 'tz' | 'persona'
+>;
 
 /** A refusal. */
 const refuse = (message: string) => new HttpError(Status.BAD_REQUEST, message);
@@ -134,19 +149,61 @@ export function definitionFrom(input: any, current?: Definition): Definition {
   };
 }
 
+/** A persona id, or undefined for the key's default one (null or ''); whose it is, the service checks. */
+function personaFrom(value: unknown): string | undefined {
+  if (value === null || value === '' || value === 'default') return undefined;
+  if (typeof value !== 'string' || value.length > ROUTINE_PERSONA_CHARS)
+    throw refuse("A routine's profile is a profile id.");
+  return value;
+}
+
+/** A variable name: what a playbook's {{name}} placeholders use. */
+const VALUE_NAME = new RegExp(`^\\w{1,${ROUTINE_VALUE_NAME_CHARS}}$`);
+
+/** The playbook's variable values, bounded, or a refusal; an empty map is none. */
+function valuesFrom(value: unknown): Record<string, string> | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value)) throw refuse("A routine's values map variable names to text.");
+  const entries = Object.entries(value);
+  if (entries.length > ROUTINE_MAX_VALUES) throw refuse(`A routine keeps at most ${ROUTINE_MAX_VALUES} values.`);
+  for (const [k, v] of entries) checkValue(k, v);
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+/** Refuses one value whose name is not a variable name or whose value is not short text. */
+function checkValue(name: string, value: unknown) {
+  if (!VALUE_NAME.test(name)) throw refuse(`"${name.slice(0, ROUTINE_VALUE_NAME_CHARS)}" is not a variable name.`);
+  if (typeof value !== 'string' || value.length > ROUTINE_VALUE_CHARS)
+    throw refuse(`A routine's value for ${name} is text of at most ${ROUTINE_VALUE_CHARS} characters.`);
+}
+
 /**
  * What each run does: plays a saved playbook, or asks the agent a prompt. A playbook
  * wins; `playbook: null` switches back to the prompt. Each field `input` leaves out is
  * taken from `current`.
  */
-function taskFrom(input: any, current?: Definition): Pick<Definition, 'prompt' | 'playbook'> {
+function taskFrom(input: any, current?: Definition): Pick<Definition, 'prompt' | 'playbook' | 'values'> {
   const playbook = input?.playbook === undefined ? current?.playbook : playbookFrom(input.playbook);
   const given = input?.prompt === undefined ? current?.prompt : input.prompt;
-  if (playbook) return { playbook, prompt: given ? text(given, ROUTINE_MAX_PROMPT, 'prompt') : '' };
-  if (!given) throw refuse('A routine runs a prompt or a saved playbook: give one of them.');
-  // An explicit undefined: an edit's merge must drop a playbook the routine had.
-  return { prompt: text(given, ROUTINE_MAX_PROMPT, 'prompt'), playbook: undefined };
+  if (!playbook) return promptTask(input, given);
+  return { playbook, prompt: given ? text(given, ROUTINE_MAX_PROMPT, 'prompt') : '', values: valuesOf(input, current) };
 }
+
+/** A routine that asks the agent `given`: it has no playbook, and so no values. */
+function promptTask(input: any, given: unknown): Pick<Definition, 'prompt' | 'playbook' | 'values'> {
+  if (!given) throw refuse('A routine runs a prompt or a saved playbook: give one of them.');
+  if (input?.values && Object.keys(input.values).length)
+    throw refuse("A routine's values are for the playbook it plays.");
+  // Explicit undefineds: an edit's merge must drop a playbook, and its values, the routine had.
+  return { prompt: text(given, ROUTINE_MAX_PROMPT, 'prompt'), playbook: undefined, values: undefined };
+}
+
+/** The values a playbook routine keeps: the ones given, else the ones it had while it plays the same playbook. */
+const valuesOf = (input: any, current?: Definition) => {
+  if (input?.values !== undefined) return valuesFrom(input.values);
+  // Another playbook's values would go out as this one's data.
+  return input?.playbook === undefined || input.playbook === current?.playbook ? current?.values : undefined;
+};
 
 /** A playbook's name, or undefined for none (null or ''). */
 function playbookFrom(value: unknown): string | undefined {
@@ -154,11 +211,12 @@ function playbookFrom(value: unknown): string | undefined {
 }
 
 /** Where and in which time zone the routine runs, each left as `current` has it when `input` leaves it out. */
-function placeFrom(input: any, current?: Definition): Pick<Definition, 'target' | 'tz'> {
+function placeFrom(input: any, current?: Definition): Pick<Definition, 'target' | 'tz' | 'persona'> {
   const has = (field: string) => input?.[field] !== undefined || !current;
   return {
     target: has('target') ? targetFrom(input?.target) : (current!.target ?? 'desktop'),
     tz: has('tz') ? tzFrom(input?.tz) : current!.tz,
+    persona: input?.persona === undefined ? current?.persona : personaFrom(input.persona),
   };
 }
 

@@ -69,6 +69,7 @@ const BINDINGS: Binding[] = [
   tab('mod+2', 'Personas', 'personas'),
   tab('mod+3', 'Control', 'control'),
   tab('mod+4', 'Playbooks', 'playbooks'),
+  tab('mod+5', 'Routines', 'routines'),
   { keys: '?', label: 'This help', group: 'Navigate', run: (c) => c.patch({ showHelp: true }) },
   { keys: 'n', label: 'Start a browser', group: 'Fleet', run: (c) => c.patch({ showStart: true }) },
   {

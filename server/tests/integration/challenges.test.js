@@ -138,6 +138,8 @@ try {
   assert(JSON.stringify(mfa.describe(persona)).includes('GEZDG') === false, 'the secret is never returned');
 
   await goto('/otp');
+  // A code lives for 30 s: the one current as typing starts may have rolled over by the check.
+  const codeBefore = mfa.totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
   const done = await mfa.complete(evaluate, persona);
   assert(
     done.filled === true && done.completed === false && done.method === 'totp',
@@ -145,7 +147,8 @@ try {
   );
   const typedCode = await evaluate(`document.querySelector('[name="otp"]').value`);
   assert(/^\d{6}$/.test(typedCode), `a six-digit code was typed (${typedCode})`);
-  assert(typedCode === mfa.totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'), 'and it is the correct code for now');
+  const codeNow = mfa.totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
+  assert([codeBefore, codeNow].includes(typedCode), 'and it is the correct code for now');
 
   await goto('/otp-boxes');
   const segmented = await mfa.complete(evaluate, persona);

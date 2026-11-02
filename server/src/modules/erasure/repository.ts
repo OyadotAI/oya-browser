@@ -9,6 +9,7 @@ import { dbAuth } from '../../platform/db.ts';
 /** Tables keyed by the owner fingerprint or the project id, and the filter that picks a project's rows. */
 const projectTables = (owner: string, project: string): [string, Record<string, string>][] => [
   ['personas', { owner }],
+  ['persona_groups', { owner }],
   ['routines', { owner }],
   ['key_settings', { owner }],
   ['usage', { api_key: owner }],

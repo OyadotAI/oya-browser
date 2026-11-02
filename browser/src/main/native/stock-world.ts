@@ -85,13 +85,18 @@ function from(event: IpcMainEvent | IpcMainInvokeEvent, id: number): Run | undef
   const run = pending.get(id);
   return run && run.contents === event.sender && event.senderFrame === run.contents.mainFrame ? run : undefined;
 }
-/** Runs `code` in isolated world `world` of the tab's main frame without waiting for the page to finish loading. */
-export function runInWorld<T>(contents: WebContents, world: number, code: string): Promise<T> {
+/**
+ * Runs `code` in isolated world `world` of the tab's main frame without waiting for
+ * the page to finish loading. `preloadOnly` never falls back to the stock API, which
+ * waits for the load: a caller asking whether the renderer answers at all (the
+ * Reload probe, tabs/tab-recovery.ts) must not mistake a slow load for silence.
+ */
+export function runInWorld<T>(contents: WebContents, world: number, code: string, preloadOnly = false): Promise<T> {
   const stock = () => contents.executeJavaScriptInIsolatedWorld(world, [{ code }]) as Promise<T>;
   if (!installed) return stock();
   return new Promise<T>((resolve, reject) => {
     const run = new Run(contents, resolve as (value: unknown) => void, reject);
-    run.awaitAck(() => void stock().then(resolve, reject));
+    if (!preloadOnly) run.awaitAck(() => void stock().then(resolve, reject));
     contents.mainFrame.send(STOCK_PERSONA.RUN, { id: run.id, world, code });
   });
 }

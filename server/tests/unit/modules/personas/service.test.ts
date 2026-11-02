@@ -283,6 +283,20 @@ function legacyRepository() {
 }
 
 describe('PersonaService.remove', () => {
+  it('takes a deleted persona out of its owner’s groups, so a re-import of a mirrored profile cannot rejoin them', () => {
+    const { service, deps } = personaService();
+    const p = service.create('k');
+    service.remove('k', p.id);
+    assert.deepEqual(deps.groups.dropMember.mock.calls[0].arguments, ['owner:k', p.id]);
+  });
+
+  it('leaves groups alone when erasure forgets an owner: erasure deletes them as rows', () => {
+    const { service, deps } = personaService();
+    service.create('k');
+    service.forgetOwners(new Set(['owner:k']));
+    assert.equal(deps.groups.dropMember.mock.callCount(), 0);
+  });
+
   it('deletes the persona and everything stored for it', () => {
     const { service, deps } = personaService();
     const p = service.create('k');
@@ -454,8 +468,23 @@ describe('PersonaService fingerprints', () => {
     const { service } = personaService();
     const p = service.create('k', { prefs: { platform: 'MacIntel', timezone: 'Europe/Paris' } });
     const first = service.fingerprintFor(p);
-    assert.equal(service.fingerprintFor(p), first);
+    assert.deepEqual(service.fingerprintFor(p), first);
     assert.deepEqual(service.fingerprintFor({ ...p }), first);
+  });
+
+  it("keeps one caller's write to its fingerprint from reaching the next caller", () => {
+    const { service } = personaService();
+    const p = service.create('k');
+    service.fingerprintFor(p).proxy = { host: 'gate.vendor.test', password: 'operator-secret' };
+    assert.equal(service.fingerprintFor(p).proxy, null);
+  });
+
+  it("keeps a write to a nested field of one caller's fingerprint from the next caller too", () => {
+    const { service } = personaService();
+    const p = service.create('k');
+    const platform = service.fingerprintFor(p).navigator.platform;
+    service.fingerprintFor(p).navigator.platform = 'Tampered';
+    assert.equal(service.fingerprintFor(p).navigator.platform, platform);
   });
 
   it('gives a fresh service built from the stored record the same fingerprint', async () => {

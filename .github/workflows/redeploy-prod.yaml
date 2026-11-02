@@ -55,6 +55,8 @@ jobs:
         cluster_name: ${{ secrets.GKE_CLUSTER }}
         location: ${{ secrets.GKE_ZONE }}
         project_id: ${{ secrets.GKE_PROJECT }}
+        # IAM-checked DNS endpoint: the clusters' public IP endpoint is being closed.
+        use_dns_based_endpoint: true
 
     - name: Apply secrets
       env:

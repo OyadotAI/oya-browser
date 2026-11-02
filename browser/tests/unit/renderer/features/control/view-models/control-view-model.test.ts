@@ -204,6 +204,22 @@ describe('the AI Mode / Human Mode switch', () => {
     );
   });
 
+  it('lights Human Mode on your own tab while the agent drives another', () => {
+    const s = switchFor({ mode: 'agent', supported: true, pageInteractive: true });
+    assert.deepEqual([s.agent.on, s.human.on, s.status], [false, true, '']);
+  });
+
+  it('keeps Human Mode clickable on your own tab, so you can still take over from the agent', () => {
+    const s = switchFor({ mode: 'agent', supported: true, pageInteractive: true });
+    assert.equal(s.human.disabled, false);
+  });
+
+  it('choosing Human Mode on your own tab asks to take over from the working agent', async () => {
+    const { fake, vm } = await bar({ getControlState: { ...AGENT, pageInteractive: true } });
+    await vm.toggle();
+    assert.equal(fake.called('requestTakeover').length, 1);
+  });
+
   it('after a pause, AI Mode resumes the agent and the status says it is paused', () => {
     const s = switchFor({ mode: 'paused', supported: true });
     assert.deepEqual([s.agent.on, s.agent.disabled, s.human.on, s.status], [false, false, false, 'Automation paused']);

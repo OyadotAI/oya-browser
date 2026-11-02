@@ -56,6 +56,35 @@ describe('chatCompletion', () => {
     assert.equal(call(fetch, 1).body.tool_choice, 'none');
   });
 
+  it('sends Google’s OpenAI-compatible endpoints Gemini’s schema and everyone else the schema as written', async () => {
+    const fetch = answer({});
+    const parameters = { type: 'object', properties: { pair: { type: 'array', items: [{ type: 'number' }] } } };
+    const tools = [{ type: 'function', function: { name: 't', description: 'd', parameters } }];
+    const vertex = 'https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/openapi';
+    for (const baseUrl of [vertex, 'https://generativelanguage.googleapis.com/v1beta/openai', 'https://api.test'])
+      await chatCompletion({ baseUrl, apiKey: 'k', model: 'm', messages: [], tools });
+    const sent = (i) => call(fetch, i).body.tools[0].function.parameters.properties.pair.items;
+    assert.deepEqual([sent(0), sent(1), sent(2)], [{ type: 'number' }, { type: 'number' }, [{ type: 'number' }]]);
+  });
+
+  it('recognises Google by host alone: regional Vertex yes, a Google name in the query or fragment or a malformed URL no', async () => {
+    const fetch = answer({});
+    const parameters = { type: 'object', properties: { pair: { type: 'array', items: [{ type: 'number' }] } } };
+    const tools = [{ type: 'function', function: { name: 't', description: 'd', parameters } }];
+    const urls = [
+      'https://us-central1-aiplatform.googleapis.com/v1',
+      'https://proxy.test/v1?x.aiplatform.googleapis.com/',
+      'https://proxy.test/v1#generativelanguage.googleapis.com/',
+      'not a url',
+    ];
+    for (const baseUrl of urls) await chatCompletion({ baseUrl, apiKey: 'k', model: 'm', messages: [], tools });
+    const sent = (i) => call(fetch, i).body.tools[0].function.parameters.properties.pair.items;
+    assert.deepEqual(
+      [sent(0), sent(1), sent(2), sent(3)],
+      [{ type: 'number' }, [{ type: 'number' }], [{ type: 'number' }], [{ type: 'number' }]],
+    );
+  });
+
   it('throws only the status on a failed call, never the provider’s body', async () => {
     answer({ error: 'internal secret detail' }, 400);
     const logged = mock.method(console, 'error', () => {});
@@ -139,7 +168,7 @@ describe('toGemini', () => {
     ]);
   });
 
-  it('declares tools with the schema keys Gemini rejects removed at every depth', () => {
+  it('declares tools with their schemas in the subset Gemini accepts (rules in gemini-schema.test.ts)', () => {
     const parameters = {
       type: 'object',
       additionalProperties: false,
@@ -155,7 +184,7 @@ describe('toGemini', () => {
       description: 'd',
       parameters: {
         type: 'object',
-        properties: { n: { type: 'number' }, list: { type: 'array', items: [{ type: 'string' }] } },
+        properties: { n: { type: 'number' }, list: { type: 'array', items: { type: 'string' } } },
       },
     });
   });
@@ -176,6 +205,14 @@ describe('fromGemini', () => {
       choices: [{ message: { role: 'assistant', content: 'ab' } }],
       usage: { prompt_tokens: 4, completion_tokens: 2 },
     });
+  });
+
+  it('counts a thinking model’s thoughts as output, as Gemini bills them', () => {
+    const out = fromGemini({
+      candidates: [{ content: { parts: [{ text: 'a' }] } }],
+      usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 2, thoughtsTokenCount: 30 },
+    });
+    assert.deepEqual(out.usage, { prompt_tokens: 4, completion_tokens: 32 });
   });
 
   it('turns function calls into tool calls whose id carries the tool name', () => {

@@ -100,6 +100,7 @@ app
     await call(win, 'enterBrowsing');
     await until(() => win.webContents.executeJavaScript('!!document.querySelector("#launch")?.hidden'));
     win.focus();
+    await require('./desktop-downloads.cjs')({ win, call, until, profile });
     const count = BrowserWindow.getAllWindows().length;
     await click(win, '#bookmarks-open');
     await collection(win, 'Bookmarks');

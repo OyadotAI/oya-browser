@@ -2,7 +2,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { ShareSources } from '../../../../src/main/screen-share/sources.ts';
+import { ShareSources, webHost } from '../../../../src/main/screen-share/sources.ts';
 
 /** Native thumbnail seam contains no actual desktop pixels. */
 const image = { isEmpty: () => false, resize: () => image, toDataURL: () => 'data:image/png;base64,test' };
@@ -157,4 +157,12 @@ it('empty tab and desktop captures become placeholders without removing valid ch
   } finally {
     f.sources.dispose();
   }
+});
+
+it("a tab's detail is its web host, never its path, query, credentials or a local page", () => {
+  assert.equal(webHost('https://user:pw@call.test:8443/room?secret=1'), 'call.test:8443');
+  assert.equal(webHost('http://a.test/'), 'a.test');
+  assert.equal(webHost('file:///Users/me/notes.html'), null);
+  assert.equal(webHost('oya://home'), null);
+  assert.equal(webHost('not a url'), null);
 });

@@ -39,3 +39,6 @@ lcov.info
 # Local one-off: strips Claude from git history
 /strip-claude-oya-browser.sh
 qa.zip
+
+# Preserve the earlier running preview while Mars owns all Rust source.
+/native/target/

@@ -347,7 +347,7 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-.routine-editor :is(#routine-name, #routine-prompt),
+.routine-editor :is(#routine-name, #routine-prompt, #routine-persona, .routine-value input),
 .routine-schedule :is(select, input) {
   box-sizing: border-box;
   border: 1px solid var(--border);
@@ -360,7 +360,7 @@
   letter-spacing: normal;
   text-transform: none;
 }
-.routine-editor :is(#routine-name, #routine-prompt) {
+.routine-editor :is(#routine-name, #routine-prompt, #routine-persona, .routine-value input) {
   width: 100%;
   padding: 8px 10px;
 }
@@ -403,6 +403,26 @@
 }
 #routine-n {
   width: 64px;
+}
+.routine-values {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.routine-values legend {
+  padding: 0;
+}
+.routine-value {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.routine-field small {
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
 }
 .routine-error {
   margin: 0;

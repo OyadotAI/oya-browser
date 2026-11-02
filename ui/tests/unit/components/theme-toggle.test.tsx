@@ -3,7 +3,7 @@
  * and every toggle on the page follows.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ThemeToggle from '@/components/theme-toggle';
 
@@ -27,5 +27,12 @@ describe('ThemeToggle', () => {
     expect(screen.getAllByRole('button', { name: 'Switch to dark theme' })).toHaveLength(2);
     await userEvent.click(screen.getAllByRole('button', { name: 'Switch to dark theme' })[1]);
     expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('shows a theme set from outside once oya-theme fires', () => {
+    render(<ThemeToggle />);
+    document.documentElement.dataset.theme = 'light';
+    act(() => window.dispatchEvent(new Event('oya-theme')));
+    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeTruthy();
   });
 });

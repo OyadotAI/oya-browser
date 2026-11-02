@@ -4,6 +4,7 @@
  * in the files beside it.
  */
 
+import { randomUUID } from 'node:crypto';
 import * as keyConfig from '../config/service.ts';
 import { resolveFresh } from '../config/chatgpt.ts';
 import { agentKeyUnclaimed } from '../auth/service.ts';
@@ -17,7 +18,8 @@ import { startRun, lastRun, markMessage } from './recorder.ts';
 import { forgetPage } from './changes.ts';
 import { AGENT_VERIFY } from './constants.ts';
 import { systemPrompt, FOLLOW_UP_NOTE, todayLine } from './prompt.ts';
-import { agentLoop } from './loop.ts';
+import { agentLoop, type AgentResult } from './loop.ts';
+import { fenced, startFindings, statusOf, type KeptRun, type Started } from './findings.ts';
 import { requireLlmAllowed } from './llm-policy.ts';
 import { container } from '../../app/container.ts';
 
@@ -177,12 +179,63 @@ function systemFor(messages, values, scalars, files, secrets) {
 export async function runChat(browserId, messages, options: any = {}) {
   const { apiKey, data = {}, secrets = {} } = options;
   const { llm, budget } = await admitModel(apiKey, browserId);
-  const { files, scalars, values } = taskValues(data, secrets);
-  await begin(browserId, messages, values, secrets);
-  const system = { role: 'system', content: systemFor(messages, values, scalars, files, secrets) };
-  const allMessages = [system, ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) }))];
-  const run = { ...options, browserId, llm, budget, ...checkFor(options, messages, secrets), files, values, secrets };
-  return agentLoop(run, allMessages).catch(rejectedProvider);
+  const task = taskValues(data, secrets);
+  await begin(browserId, messages, task.values, secrets);
+  const { memory, allMessages } = prepare(browserId, messages, options, task, secrets);
+  const run = { ...options, browserId, llm, budget, ...checkFor(options, messages, secrets), ...task, secrets };
+  const work = () => agentLoop({ ...run, ...keeping(memory) }, allMessages);
+  return settled(work, memory?.kept, options.signal).catch(rejectedProvider);
+}
+
+/** The run's start: what it keeps for the chat's next message, and the conversation it opens with. */
+function prepare(browserId, messages, options, { files, scalars, values }, secrets) {
+  const memory = remembering(browserId, messages, options);
+  const system = systemFor(messages, values, scalars, files, secrets);
+  return { memory, allMessages: withDigest(opening(system, messages, secrets), memory, secrets) };
+}
+
+/** What the model starts from: the system prompt, then the chat with its secrets redacted. */
+const opening = (system: string, messages, secrets) => [
+  { role: 'system', content: system },
+  ...messages.map((m) => ({ ...m, content: redact(m.content, secrets) })),
+];
+
+/** The loop's listener that keeps each result for the next message, when the run is remembered. */
+const keeping = (memory: Started | null) => (memory ? { onToolResult: memory.kept.keep.bind(memory.kept) } : {});
+
+/**
+ * Keeps what the run reads for the chat's next message, when the caller named the chat's lane (the desktop
+ * names one per tab). A lane this server names is new on every request, so nothing could ever read it back.
+ */
+const remembering = (browserId, messages, options): Started | null =>
+  (options.remember && startFindings(browserId, followUp(messages), !!Object.keys(options.secrets ?? {}).length)) ||
+  null;
+
+/**
+ * The conversation with what earlier runs read on the assistant's side, just before the newest message: page
+ * text never sits in the person's message or the system prompt. Not as a made-up tool call: a provider can
+ * refuse one it did not make (Gemini wants a thought signature on every function call). Redacted with this
+ * message's secrets too (one given only now was not redacted when read). New objects, so the chat itself (the
+ * recorded prompt, the check before done) never sees it.
+ */
+function withDigest(allMessages: any[], memory: Started | null, secrets) {
+  const at = allMessages.length - 1;
+  if (!memory?.digest || allMessages[at]?.role !== 'user') return allMessages;
+  const digest = redact(fenced(memory.digest, randomUUID()), secrets);
+  const before = allMessages[at - 1];
+  if (before?.role === 'assistant' && typeof before.content === 'string' && !before.tool_calls)
+    return allMessages.with(at - 1, { ...before, content: `${before.content}\n\n${digest}` });
+  return allMessages.toSpliced(at, 0, { role: 'assistant', content: digest });
+}
+
+/** Runs the loop and records how it ended for the next message: a Stop at once, since the run finishes its model call first. */
+function settled(work: () => Promise<AgentResult>, kept: KeptRun | undefined, signal?: AbortSignal) {
+  if (!kept) return work();
+  signal?.addEventListener('abort', () => kept.settle('stopped'), { once: true });
+  return work().then(
+    (result) => (kept.settle(statusOf(result)), result),
+    (error) => (kept.settle(statusOf(undefined, error)), Promise.reject(error)),
+  );
 }
 
 /** Provider answers that mean the key or model is wrong, not that the provider is down. */

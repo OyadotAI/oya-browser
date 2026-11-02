@@ -1,0 +1,47 @@
+/*
+ * The share chip (share-chip.tsx): the update pill's box, a still red dot like
+ * the recording state, what is shared in quiet text, then the action. Under the
+ * toolbar's narrow breakpoint only the dot and the action stay; the full
+ * sentence is in its tooltip and accessible name.
+ */
+.share-chip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  background: var(--muted-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.share-chip:hover {
+  background: var(--hover);
+}
+.share-chip-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.share-chip-status {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--secondary);
+}
+.share-chip-action {
+  font-weight: 600;
+  color: var(--text);
+}
+@media (max-width: 959px) {
+  .share-chip-status {
+    display: none;
+  }
+}

@@ -9,6 +9,11 @@ permissions:
   contents: read
 
 env:
+  # A registry connection reset (ECONNRESET) failed npm ci and with it the v1.0.203 release.
+  # npm retries a dropped fetch twice by default; give it five tries with longer backoff.
+  NPM_CONFIG_FETCH_RETRIES: 5
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: 20000
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: 120000
   REGISTRY: ghcr.io
   IMAGE_SERVER: ghcr.io/oyadotai/oya-browser-server
   IMAGE_BROWSER: ghcr.io/oyadotai/oya-browser
@@ -52,6 +57,7 @@ jobs:
             - 'browser/src/page/**'
             - 'browser/src/anonymity/**'
             - 'browser/package.json'
+            - 'browser/build/minimatch-compat.cjs'
             - 'Dockerfile'
           browser:
             - 'browser/**'
@@ -205,6 +211,8 @@ jobs:
         cluster_name: ${{ secrets.GKE_CLUSTER }}
         location: ${{ secrets.GKE_ZONE }}
         project_id: ${{ secrets.GKE_PROJECT }}
+        # IAM-checked DNS endpoint: the clusters' public IP endpoint is being closed.
+        use_dns_based_endpoint: true
 
     - name: Create namespace
       run: kubectl create namespace ${{ env.NAMESPACE }} 2>/dev/null || true
@@ -299,15 +307,15 @@ jobs:
           --docker-password="${GHCR_PAT}" \
           -n ${{ env.NAMESPACE }}
 
-    # The hosted image starts the server directly, so create billing adjustment
-    # tables before any new pod can read them. This additive migration is safe to retry.
-    - name: Apply billing and Keel telemetry migrations
+    # The hosted image starts the server directly, so create billing adjustment and
+    # persona group tables before any new pod can read them. These additive migrations are safe to retry.
+    - name: Apply billing, Keel telemetry and persona group migrations
       env:
         PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
         PGCONNECT_TIMEOUT: '10'
       run: |
         : "${PGDATABASE:?Missing database connection for billing migration}"
-        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql
+        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql
 
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/dev

@@ -18,7 +18,7 @@ import { LANE_IDLE_MS } from './constants.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 
 /** What the claims read: who drives, and the tabs. */
-type Deps = Pick<AppServices, 'control' | 'tabs'>;
+type Deps = Pick<AppServices, 'control' | 'tabs' | 'windows'>;
 
 /** The lane of a command that names none: one agent, as before lanes. */
 export const DEFAULT_LANE = 'default';
@@ -169,10 +169,16 @@ export class AgentTab {
     return this.scoped() && this.id !== null ? this.id : (this.deps.tabs.activeTabId ?? null);
   }
 
-  /** Whether the person may use tab `tabId` right now; null asks about something new, such as a new tab. */
+  /** Whether the person may use tab `tabId` right now; null asks about something new, such as a new tab. Incognito tabs are always the person's. */
   humanMay(tabId: number | null | undefined): boolean {
     const state = this.deps.control.snapshot();
-    return state.interactive || (this.scoped(state) && (tabId === null || !this.claimed().includes(tabId!)));
+    if (state.interactive || this.incognito(tabId)) return true;
+    return this.scoped(state) && (tabId === null || !this.claimed().includes(tabId!));
+  }
+
+  /** Whether `tabId` is in an incognito window, where no agent ever acts. */
+  private incognito(tabId: number | null | undefined): boolean {
+    return tabId != null && !!this.deps.windows?.owner(tabId)?.tabs.privateSession;
   }
 
   /** Whether another lane drives tab `tabId`. */

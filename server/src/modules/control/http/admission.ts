@@ -10,21 +10,46 @@ import { Status } from '../../../platform/http-status.ts';
 const MANAGED = ['oya-cloud', 'oya-selfhosted'];
 
 /** Persists the reservation for this request. */
-export function reserve(key, req, provider, persona) {
+export function reserve(key, req, provider, target: StartTarget = {}) {
   return control().reserve(key, {
     provider,
     inheritedPolicies: req.recoveryPolicies || [],
-    ...limits(persona),
+    ...limits(target),
     request: req.body || {},
     idempotencyKey: req.get('Idempotency-Key'),
     managed: MANAGED.includes(provider),
   });
 }
 
+/** The persona a start names, as the reservation reads it. */
+interface TargetPersona {
+  /** Its id. */
+  id: string;
+  /** Its cap; absent or Infinity for none. */
+  maxConcurrent?: number;
+}
+
+/** One member of a group a start may run as. */
+export interface TargetChoice {
+  /** The member's persona id. */
+  persona: string;
+  /** Its cap; null for none. */
+  personaLimit: number | null;
+}
+
+/** What a start runs as: one persona, or a group's members for the reservation to choose from. */
+export interface StartTarget {
+  /** The persona named, or resolved from 'default' or 'auto'. */
+  persona?: TargetPersona | null;
+  /** A group's members, each with its cap. */
+  personaChoices?: TargetChoice[];
+}
+
 /** The persona and quota limits the reservation is held to. */
-const limits = (persona) => ({
+const limits = ({ persona, personaChoices }: StartTarget) => ({
   persona: persona?.id,
   personaLimit: persona?.maxConcurrent,
+  personaChoices: personaChoices ?? null,
   maxConcurrent: QUOTAS.browsers,
   hourlyLimit: QUOTAS.sandboxesPerHour,
 });

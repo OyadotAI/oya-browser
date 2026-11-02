@@ -96,3 +96,25 @@ export function edgeSpeed(x: number, left: number, end: number): number {
 export function cardLeft(left: number, viewport: number, cardWidth: number): number {
   return Math.max(0, Math.min(left, viewport - cardWidth));
 }
+
+/** Where an incoming tab sits in the strip: its index among the open tabs, its slot's left edge, and where it is drawn. */
+export interface IncomingSlot {
+  /** Its index among the open tabs. */
+  to: number;
+  /** Its slot's left edge. */
+  slot: number;
+  /** Where it is drawn, centred on the pointer but kept within the unpinned tabs. */
+  left: number;
+}
+
+/**
+ * Where a tab carried over the strip goes: `x` is the pointer in the strip's own
+ * pixels, `start` where the unpinned tabs begin, `count` how many there are and
+ * `width` each one's. It is drawn centred on the pointer, and its gap opens at the
+ * slot it covers most, so the gap is always under the tab.
+ */
+export function incomingSlot(x: number, start: number, pinned: number, count: number, width: number): IncomingSlot {
+  const at = Math.max(0, Math.min(count, Math.round((x - start) / width - C.HALF)));
+  const left = Math.max(start, Math.min(start + count * width, x - width * C.HALF));
+  return { to: pinned + at, slot: start + at * width, left };
+}

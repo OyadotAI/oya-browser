@@ -15,7 +15,7 @@ describe('the start page tab', () => {
     shown = 0;
     tab = { id: 1, home: true, url: '', view: { webContents: new EventEmitter() } };
     host = { activeTabId: 1, showInShell: () => shown++ };
-    wireHome(host, tab);
+    wireHome(() => host, tab);
   });
   const emit = (name, ...args) => tab.view.webContents.emit(name, ...args);
 
@@ -52,6 +52,17 @@ describe('the start page tab', () => {
     host.activeTabId = 2;
     assert.equal(contentReady(tab), true);
     assert.equal(shown, 0);
+  });
+
+  it('shows the view in the window that owns the tab when it leaves, not the one it was created in', () => {
+    const moved = { activeTabId: 1, showInShell: () => (shown += 10) };
+    host = { activeTabId: 2, showInShell: () => shown++ };
+    tab = { id: 1, home: true, url: '', view: { webContents: new EventEmitter() } };
+    let owner = host;
+    wireHome(() => owner, tab);
+    owner = moved;
+    emit('did-start-navigation', { url: 'https://youtube.com/', isMainFrame: true });
+    assert.equal(shown, 10);
   });
 
   it('reopens on the start page, a used tab on its address, a never-loaded one on about:blank', () => {

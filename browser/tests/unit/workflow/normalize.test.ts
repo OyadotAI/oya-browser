@@ -82,10 +82,11 @@ describe('normalizeDraft', () => {
 
   it('copies repair, publish and run details deeply', () => {
     const run = { status: 'x' };
-    const draft = normalizeDraft({ run, publishedAt: 5 });
+    const draft = normalizeDraft({ run, publishedAt: 5, publishedName: 'lookup' });
     assert.deepEqual(draft.run, run);
     assert.notEqual(draft.run, run);
     assert.equal(draft.publishedAt, 5);
+    assert.equal(draft.publishedName, 'lookup', 'the name it was saved as survives a restart');
   });
 
   it('refuses another schema, too many steps, and bad variables', () => {

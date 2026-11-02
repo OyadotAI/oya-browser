@@ -194,10 +194,17 @@ function onEvent(workspace: Running, message: WorkerMessage): void {
   if (event.status === 'running') run.status = 'running';
 }
 
-/** The repaired draft: a new, paused copy named after the original. */
+/** A copy that is not the saved playbook: no name or account it was saved under. */
+const NOT_SAVED = { publishedName: undefined, publishedTo: undefined };
+
+/**
+ * The repaired draft: a new, paused copy named after the original. It is not the original's playbook,
+ * so it does not carry the name that was saved: saving it adds a playbook beside the original.
+ */
 function repairedDraft(draft: Draft, message: WorkerMessage): Draft {
   const name = draft.name.slice(0, WORKSPACE.REPAIR_NAME_LENGTH) + '-repair';
-  return normalizeDraft({ ...message.draft, id: randomUUID(), name, repairedFrom: draft.id, phase: 'paused' });
+  const fresh = { id: randomUUID(), name, repairedFrom: draft.id, phase: 'paused' };
+  return normalizeDraft({ ...message.draft, ...NOT_SAVED, ...fresh });
 }
 
 /** Saves a repair draft; without secure storage, the run says so instead. */

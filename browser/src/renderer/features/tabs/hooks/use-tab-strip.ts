@@ -1,14 +1,14 @@
 /**
  * The tab strip's DOM work, next to its views: measuring the room the tabs
  * share, keeping the active tab in view, settling the slides after a drop
- * and gliding the dropped tab home (FLIP), the strip as a drag sees it, and
- * Escape cancelling a drag.
+ * and gliding the dropped tab home (FLIP), the strip as a drag sees it,
+ * Escape cancelling a drag, and the gap for a tab carried in from another window.
  */
 import { useEffect, useLayoutEffect, type RefObject } from 'react';
 import { RendererConstants as C } from '../../../core/constants.ts';
 import type { Drop, StripPort, TabDragViewModel } from '../view-models/tab-drag-view-model.ts';
-import type { TabStripViewModel } from '../view-models/tab-strip-view-model.ts';
-import type { Slot } from '../model/tab-math.ts';
+import type { StripLayout, TabStripState, TabStripViewModel } from '../view-models/tab-strip-view-model.ts';
+import { incomingSlot, pinnedCount, type IncomingSlot, type Slot } from '../model/tab-math.ts';
 import { CANCEL_KEY } from '../model/constants.ts';
 
 /** The id of the commands button, where the tabs' room ends. */
@@ -135,4 +135,23 @@ export function useDragCancel(drag: TabDragViewModel): void {
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [drag]);
+}
+
+/** Where a tab carried over the strip from another window goes, measured against the strip as drawn; null when none is. */
+export function useIncoming(list: Ref, strip: TabStripViewModel, state: TabStripState, layout: StripLayout) {
+  const node = list.current;
+  const incoming = state.incoming;
+  const place = node && incoming ? measureIncoming(node, incoming.x, state, layout) : null;
+  useLayoutEffect(() => {
+    if (place) strip.aim(place.to, place.left - place.slot);
+  });
+  return place;
+}
+
+/** The incoming tab's place on `list`, for a pointer at window x `x`. */
+function measureIncoming(list: HTMLElement, x: number, state: TabStripState, layout: StripLayout): IncomingSlot {
+  const pinned = pinnedCount(state.tabs);
+  const origin = list.getBoundingClientRect().left - list.scrollLeft;
+  const start = (parseFloat(getComputedStyle(list).paddingLeft) || 0) + pinned * C.TAB_PINNED_WIDTH;
+  return incomingSlot(x - origin, start, pinned, state.tabs.length - pinned, layout.width);
 }

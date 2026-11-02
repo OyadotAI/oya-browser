@@ -149,7 +149,7 @@ then `OYA_TEST_URL=http://127.0.0.1:3979 npm run test:ui`.
 
 ## Exceptions
 
-- **`app/layout.tsx`'s theme script** is a string injected into the page
+- **`lib/theme-script.ts`** is a string `app/layout.tsx` injects into the page
   before hydration. It stays a literal so it runs before any bundle.
 - **`app/live/[browserId]/use-live-page.ts`** sets state in an effect
   (lint-disabled on that line): the share token is in the URL fragment, which

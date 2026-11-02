@@ -5,9 +5,10 @@ import * as keyConfig from '../config/service.ts';
 import { Status } from '../../platform/http-status.ts';
 import { BEARER_PREFIX } from './http/constants.ts';
 import { reserve, answerReplay, starting, persistOutcome } from './http/admission.ts';
+import { startAs } from './http/start-as.ts';
 
-// Not yet layered: reads the persona service from the composition root.
-const { personas } = container;
+// Not yet layered: reads the persona and group services from the composition root.
+const { personas, groups } = container;
 
 /** Persist a reservation before invoking any external provider. */
 export function admission(defaultProvider?) {
@@ -21,28 +22,32 @@ export function admission(defaultProvider?) {
   };
 }
 
-/** Reserves the session, then answers a replay or a queued start, or lets the start proceed. */
+/**
+ * Reserves the session, then answers a replay or a queued start, or lets the
+ * start proceed. The persona the session runs as is read back from the
+ * reservation: for a group start the reservation is where it was chosen.
+ */
 async function admit(key, req, res, next, defaultProvider) {
   if (registry.draining) return res.status(Status.UNAVAILABLE).json({ error: 'Server is draining', code: 'draining' });
-  const { provider, persona } = chooseTarget(key, req, defaultProvider);
-  const reservation = await reserve(key, req, provider, persona);
+  const { provider, target } = await chooseTarget(key, req, defaultProvider);
+  const reservation = await reserve(key, req, provider, target);
   if (reservation.replay) return answerReplay(key, req, res, reservation);
   if (reservation.state === 'queued')
-    return res.status(Status.ACCEPTED).json(starting(reservation.id, provider, persona?.id, 'queued'));
-  proceed(key, req, res, reservation, persona);
+    return res.status(Status.ACCEPTED).json(starting(reservation.id, provider, reservation.persona, 'queued'));
+  proceed(key, req, res, reservation);
   next();
 }
 
-/** The provider to start on and, for a start, the persona to start as. */
-function chooseTarget(key, req, defaultProvider) {
+/** The provider to start on and, for a start, what it runs as: a persona, or a group's members. */
+async function chooseTarget(key, req, defaultProvider) {
   const provider = req.body?.provider || defaultProvider || keyConfig.providerFor(key);
-  const persona = req.path.endsWith('/start') ? personas.resolve(key, req.body?.profile || req.body?.persona) : null;
-  return { provider, persona };
+  const target = req.path.endsWith('/start') ? await startAs({ personas, groups }, key, req.body) : {};
+  return { provider, target };
 }
 
-/** Binds the reservation to the request and persists whatever the start handler answers. */
-function proceed(key, req, res, reservation, persona) {
+/** Binds the reservation to the request, as the persona it runs as, and persists whatever the start handler answers. */
+function proceed(key, req, res, reservation) {
   req.controlSession = reservation;
-  if (persona) req.body = { ...req.body, persona: persona.id, profile: persona.id };
+  if (reservation.persona) req.body = { ...req.body, persona: reservation.persona, profile: reservation.persona };
   persistOutcome(key, reservation, res);
 }

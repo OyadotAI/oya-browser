@@ -5,6 +5,7 @@
 import { attachOnly } from '../service.ts';
 import { openText } from '../../../platform/secrets.ts';
 import { registry } from '../../browsers/registry.ts';
+import { releaseBrowser } from '../../browsers/socket.ts';
 import { sessions as gateways } from '../../gateway/service.ts';
 import { releasePersisted } from '../../../drivers/providers.ts';
 import { removeManaged } from '../managed.ts';
@@ -70,12 +71,13 @@ async function releaseProvider(x, key) {
     throw new Error('Resource outcome is unknown; operator reconciliation required');
 }
 
-/** Closes and forgets the browser's socket. */
+/** Gives back what the browser held, then closes its socket; released first, as its own close comes too late to. */
 function closeBrowser(id) {
+  const browser = registry.get(id);
+  releaseBrowser(id, browser, 'disconnected');
   try {
-    registry.get(id).ws?.close(CloseCode.STOPPED, 'Stopped by control plane');
+    browser.ws?.close(CloseCode.STOPPED, 'Stopped by control plane');
   } catch {}
-  registry.remove(id);
 }
 
 /** Releases the lease and backs off; a failed write is left for the lease to lapse. */

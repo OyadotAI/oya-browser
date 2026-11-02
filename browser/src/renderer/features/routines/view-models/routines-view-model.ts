@@ -36,6 +36,7 @@ export type RoutinesBridge = Pick<
   | 'listRoutines'
   | 'saveRoutine'
   | 'playbooks'
+  | 'listPersonas'
   | 'deleteRoutine'
   | 'runRoutineNow'
   | 'setRoutineEnabled'

@@ -5,7 +5,7 @@
  * interface:
  *
  *   render(analysis)        the page as text
- *   fit(text, max)          that text cut to `max` characters, still valid
+ *   cut(analysis, max)      the page within `max`, keeping the part on screen first (render/cut.ts)
  *   forAgent(analysis, max) what a model reads, within its budget
  *
  * createRenderer is the factory that picks one from configuration. A new format
@@ -80,7 +80,7 @@ export function withPage<T extends AnalyzeResult | null | undefined>(result: T, 
   if (!result?.ok || !result.data || !Array.isArray(result.data.blocks)) return result;
   const renderer = createRenderer(format);
   const data = { ...result.data, facts: ordered(result.data.facts) };
-  const page = renderer.fit(renderer.render(data), PAGE_RENDER.MAX_PAGE_CHARS);
+  const page = renderer.cut(data, PAGE_RENDER.MAX_PAGE_CHARS);
   const alias = renderer.format === 'markdown' ? { markdown: page } : {};
   return { ...result, data: { ...data, format: renderer.format, page, ...alias } } as T;
 }

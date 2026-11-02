@@ -62,9 +62,11 @@ spec:
           timeoutSeconds: 10
           failureThreshold: 5
         resources:
+          # 14-day prod peak ~0.38 CPU (p95 ~0.27): reserve 300m, burst to the 2-CPU
+          # limit. server-hpa is pinned at one replica, so its CPU % never scales.
           requests:
             memory: "1Gi"
-            cpu: "1000m"
+            cpu: "300m"
           limits:
             memory: "2Gi"
             cpu: "2000m"

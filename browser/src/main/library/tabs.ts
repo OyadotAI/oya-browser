@@ -4,6 +4,7 @@ import type { Tab } from '../tabs/types.ts';
 import { HOME_URL } from '../tabs/constants.ts';
 import { LibraryMenu } from './menu.ts';
 import type { LibraryKind, LibraryAction, LibraryPresentation } from '../../shared/library.ts';
+import type { DownloadAction } from '../../shared/ipc.ts';
 /** Window-scoped services keep a collection attached to its owning tab after transfers. */
 /** Full services are needed only for native maintenance menus. */
 type MenuDeps = ConstructorParameters<typeof LibraryMenu>[0];
@@ -56,6 +57,19 @@ const DOWNLOAD_ACTIONS: Partial<Record<LibraryAction, (deps: Deps, id: string) =
   open: (deps, id) => deps.downloads.open(id) || fileGone(),
   reveal: (deps, id) => deps.downloads.reveal(id) || fileGone(),
   remove: (deps, id) => deps.downloads.forget(id),
+};
+
+/** Opens or reveals download `id` for the toolbar's chip; the file's absence is thrown for it to say. */
+export function runDownloadAction(deps: Deps, id: string, action: DownloadAction): void {
+  const run = Object.hasOwn(CHIP_ACTIONS, action) ? CHIP_ACTIONS[action] : undefined;
+  if (!run) throw Error('Unknown download action');
+  run(deps, id);
+}
+
+/** What the toolbar's chip can do with a saved download: the row's open and reveal, never remove. */
+const CHIP_ACTIONS: Record<DownloadAction, (deps: Deps, id: string) => unknown> = {
+  open: DOWNLOAD_ACTIONS.open!,
+  reveal: DOWNLOAD_ACTIONS.reveal!,
 };
 
 /** Throws that a download's file was moved or deleted, for the page to say. */

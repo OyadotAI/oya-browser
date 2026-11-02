@@ -38,6 +38,12 @@ export interface ChatgptAccount {
 /** What a sign-in that came back for another request or another client says. */
 const MISMATCH = 'ChatGPT sign-in did not match. Try again.';
 
+/** What a sign-in OpenAI's page refused shows; OpenAI's own code goes to the log, for support. */
+function cancelled(code: string): Error {
+  console.warn('[chatgpt] sign-in refused:', code);
+  return Error(C.SIGN_IN_CANCELLED);
+}
+
 /** The ChatGPT account this app is signed in to. */
 export class ChatgptAuth {
   /** The main-process services. */
@@ -84,7 +90,7 @@ export class ChatgptAuth {
   /** Checks what came back, keeps the issued client before exchanging the code, never under the registration client. */
   private async complete(login: O.Login, query: Record<string, string>): Promise<O.Credential> {
     if (query.state !== login.state) throw Error(MISMATCH);
-    if (query.error) throw Error('ChatGPT sign-in was cancelled or not allowed.');
+    if (query.error) throw cancelled(query.error);
     const clientId = query.client_id || login.clientId;
     if (clientId === C.DYNAMIC_CLIENT) throw Error('ChatGPT did not finish the sign-in. Try again.');
     if (login.clientId !== C.DYNAMIC_CLIENT && clientId !== login.clientId) throw Error(MISMATCH);

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BrowsingLibrary, LibraryMenu } from '../../../../src/main/library/index.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 /** A menu with recordable native APIs and a real in-memory library. */
 function setup() {
@@ -29,6 +30,13 @@ describe('LibraryMenu', () => {
       items().some((item) => item.label?.includes('history')),
       false,
     );
+    menu.toggle();
+    assert.deepEqual(ctx.library.snapshot().bookmarks, []);
+  });
+  it('saves nothing from an incognito page', async () => {
+    const { menu, ctx } = setup();
+    const session = await incognitoSession();
+    ctx.tabs.find = () => ({ id: 1, url: 'https://a.test/', title: 'A', view: { webContents: { session } } });
     menu.toggle();
     assert.deepEqual(ctx.library.snapshot().bookmarks, []);
   });

@@ -54,6 +54,7 @@ export function personaDeps(overrides: Partial<PersonaDeps> = {}) {
   const deps = {
     repository: new MemoryPersonaRepository(),
     ownerOf: (key: string) => `owner:${key}`,
+    groups: { dropMember: mock.fn(async (_owner: string, _id: string) => {}) },
     proxies: { assigned: mock.fn((_id: string): any => null), residential: mock.fn((_p: Persona): any => null) },
     mfa: {
       describe: mock.fn(() => ({ configured: false })),

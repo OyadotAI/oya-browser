@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { shellHandlers } from '../../../../src/main/ipc/index.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
+import { incognitoSession } from '../../support/incognito.ts';
 
 describe('IPC handlers', () => {
   let ctx: any, call: any;
@@ -24,6 +25,29 @@ describe('IPC handlers', () => {
     assert.equal((await call('get-status')).browsing, true);
     ctx.shell.browsingMode = false;
     assert.equal((await call('get-status')).browsing, false);
+  });
+
+  it('download-action opens or reveals a download by id, says a missing file is gone, and refuses anything else', async () => {
+    const done: string[] = [];
+    ctx.downloads = {
+      open: (id) => (done.push(`open:${id}`), id === 'here'),
+      reveal: (id) => (done.push(`reveal:${id}`), id === 'here'),
+      forget: (id) => done.push(`forget:${id}`),
+    };
+    await call('download-action', 'here', 'open');
+    await call('download-action', 'here', 'reveal');
+    assert.deepEqual(done, ['open:here', 'reveal:here']);
+    await assert.rejects(async () => call('download-action', 'gone', 'open'), /moved or deleted/);
+    await assert.rejects(async () => call('download-action', 'here', 'remove'), /Unknown download action/);
+    await assert.rejects(async () => call('download-action', 'here', 'constructor'), /Unknown download action/);
+    assert.ok(!done.some((d) => d.startsWith('forget')), 'the chip never takes a download off the list');
+  });
+
+  it('go-to-share-call asks the indicator and ignores renderer arguments', async () => {
+    const asked = [];
+    ctx.shareIndicator = { goToCall: (...args) => asked.push(args) };
+    await call('go-to-share-call', 99, { tabId: 3 });
+    assert.deepEqual(asked, [[]]);
   });
 
   it('opens only the console of a ws or wss server, never another scheme', async () => {
@@ -51,6 +75,40 @@ describe('IPC handlers', () => {
     });
     assert.equal(ctx.socket.browserId, null);
     assert.ok(left);
+  });
+
+  it('logging out closes every incognito window before the normal windows leave browsing', async () => {
+    const order: string[] = [];
+    ctx.windows = {
+      closeIncognito: () => order.push('incognito'),
+      each: (run) => run({ tabs: { leaveBrowsingMode: () => order.push('leave') } }),
+    };
+    await call('sign-out');
+    assert.deepEqual(order, ['incognito', 'leave']);
+  });
+
+  it('a new tab or a step back in an incognito window never becomes a recording step', async () => {
+    const recorded: string[] = [];
+    ctx.recorder.recordNavigation = (url) => recorded.push(url);
+    ctx.recorder.recordHistory = async (action) => void recorded.push(action);
+    const page = { session: await incognitoSession(), navigationHistory: { canGoBack: () => true }, goBack() {} };
+    ctx.tabs = {
+      privateSession: page.session,
+      createTab: () => 1,
+      activeTabId: 1,
+      getActiveView: () => ({ webContents: page }),
+    };
+    const handlers: any = shellHandlers(ctx);
+    await handlers['new-tab']({}, 'https://private.test/');
+    await handlers['go-back']({});
+    assert.deepEqual(recorded, []);
+  });
+
+  it('opens an incognito window when the shell asks', async () => {
+    let opened = 0;
+    ctx.windows = { newIncognitoWindow: async () => void opened++ };
+    await call('new-incognito-window');
+    assert.equal(opened, 1);
   });
 
   it('asks the server who this browser is signed in as, with its key, and remembers the answer', async () => {
@@ -112,6 +170,35 @@ describe('IPC handlers', () => {
     ]) {
       await assert.rejects(async () => call(channel, 'x'), /Switch to Human Mode/, channel);
     }
+  });
+
+  it("hands find's typing, steps and close to the window's find bar, which checks them", async () => {
+    const search = mock.method(ctx.findBar, 'search');
+    const step = mock.method(ctx.findBar, 'step');
+    const dismiss = mock.method(ctx.findBar, 'dismiss');
+    await call('find-in-page', 'cat');
+    await call('find-step', true);
+    await call('find-step', 'yes');
+    await call('close-find');
+    assert.deepEqual(search.mock.calls[0].arguments, ['cat']);
+    assert.deepEqual(
+      step.mock.calls.map((c) => c.arguments),
+      [[true], [false]],
+    );
+    assert.equal(dismiss.mock.callCount(), 1);
+  });
+
+  it('reset-zoom resets the shown page through the guarded helper', async () => {
+    const page = { webContents: { level: 1, isDestroyed: () => false } } as any;
+    page.webContents.getZoomLevel = () => page.webContents.level;
+    page.webContents.setZoomLevel = (level) => (page.webContents.level = level);
+    ctx.tabs = { activeTabId: 4, getActiveView: () => page, find: () => ({ id: 4, view: page }) };
+    ctx.agentTab.humanMay = () => false;
+    await call('reset-zoom');
+    assert.equal(page.webContents.level, 1, 'refused while an agent holds the tab');
+    ctx.agentTab.humanMay = () => true;
+    await call('reset-zoom');
+    assert.equal(page.webContents.level, 0);
   });
 
   it('enters browsing mode on the first navigation', async () => {

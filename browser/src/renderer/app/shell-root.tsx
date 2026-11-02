@@ -23,7 +23,7 @@ import {
 import { ControlBar, blockedActions } from '../features/control/index.ts';
 import { BrandMark, ThemeSelect, PageBackdrop, Launch, useChromeRoot } from '../features/chrome/index.ts';
 import { TabBar, TabCard } from '../features/tabs/index.ts';
-import { BookmarksBar, Toolbar } from '../features/toolbar/index.ts';
+import { BookmarksBar, FindBar, ShareChipButton, Toolbar } from '../features/toolbar/index.ts';
 import { LibraryPage } from '../features/library/index.tsx';
 import { StartPage } from '../features/start/index.ts';
 import { PlaybooksPane } from '../features/playbooks/index.ts';
@@ -68,7 +68,7 @@ function ToolbarEnd({ vms }: ShellRootProps) {
   );
 }
 
-/** The tab bar, the toolbar under it, and the bookmarks bar under that. */
+/** The tab bar, the toolbar under it, the bookmarks bar under that, and the find bar when it is open. */
 function BrowserChrome({ vms }: ShellRootProps) {
   const { tabs, chrome, connection: c } = vms;
   const brand = <BrandMark vm={chrome.activity} />;
@@ -83,10 +83,12 @@ function BrowserChrome({ vms }: ShellRootProps) {
       />
       <TabCard vm={tabs.card} />
       <Toolbar vm={vms.toolbar} panel={vms.panel} shell={vms.shell} trailing={<ToolbarEnd vms={vms} />}>
+        <ShareChipButton vm={vms.toolbar.share} />
         <UpdatePill vm={c.updates} />
         <ControlBar vm={vms.control} />
       </Toolbar>
       <BookmarksBar vm={vms.toolbar.bookmarks} />
+      <FindBar vm={vms.toolbar.find} platform={vms.env.platform} />
     </>
   );
 }

@@ -7,23 +7,39 @@ import { invalid, sendError } from '../../../platform/errors.ts';
 import { metrics } from '../../../platform/metrics.ts';
 import { checkQuota } from '../../../platform/limits.ts';
 import { MAX_NAME, OPERATOR_CLOSE } from '../constants.ts';
+import { releaseBrowser } from '../connection/release.ts';
+import type { CDPDriver } from '../../../drivers/cdp.ts';
 
 /** Publishes how many browsers this replica holds. */
 export function countBrowsers() {
   metrics.browsersConnected.set({}, registry.browsers.size);
 }
 
-/** Closes a browser's socket, if it has one, with `reason`, and removes it from the registry. */
-export function dropBrowser(browserId, ws, reason: string) {
+/**
+ * Gives back everything the browser held and removes it from the registry, then closes its
+ * socket, if it has one, with `reason`. Released here, not left to the socket: its close
+ * comes later, when the browser is no longer its to release.
+ */
+export function dropBrowser(browserId, ws, reason: string, expected = registry.get(browserId)) {
+  const browser = registry.get(browserId);
+  if (browser && browser === expected && browser.ws === ws) releaseBrowser(browserId, browser, 'disconnected');
   try {
     ws?.close(OPERATOR_CLOSE, reason);
   } catch {}
-  registry.remove(browserId);
 }
 
 /** A driver closed on its own: forget the browser if it is still registered. */
-export function forget(browserId) {
-  if (registry.get(browserId)) registry.remove(browserId);
+export function forget(browserId, engine?: CDPDriver) {
+  const browser = registry.get(browserId);
+  if (engine && browser?.driver.engine !== engine) return;
+  releaseBrowser(browserId, browser, 'disconnected');
+}
+
+/** The driver invokes this callback as its method, binding late closes to that exact engine. */
+export function forgetDriver(browserId: string) {
+  return function (this: CDPDriver) {
+    forget(browserId, this);
+  };
 }
 
 /** The browser quota for `key`, counting the browsers it already holds here. */

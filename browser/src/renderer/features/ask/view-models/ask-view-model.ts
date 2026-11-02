@@ -211,7 +211,7 @@ export class AskViewModel extends ViewModel<AskState> {
   private answer(data: ChatAnswer): void {
     const limited = !!data.limited || data.text === 'Reached iteration limit.';
     this.set({ limited });
-    const run = this.run.finish(!data.error && !data.failed && !limited && !FAILED_REPLY.test(data.text || ''));
+    const run = this.run.finish(wentWell(data, limited), data.usage);
     if (run) this.set({ items: [...this.state.items, { kind: 'run', id: this.nextId++, run, folded: !!run.summary }] });
     if (!this.refused(data)) this.show(data);
   }
@@ -285,6 +285,10 @@ export class AskViewModel extends ViewModel<AskState> {
     for (const part of [this.run, this.files, this.persona, this.model]) part.dispose();
   }
 }
+
+/** Whether a run went well: no error, not failed or cut off at its limit, and no FAILED: report. */
+const wentWell = (data: ChatAnswer, limited: boolean): boolean =>
+  !data.error && !data.failed && !limited && !FAILED_REPLY.test(data.text || '');
 
 /** A failure keeps its original transcript text while attaching a safe, structured presentation. */
 function failedMessage(id: number, data: ChatAnswer): ChatMessage {

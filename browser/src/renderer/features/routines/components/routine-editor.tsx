@@ -1,5 +1,6 @@
 /**
- * The routine editor's card (`#routine-form`): name, prompt and schedule, with
+ * The routine editor's card (`#routine-form`): name, prompt or playbook and its
+ * values, profile and schedule, with
  * the refusal the server gave. Opening it scrolls it into view and focuses the
  * name field.
  */
@@ -84,7 +85,8 @@ function useFocusOnOpen(opened: number): void {
 /** What each run does: ask the agent the prompt below, or play one of the project's saved playbooks. */
 function TaskField({ editor }: RoutineEditorProps) {
   const { playbook, playbooks } = useViewModel(editor);
-  const names = playbook && !playbooks.includes(playbook) ? [playbook, ...playbooks] : playbooks;
+  const listed = playbooks.map((p) => p.name);
+  const names = playbook && !listed.includes(playbook) ? [playbook, ...listed] : listed;
   return (
     <label className="routine-field">
       {EDITOR_TEXT.task}
@@ -136,6 +138,53 @@ function TextFields({ editor }: RoutineEditorProps) {
   );
 }
 
+/** One field per variable of the playbook it plays; a secret's says the saved one is used. */
+function ValuesField({ editor }: RoutineEditorProps) {
+  const { values } = useViewModel(editor);
+  const chosen = editor.chosen();
+  if (!chosen?.variables.length) return null;
+  return (
+    <fieldset className="routine-field routine-values" id="routine-values">
+      <legend>{EDITOR_TEXT.values}</legend>
+      {chosen.variables.map((name) => (
+        <label key={name} className="routine-value">
+          {name}
+          <input
+            data-variable={name}
+            spellCheck={false}
+            disabled={chosen.secrets.includes(name)}
+            placeholder={chosen.secrets.includes(name) ? EDITOR_TEXT.secret : (chosen.defaults[name] ?? '')}
+            value={chosen.secrets.includes(name) ? '' : (values[name] ?? '')}
+            onChange={(e) => editor.setValue(name, e.target.value)}
+          />
+        </label>
+      ))}
+      <small>{EDITOR_TEXT.valuesHint}</small>
+    </fieldset>
+  );
+}
+
+/** The profile it runs as: the default, or one of the project's personas. */
+function ProfileField({ editor }: RoutineEditorProps) {
+  const { persona, personas, cloud } = useViewModel(editor);
+  const listed = personas.some((p) => p.value === persona);
+  const options = persona && !listed ? [{ value: persona, label: persona }, ...personas] : personas;
+  return (
+    <label className="routine-field">
+      {EDITOR_TEXT.profile}
+      <select id="routine-persona" value={persona} onChange={(e) => editor.setField('persona', e.target.value)}>
+        <option value="">{EDITOR_TEXT.defaultProfile}</option>
+        {options.map((p) => (
+          <option key={p.value} value={p.value}>
+            {p.label}
+          </option>
+        ))}
+      </select>
+      {persona && <small>{cloud ? EDITOR_TEXT.profileCloudHint : EDITOR_TEXT.profileHint}</small>}
+    </label>
+  );
+}
+
 /** Run in the cloud: the server runs it on a cloud browser instead of a desktop. */
 function CloudField({ editor }: RoutineEditorProps) {
   const { cloud } = useViewModel(editor);
@@ -166,6 +215,8 @@ export function RoutineEditor({ editor }: RoutineEditorProps) {
         {editing ? EDITOR_TEXT.editTitle : EDITOR_TEXT.newTitle}
       </div>
       <TextFields editor={editor} />
+      <ValuesField editor={editor} />
+      <ProfileField editor={editor} />
       <div className="routine-field">
         <span id="routine-repeat-label">Repeat</span>
         <ScheduleFields editor={editor} />

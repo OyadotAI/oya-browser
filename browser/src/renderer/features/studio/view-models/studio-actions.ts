@@ -10,7 +10,8 @@ import { SAY, UNTITLED, type Slot } from '../model/constants.ts';
 import { cleanError, freeInput, isDisabled, isExpanded } from '../model/studio-model.ts';
 import type { StudioViewModel } from './studio-view-model.ts';
 import type { ValidateCommand, Variables } from '../model/types.ts';
-import type { Failure } from '../../../../shared/ipc.ts';
+import type { SaveResult } from '../../../../shared/ipc.ts';
+import { savedMessage, saveFailure } from '../model/save-outcome.ts';
 
 /**
  * The control bar's guard on the record button. Under agent control the page
@@ -139,21 +140,25 @@ export class StudioActions {
     return this.studio.workspace?.draft.variables ?? {};
   }
 
-  /** Saves the playbook to the connected Oya workspace, under the name typed. */
-  async save(): Promise<void> {
+  /**
+   * Saves the playbook to the connected Oya workspace, under the name typed. A changed name
+   * renames the playbook this draft was saved as; `asCopy` saves a new one beside it instead.
+   */
+  async save(asCopy = false): Promise<void> {
     if (this.studio.state.saving || isDisabled(this.studio.state, 'record-save')) return;
     const name = this.studio.state.name.trim();
     const description = this.studio.state.description || name;
-    await this.whileBusy(() => this.publish(name, description), 'save-result', 'saving');
+    await this.whileBusy(() => this.publish(name, description, asCopy), 'save-result', 'saving');
   }
 
   /** The save itself, its confirmation, and the refreshed state. */
-  private async publish(name: string, description: string): Promise<void> {
-    const result = (await this.deps.bridge.saveRecording(name, description)) as Failure | undefined;
-    if (!result || result.error) throw new Error(result?.error || SAY.notConfirmed);
+  private async publish(name: string, description: string, asCopy: boolean): Promise<void> {
+    const copyOf = asCopy ? (this.studio.workspace?.renameFrom ?? undefined) : undefined;
+    const result = (await this.deps.bridge.saveRecording(name, description, asCopy)) as SaveResult | undefined;
+    if (!result || result.error) throw new Error(saveFailure(result, name));
     this.studio.mark({ justFinished: false });
     await this.studio.command({ type: 'get' }, 'save-result');
-    this.studio.say(`Saved “${name}” to Oya.`, false, 'save-result');
+    this.studio.say(savedMessage(result, name, copyOf), false, 'save-result');
   }
 
   /** Sends the name and description. */

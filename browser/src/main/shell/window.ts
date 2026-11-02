@@ -6,17 +6,34 @@
 import path from 'node:path';
 import type { Tab } from '../tabs/types.ts';
 import { waitForChrome } from '../windows/index.ts';
-import type { BrowserWindow, BrowserWindowConstructorOptions, LoadFileOptions, WebPreferences } from 'electron';
+import type {
+  BrowserWindow,
+  BrowserWindowConstructorOptions,
+  LoadFileOptions,
+  WebContents,
+  WebPreferences,
+} from 'electron';
 import type { AppServices } from '../app/services.ts';
 import { redact } from '../../workflow/index.ts';
 import { JSON_INDENT } from '../app/constants.ts';
 import { WINDOW_SIZE, TRAFFIC_LIGHTS, SHELL_BACKGROUND, PANEL_WIDTH, DEV_LOG_MAX_CHARS } from './constants.ts';
 import { holdStill, inContainer, stillWhileAway } from './hold-still.ts';
+import type { SavedWindow } from './window-bounds.ts';
+import { sendZoom } from './page-zoom.ts';
 
 /** The services the shell window uses. */
 type Deps = Pick<
   AppServices,
-  'electron' | 'appDir' | 'config' | 'layout' | 'shortcuts' | 'shield' | 'tabs' | 'windows'
+  | 'electron'
+  | 'appDir'
+  | 'config'
+  | 'layout'
+  | 'shortcuts'
+  | 'shield'
+  | 'tabs'
+  | 'windows'
+  | 'windowBounds'
+  | 'incognito'
 >;
 
 /** The shell page's preload bridge (built to out/preload/), isolated from the page's own scripts. */
@@ -38,6 +55,14 @@ function titleBar(mac: boolean): BrowserWindowConstructorOptions {
 interface OpenShell {
   /** The open window. */
   window: BrowserWindow;
+}
+
+/** A window just built, and the saved bounds it was built at. */
+interface Opened {
+  /** The new window. */
+  win: BrowserWindow;
+  /** The main window's saved bounds, or null when it opened at the default size. */
+  placed: SavedWindow | null;
 }
 
 /** The window and whether it is showing web pages yet. */
@@ -106,15 +131,22 @@ export class ShellWindow {
     if (this.alive()) console.error('[oya] Shell could not load:', error.message);
   }
 
-  /** The shell page's address options: its theme rides in the query so the very first paint is already in it (src/renderer/public/first-paint.js). */
+  /**
+   * The shell page's address options: its theme and whether it is incognito ride in the query so the very first
+   * paint is already in them (src/renderer/public/first-paint.js). Neither changes for the window's lifetime.
+   */
   private firstPaint(): LoadFileOptions {
-    return {
-      query: { theme: this.dark() ? 'dark' : 'light', still: String(inContainer()), secondary: String(this.secondary) },
+    const theme = this.dark() ? 'dark' : 'light';
+    const incognito = {
+      incognito: String(!!this.deps.tabs.privateSession),
+      incognitoAvailable: String(this.deps.incognito.available()),
     };
+    return { query: { theme, still: String(inContainer()), secondary: String(this.secondary), ...incognito } };
   }
 
-  /** Whether the shell is dark: chosen so, or following a dark system. */
+  /** Whether the shell is dark: chosen so, or following a dark system. An incognito window always is. */
   private dark(): boolean {
+    if (this.deps.tabs.privateSession) return true;
     const ui = this.deps.config.values.ui;
     return ui?.theme === 'dark' || (ui?.theme !== 'light' && this.deps.electron.nativeTheme.shouldUseDarkColors);
   }
@@ -122,13 +154,40 @@ export class ShellWindow {
   /** Opens the window and wires what it listens to. */
   create(hidden = false): void {
     this.deps.layout.width = Number(this.deps.config.values.ui?.panelWidth) || PANEL_WIDTH;
-    const win = (this.window = new this.deps.electron.BrowserWindow({ ...this.options(), show: !hidden }));
+    const { win, placed } = this.open(hidden);
     this.deps.windows?.watch(this.deps as AppServices);
     this.loadShellPage(win, hidden);
     this.deps.shortcuts.install(win.webContents);
     this.lockToShellPage(win);
     this.followTheme();
+    this.place(win, placed);
+  }
+
+  /** Builds the BrowserWindow, at the main window's saved bounds when there are any; returns it and them. */
+  private open(hidden: boolean): Opened {
+    const placed = this.remembered(hidden);
+    const at = placed && { x: placed.x, y: placed.y, width: placed.width, height: placed.height };
+    const win = (this.window = new this.deps.electron.BrowserWindow({ ...this.options(), ...at, show: !hidden }));
+    return { win, placed };
+  }
+
+  /** Sizes the new window: filling a container, or as the main window was left. */
+  private place(win: BrowserWindow, placed: SavedWindow | null): void {
     this.fitContainer(win);
+    this.remember(win, placed);
+  }
+
+  /** The main window's saved bounds. Torn-off and new windows (`hidden`) keep the default, and a container never reads them: its viewport is fixed. */
+  private remembered(hidden: boolean): SavedWindow | null {
+    if (hidden || inContainer()) return null;
+    return this.deps.windowBounds?.saved() ?? null;
+  }
+
+  /** Maximizes the main window if it closed maximized, and saves its bounds when it closes; never for other windows or in a container. */
+  private remember(win: BrowserWindow, placed: SavedWindow | null): void {
+    if (this.secondary || inContainer()) return;
+    if (placed?.maximized) win.maximize();
+    this.deps.windowBounds?.track(win);
   }
 
   /** In a container the window fills the virtual screen. */
@@ -158,12 +217,16 @@ export class ShellWindow {
     const contents = win.webContents;
     contents.on('will-navigate', (event) => event.preventDefault());
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    contents.on('did-finish-load', () => {
-      contents.setZoomLevel(0);
-      this.deps.layout.layoutActiveTab();
-      // A fast connection opens tabs while the page is still loading its scripts, and a late one misses that list.
-      this.deps.tabs.sendTabList();
-    });
+    contents.on('did-finish-load', () => this.shellLoaded(contents));
+  }
+
+  /** The shell page (re)loaded: undo any zoom on it, lay it out, and hand it the tabs and the shown page's zoom. */
+  private shellLoaded(contents: WebContents): void {
+    contents.setZoomLevel(0);
+    this.deps.layout.layoutActiveTab();
+    // A fast connection opens tabs while the page is still loading its scripts, and a late one misses that list.
+    this.deps.tabs.sendTabList();
+    sendZoom({ tabs: this.deps.tabs, shell: this }, false); // a reloaded toolbar has no zoom of its own to show
   }
 
   /** Repaints the window and tells the page when the system theme changes. */

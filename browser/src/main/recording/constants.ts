@@ -20,3 +20,8 @@ export const PLAYBOOK_SCHEMA_VERSION = 2;
 export const NATIVE_RECORDING_SETTLE_MS = 5000;
 /** Missing native capture is represented explicitly rather than claiming a complete demonstration. */
 export const NATIVE_CAPTURE_ISSUE = 'Native recording could not capture a document. Review this part of the workflow.';
+
+/** The status the server's rename answers when the playbook it names is gone: the save then makes a new one. */
+export const NOT_FOUND = 404;
+/** The status a taken playbook name answers: the save stops rather than overwrite it. */
+export const CONFLICT = 409;

@@ -155,11 +155,18 @@ describe('PlaybooksTab', () => {
     expect(screen.getByText('Rename order')).toBeTruthy();
   });
 
-  it('shows the Playwright code for a playbook', async () => {
+  it('leaves a playbook’s code to its editor, with no separate code button on the row', async () => {
     serve([order]);
     await setup();
-    await userEvent.click(screen.getByRole('button', { name: 'Playwright code for order' }));
-    expect(screen.getByText('export default async () => {}')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit order' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Playwright code for order' })).toBeNull();
+  });
+
+  it('shows a healed draft’s code to review before promoting it', async () => {
+    serve([order]);
+    await setup();
+    await userEvent.click(screen.getByRole('button', { name: 'Review' }));
+    expect(screen.getByText('draft code')).toBeTruthy();
   });
 
   it('downloads a playbook as an export file another environment can import', async () => {

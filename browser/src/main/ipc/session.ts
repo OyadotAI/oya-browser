@@ -196,6 +196,7 @@ export class SessionHandlers {
     this.deps.socket.browserId = null;
     this.deps.config.merge({ apiKey: '', signedOut: true, keyFromApp: false, account: null });
     this.deps.config.save();
+    this.deps.windows?.closeIncognito();
     if (this.deps.windows) this.deps.windows.each((scope) => scope.tabs.leaveBrowsingMode());
     else this.deps.tabs.leaveBrowsingMode();
   }

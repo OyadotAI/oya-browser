@@ -95,12 +95,28 @@ async function matchHere(browserId, el, text?, partial = false) {
 /** Re-analyzes until the recorded element appears, for up to about five seconds. */
 async function waitFor(browserId, el, text?, partial = false) {
   for (let attempt = 0; attempt < FIND_ATTEMPTS; attempt++) {
-    const match = await matchHere(browserId, el, text, partial);
+    const match = await matchAfterDetach(browserId, el, text, partial);
     if (match) return match;
     pageChanged(browserId);
     await sleep(FIND_RETRY_MS);
   }
   return null;
+}
+
+/** Re-reads a page if its native agent frame detached during analysis. */
+async function matchAfterDetach(browserId, el, text, partial) {
+  try {
+    return await matchHere(browserId, el, text, partial);
+  } catch (error) {
+    if (!detachedAgentFrame(error)) throw error;
+    pageChanged(browserId);
+    return null;
+  }
+}
+
+/** Whether the page changed between a replay command and its native execution. */
+function detachedAgentFrame(error) {
+  return String(error?.message || error).includes('Native agent frame is detached');
 }
 
 /**
@@ -149,8 +165,32 @@ async function replayClick(browserId, step, values, defaults) {
   if (direct) return direct;
   const aim = aimedAt(step, key, values, defaults);
   const el = await waitFor(browserId, ...aim);
-  if (el) return command(browserId, 'click', { selector: `[data-ac-id="${el.id}"]` });
+  if (el) return elementCommand(browserId, 'click', el);
   return followLink(browserId, aim[0], !!key);
+}
+
+/** Runs an element action again only after re-finding its handle in a live frame. */
+async function elementCommand(browserId, action, el, params = {}, includeId = false) {
+  const send = (target) => command(browserId, action, elementParams(target, params, includeId));
+  try {
+    return await send(el);
+  } catch (error) {
+    return retryDetachedElement(browserId, el, error, send);
+  }
+}
+
+/** Retries only after the browser confirms that a fresh analysis still names the element. */
+async function retryDetachedElement(browserId, el, error, send) {
+  if (!detachedAgentFrame(error)) throw error;
+  pageChanged(browserId);
+  const target = await waitFor(browserId, el);
+  if (!target) throw error;
+  return send(target);
+}
+
+/** The current analyzer handle for the element action being retried. */
+function elementParams(el, params, includeId) {
+  return { ...params, ...(includeId ? { element_id: el.id } : {}), selector: `[data-ac-id="${el.id}"]` };
 }
 
 /**
@@ -250,7 +290,7 @@ function whereItWent(result) {
 async function replayType(browserId, step, values, _defaults, task: any = {}) {
   const el = await find(browserId, withValues(step.el, values));
   const text = step.answer ? await answerFor(step.answer, values, task) : fill(step.text ?? '', values);
-  return command(browserId, 'type', { selector: `[data-ac-id="${el.id}"]`, text });
+  return elementCommand(browserId, 'type', el, { text });
 }
 
 /** A free-text field's words: the caller's own when passed, otherwise the model's, written for this run. */
@@ -333,14 +373,14 @@ async function replayCloseTab(browserId, step) {
 /** Hovers over the recorded element, for a menu that opens on hover. */
 async function replayHover(browserId, step, values) {
   const el = await find(browserId, withValues(step.el, values));
-  return command(browserId, 'hover', { selector: `[data-ac-id="${el.id}"]` });
+  return elementCommand(browserId, 'hover', el);
 }
 
 /** Double-clicks the recorded element, or the recorded point when no element was named. */
 async function replayDoubleClick(browserId, step, values) {
   if (!step.el) return command(browserId, 'double_click', { x: step.x, y: step.y });
   const el = await find(browserId, withValues(step.el, values));
-  return command(browserId, 'double_click', { element_id: el.id, selector: `[data-ac-id="${el.id}"]` });
+  return elementCommand(browserId, 'double_click', el, {}, true);
 }
 
 /**
@@ -399,21 +439,37 @@ async function runStep(browserId, step, values, defaults = {}, task = {}) {
  * MFA). When a step no longer fits the page: autoHeal off throws; on, the agent
  * finishes the task and its steps replace the broken ones in the playbook.
  */
-export async function play(apiKey, browserId, pb, vars = {}, { autoHeal = true, checkpoint, requestHuman }: any = {}) {
-  if (pb.schemaVersion === WORKFLOW_SCHEMA) return playWorkflow(browserId, pb, vars, autoHeal);
-  return replaySteps(apiKey, browserId, pb, { ...pb.defaults, ...vars }, { autoHeal, checkpoint, requestHuman });
+export async function play(apiKey, browserId, pb, vars = {}, options: any = {}) {
+  const replay = replayOptions(options);
+  if (pb.schemaVersion === WORKFLOW_SCHEMA) return playWorkflow(browserId, pb, vars, replay.autoHeal);
+  return replaySteps(apiKey, browserId, pb, { ...pb.defaults, ...vars }, replay);
 }
+
+/** What a replay is run with: healing on unless turned off, the checkpoint, the person, and the step reporter. */
+const replayOptions = ({ autoHeal = true, checkpoint, requestHuman, onStep }: any) => ({
+  autoHeal,
+  checkpoint,
+  requestHuman,
+  onStep,
+});
 
 /** Replays the steps in order, running the checkpoint after page-changing ones; a failure heals or throws. */
 async function replaySteps(apiKey, browserId, pb, values, options) {
   pageChanged(browserId); // nothing in hand describes this page yet
   const run = { task: { apiKey, prompt: pb.prompt }, options, signedIn: false };
   for (let i = 0; i < pb.steps.length; i++) {
-    const failed = await stepOrSignIn(browserId, pb, i, values, run);
+    const failed = await reported(browserId, pb, i, values, run);
     if (failed) return recover(apiKey, browserId, pb, i, failed.err, values, options);
     await afterStep(browserId, pb, i, run);
   }
   return { steps: pb.steps.length, total: pb.steps.length, fellBack: false };
+}
+
+/** Step `i` (signing in again if it fails), told to the run's timeline as it ends. */
+async function reported(browserId, pb, i, values, run) {
+  const failed = await stepOrSignIn(browserId, pb, i, values, run);
+  run.options.onStep?.({ index: i, action: pb.steps[i].action, ok: !failed });
+  return failed;
 }
 
 /**

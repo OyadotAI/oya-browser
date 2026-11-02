@@ -20,6 +20,7 @@ import { router as agentSignupRoutes } from '../modules/auth/agent-routes.ts';
 import { router as fleetRoutes } from '../modules/fleet/routes.ts';
 import { router as browsersRoutes } from '../modules/browsers/routes.ts';
 import { personaRoutes } from '../modules/personas/routes.ts';
+import { personaGroupRoutes } from '../modules/personas/group-routes.ts';
 import { container } from './container.ts';
 import { accountRoutes } from '../modules/erasure/index.ts';
 import { router as pairingRoutes } from '../modules/pairing/routes.ts';
@@ -102,6 +103,8 @@ router.use(fleetRoutes);
 router.use(browsersRoutes);
 /** Personas and their credentials, MFA and proxy. */
 router.use(personaRoutes(container.personas));
+/** Persona groups: named sets of personas a browser start can name instead of one. */
+router.use(personaGroupRoutes(container.groups));
 /** Desktop app pairing codes. */
 router.use(pairingRoutes);
 /** Saved proxies. */

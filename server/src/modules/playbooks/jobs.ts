@@ -23,6 +23,18 @@ export interface Job {
   secrets: Record<string, any>;
   /** Whether a broken replay is healed by the agent. */
   autoHeal: boolean;
+  /** Told each replayed step as it ends, for the run's timeline. */
+  onStep?: (event: StepEvent) => void;
+}
+
+/** One replayed step as the run's timeline records it. */
+export interface StepEvent {
+  /** The step's place, from 0. */
+  index: number;
+  /** What it does: click, type, navigate… */
+  action: string;
+  /** Whether it played as recorded; false hands the rest to healing. */
+  ok: boolean;
 }
 
 /** Runs the job, parking on a person through `requestHuman` when it needs one. */
@@ -35,9 +47,9 @@ export async function runJob(job: Job, requestHuman) {
 }
 
 /** Replays the job's playbook with its data and secrets as the variables. */
-function replayJob({ key, browserId, pb, data, secrets, autoHeal }: Job, checkpoint, requestHuman) {
+function replayJob({ key, browserId, pb, data, secrets, autoHeal, onStep }: Job, checkpoint, requestHuman) {
   const values = { ...data, ...secrets };
-  return play(key, browserId, pb, values, { autoHeal: autoHeal !== false, checkpoint, requestHuman });
+  return play(key, browserId, pb, values, { autoHeal: autoHeal !== false, checkpoint, requestHuman, onStep });
 }
 
 /** Hands the prompt to the agent; a run that hit its limit or said FAILED fails. */

@@ -13,6 +13,7 @@ const {
   captureChecks,
   permissionRecovery,
   brokenPreviews,
+  sharingChecks,
 } = require('./desktop-share-picker.cjs');
 
 const profile = process.env.OYA_DESKTOP_MEDIA_PROFILE;
@@ -143,6 +144,8 @@ async function screenPermission(ses, window, state) {
   await brokenPreviews(f.deps, window);
   await categories(f.deps, window, sources);
   await captureChecks(request, state);
+  state.human = true;
+  await sharingChecks(f.deps, window);
   assert.ok(
     trace.some(([kind]) => kind === 'display'),
     'the native display-media handler ran',

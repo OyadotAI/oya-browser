@@ -1,6 +1,7 @@
 /**
  * The save card (#record-finish): shown once there are steps and no
- * recording, with where the workflow is, the name and Save, the hint, and the
+ * recording, with where the workflow is, the name and Save (and Save as copy
+ * when a new name would rename the saved playbook), the hint, and the
  * description. Right after a recording it comes into view with the name
  * focused when empty.
  */
@@ -11,6 +12,8 @@ import {
   finishCopy,
   finishTitle,
   isDisabled,
+  renameNote,
+  renaming,
   saveHint,
   saveLabel,
   saveTitle,
@@ -48,12 +51,30 @@ export function FinishCard({ vm, state }: StudioPartProps) {
       <h3 id="record-finish-title">{finishTitle(state)}</h3>
       <p id="record-finish-copy">{draft ? finishCopy(state, draft) : ''}</p>
       <SaveRow vm={vm} state={state} nameRef={name} />
+      <RenameOption vm={vm} state={state} />
       <SlotStatus slot="save-result" message={state.messages['save-result']} />
       <p className="finish-connection" id="record-save-hint">
         {saveHint(state)}
       </p>
       <DescriptionField vm={vm} state={state} />
     </section>
+  );
+}
+
+/** While a save would rename: which playbook it renames, and Save as copy to keep that one. */
+function RenameOption({ vm, state }: StudioPartProps) {
+  if (!renaming(state)) return null;
+  return (
+    <div className="finish-rename" id="record-rename">
+      <p>{renameNote(state)}</p>
+      <Button
+        id="record-save-copy"
+        disabled={isDisabled(state, 'record-save-copy')}
+        onClick={() => void vm.actions.save(true)}
+      >
+        Save as copy
+      </Button>
+    </div>
   );
 }
 

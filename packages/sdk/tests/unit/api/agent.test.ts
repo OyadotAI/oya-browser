@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import { Oya } from '../../../dist/index.js';
 import { BASE, client, fakeFetch, tickUntil } from '../support/fake-fetch.ts';
 
+/** The SDK's poll interval (READY_POLL_MS): a wait that gives up before it was not stretched to a whole poll. */
+const POLL_MS = 2000;
+
 /** A signup server: an easy puzzle, and an answer that checks the nonce solves it. */
 const signupRoutes = () =>
   fakeFetch({
@@ -113,6 +116,27 @@ describe('oya.desktop.connect', () => {
     await tickUntil(connecting, 2000);
     assert.equal((await connecting).id, 'd1');
     assert.deepEqual(calls.find((c) => c.path === '/api/pairing')!.body, { persona: 'p-work' });
+  });
+
+  it('does not sleep past the pairing timeout when the poll interval is longer', async () => {
+    const { oya } = client({ 'GET /api/browsers': { body: [] }, 'POST /api/pairing': { body: { code: 'c1' } } });
+    const begun = Date.now();
+    const connecting = oya.desktop.connect({ open: false, timeoutMs: 1000 });
+    await tickUntil(connecting, 100);
+    await assert.rejects(connecting, { status: 504 });
+    assert.ok(Date.now() - begun < POLL_MS, `gave up after ${Date.now() - begun}ms, not a whole poll`);
+  });
+
+  it('connects when the app dials in during the final capped pause', async () => {
+    const { oya } = client({
+      // The first check is before pairing; the next two are in the budget; the app is up for the check after it.
+      'GET /api/browsers': [{ body: [] }, { body: [] }, { body: [] }, { body: [desktop] }],
+      'POST /api/pairing': { status: 201, body: { code: 'c1' } },
+      'GET /api/browsers/d1': { body: desktop },
+    });
+    const connecting = oya.desktop.connect({ open: false, timeoutMs: 3000 });
+    await tickUntil(connecting, 1000);
+    assert.equal((await connecting).id, 'd1');
   });
 
   it('says how to install and pair when the app never connects', async () => {

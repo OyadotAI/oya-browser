@@ -17,6 +17,30 @@ export function atCapacity(sessions, p, { maxConcurrent, persona, personaLimit }
   );
 }
 
+/** One persona a start may run as, with its cap (null for none). */
+interface Choice {
+  /** The persona's id. */
+  persona: string;
+  /** Its concurrency cap. */
+  personaLimit: number | null;
+}
+
+/**
+ * The persona a group start runs as: the one with the fewest slot-holding
+ * sessions among those under their cap, else the fewest overall, so a start that
+ * will queue waits on the one with the fewest running and waiting. Counted from `sessions` under the
+ * project lock, never from what a replica has registered, so a burst of starts
+ * spreads instead of all ranking the same member first. Ties keep `choices`'
+ * order: the one used longest ago.
+ */
+export function leastLoaded(sessions, choices: Choice[]): Choice {
+  const count = (list, c: Choice) => list.filter((x) => x.persona === c.persona).length;
+  const [holding, waiting] = [sessions.filter(holdsSlot), sessions.filter((x) => x.state === 'queued')];
+  const full = (c: Choice) => c.personaLimit !== null && count(holding, c) >= c.personaLimit;
+  const load = (c: Choice) => count(holding, c) + count(waiting, c);
+  return [...choices].sort((a, b) => Number(full(a)) - Number(full(b)) || load(a) - load(b))[0];
+}
+
 /** Metered spend (accumulated on the project, so pruning sessions loses nothing) plus outstanding reservations. */
 export const spentUsd = (sessions, p) =>
   sessions.reduce((n, x) => n + (terminal.has(x.state) ? 0 : x.reservedCostUsd || 0), p.costUsd || 0);

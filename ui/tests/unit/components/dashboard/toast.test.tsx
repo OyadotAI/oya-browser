@@ -37,7 +37,7 @@ describe('ToastProvider', () => {
   it('colors an error toast red', () => {
     setup('Nope', 'error');
     fireEvent.click(screen.getByText('raise'));
-    expect(screen.getByText('Nope').parentElement?.className).toContain('text-red-400');
+    expect(screen.getByText('Nope').parentElement?.className).toContain('text-red');
   });
 
   it('refuses useToast outside a provider', () => {

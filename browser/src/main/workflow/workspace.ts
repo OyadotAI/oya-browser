@@ -21,6 +21,7 @@ import {
   type WithRun,
 } from './runs.ts';
 import type { RunOptions, ValidationSession } from './validation.ts';
+import { savedAs, withPublication } from './published.ts';
 
 /** Starts validating a draft; `receive` hears the worker's messages. */
 export type Runner = (
@@ -39,6 +40,8 @@ export interface WorkspaceDeps {
   notify: (state: WorkspaceState) => void;
   /** Starts a validation. */
   runner: Runner;
+  /** The server and project this browser is on now, to know which saved name a rename may move. */
+  account?: () => string;
 }
 
 /** A problem that stops the draft running; one that stops generation names no step. */
@@ -99,6 +102,14 @@ function buildArtifact(draft: Draft): Built {
   return { artifact, problems };
 }
 
+/** Opens the most recent readable draft and its runs, as a workspace starts. */
+function openRecent(ws: Workspace): void {
+  const recent = ws.store.list().find((d) => !d.error);
+  if (recent) ws.draft = ws.store.load(recent.id);
+  ws.run = recoverRuns(ws.runStore, ws.draft.id);
+  pruneRuns(ws.runStore);
+}
+
 /** Everything the renderer shows about `ws`, in one object. */
 function snapshotOf(ws: Workspace) {
   const { artifact, problems } = buildArtifact(ws.draft);
@@ -106,7 +117,8 @@ function snapshotOf(ws: Workspace) {
   const undo = { storageError: ws.storageError, canUndo: !!ws.history.length, canRedo: !!ws.future.length };
   const saved = !!ws.draft.publishedAt && ws.draft.publishedRevision === ws.draft.revision;
   const runHistory = (ws.runStore?.list() || []).filter((item) => !item.error);
-  return { ...head, saved, ...undo, runHistory, run: ws.run, support: ws.support() };
+  const renameFrom = savedAs(ws.draft, ws.account?.() ?? '');
+  return { ...head, saved, renameFrom, ...undo, runHistory, run: ws.run, support: ws.support() };
 }
 
 /** Saves a run record; answers the storage failure, or null. */
@@ -138,6 +150,8 @@ export class Workspace {
   private readonly notify: WorkspaceDeps['notify'];
   /** Starts a validation. */
   private readonly runner: Runner;
+  /** The server and project this browser is on now. */
+  readonly account?: () => string;
   /** The draft being edited. */
   draft: Draft = normalizeDraft();
   /** Earlier versions, for undo. */
@@ -158,15 +172,13 @@ export class Workspace {
   private runSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** `store` holds drafts, `runStore` runs; `notify` publishes snapshots; `runner` starts a validation. */
-  constructor({ store, runStore, notify, runner }: WorkspaceDeps) {
+  constructor({ store, runStore, notify, runner, account }: WorkspaceDeps) {
+    this.account = account;
     this.store = store;
     this.runStore = runStore;
     this.notify = notify;
     this.runner = runner;
-    const recent = store.list().find((d) => !d.error);
-    if (recent) this.draft = store.load(recent.id);
-    this.run = recoverRuns(runStore, this.draft.id);
-    pruneRuns(this.runStore);
+    openRecent(this);
   }
 
   /** The diagnostics bundle: the current run without its draft, code or repair details, redacted. */
@@ -225,7 +237,7 @@ export class Workspace {
   travel(from: Draft[], to: Draft[]): WorkspaceState {
     if (from.length) {
       to.push(this.draft);
-      this.draft = from.pop()!;
+      this.draft = withPublication(from.pop()!, this.draft);
     }
     return this.persist();
   }

@@ -121,6 +121,8 @@ export interface ProxyCheck {
 export interface GeoHint {
   /** Two-letter country, optionally a region. */
   geo?: string;
+  /** Connect with no proxy at all: not an assigned proxy, not Oya residential. Traffic leaves from the browser's own network. Overrides geo. */
+  direct?: boolean;
 }
 
 /** A persona to create. */

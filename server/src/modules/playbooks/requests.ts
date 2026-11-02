@@ -2,6 +2,7 @@
  * Checking the bodies of the playbook and run routes before any work starts.
  * Each check answers with the refusal the route sends, or what the route needs.
  */
+import { draftPlaybook } from './editing.ts';
 import * as keyConfig from '../config/service.ts';
 import { Status } from '../../platform/http-status.ts';
 import { validData } from '../../app/http.ts';
@@ -57,16 +58,35 @@ export function playable(key, name, variables): Checked {
   return { pb };
 }
 
+/** Why a run's values were refused. */
+const BAD_RUN_DATA =
+  'data must map names to strings, numbers or a file() value; secrets takes strings and numbers only';
+
+/** Whether a run names a playbook: a saved one by name, or an unsaved definition. */
+const isPlaybook = (playbook) => typeof playbook === 'string' || (playbook !== null && typeof playbook === 'object');
+
 /** The playbook a run request names (null for a prompt), when its data is valid and complete. */
 export function runnable(key, { prompt, playbook, data, secrets }): Checked {
-  if (!validData(data) || !validData(secrets, { files: false }))
-    return refuse(
-      Status.BAD_REQUEST,
-      'data must map names to strings, numbers or a file() value; secrets takes strings and numbers only',
-    );
-  if ((typeof prompt === 'string') === (typeof playbook === 'string'))
+  if (!validData(data) || !validData(secrets, { files: false })) return refuse(Status.BAD_REQUEST, BAD_RUN_DATA);
+  if ((typeof prompt === 'string') === isPlaybook(playbook))
     return refuse(Status.BAD_REQUEST, 'Pass exactly one of prompt or playbook');
-  return runnablePlaybook(key, playbook, { ...data, ...secrets });
+  const values = { ...data, ...secrets };
+  return typeof playbook === 'object' ? draftRunnable(playbook, values) : runnablePlaybook(key, playbook, values);
+}
+
+/**
+ * An unsaved playbook the console's tester runs: checked as a save would be, then
+ * held to the same rule as a named one, that `values` covers what it needs.
+ */
+function draftRunnable(definition, values): Checked {
+  let pb;
+  try {
+    pb = draftPlaybook(definition);
+  } catch (err) {
+    return refuse(err.status ?? Status.BAD_REQUEST, err.message);
+  }
+  const missing = missingVariables(pb, values);
+  return missing.length ? refuse(Status.BAD_REQUEST, `Missing data: ${missing.join(', ')}`) : { pb };
 }
 
 /** The named playbook, when it exists and `values` covers what it needs. */

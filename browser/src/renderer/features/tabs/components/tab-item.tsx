@@ -3,7 +3,8 @@
  * loads, the Oya mark on the start page, a globe otherwise), its title (the
  * role=tab button) and its close button, which a pinned tab, drawn as its
  * icon alone, does not have. The agent's tab carries a small Oya
- * light while the agent works, wherever the person is. A folding tab is inert
+ * light while the agent works, wherever the person is; a tab a call is
+ * capturing carries a still red ring. A folding tab is inert
  * and no longer a tab; during a drag it slides by the drag's transform.
  */
 import { useState, type RefObject } from 'react';
@@ -16,7 +17,7 @@ import type { TabDragViewModel } from '../view-models/tab-drag-view-model.ts';
 import type { TabCardViewModel } from '../view-models/tab-card-view-model.ts';
 
 /** What a tab's icon is told. */
-interface TabIconProps {
+export interface TabIconProps {
   /** What it shows. */
   kind: ReturnType<typeof iconKind>;
 }
@@ -30,7 +31,7 @@ function Favicon({ src }: { /** The data: URL. */ src: string }) {
 }
 
 /** The tab's icon. */
-function TabIcon({ kind }: TabIconProps) {
+export function TabIcon({ kind }: TabIconProps) {
   const key = typeof kind === 'string' ? kind : kind.favicon;
   return (
     <span className="tab-icon" aria-hidden="true" data-key={key}>
@@ -70,12 +71,20 @@ function itemClass({ tab, closing, opening }: TabItemModel, dragging: boolean): 
     active: !!tab.active && !closing,
     agent: !!tab.agent,
     pinned: !!tab.pinned,
+    sharing: !!tab.sharing,
     failed: !!loadError(tab),
     closing,
     opening,
     dragging,
   };
   return ['tab-item', ...Object.entries(flags).flatMap(([name, on]) => (on ? [name] : []))].join(' ');
+}
+
+/** What a screen reader adds after the title: pinned, shared in a call, or both. */
+function tabDescription({ pinned, sharing }: TabItemModel['tab']): string | undefined {
+  if (pinned && sharing) return TEXT.pinnedSharing;
+  if (sharing) return TEXT.sharing;
+  return pinned ? TEXT.pinned : undefined;
 }
 
 /** One tab. */
@@ -96,7 +105,7 @@ export function TabItem({ item, slide, dragging, strip, drag, card, list }: TabI
         role={closing ? undefined : 'tab'}
         aria-selected={!!tab.active}
         tabIndex={tab.active ? 0 : -1}
-        aria-description={tab.pinned ? TEXT.pinned : undefined}
+        aria-description={tabDescription(tab)}
         onClick={() => strip.activate(tab.id)}
       >
         {tabTitle(tab)}

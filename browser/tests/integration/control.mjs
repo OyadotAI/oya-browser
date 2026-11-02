@@ -89,7 +89,8 @@ try {
   await page.locator('#btn-manual').click();
   await page.locator('#cfg-key').fill('test');
   await page.locator('#btn-connect').click();
-  await page.locator('#control-agent[aria-pressed="true"]').waitFor();
+  // Connected with no agent at work: the person is using the browser, so Human Mode shows.
+  await page.locator('#control-action[aria-pressed="true"]').waitFor();
   const views = () =>
     app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0]
@@ -162,9 +163,12 @@ try {
     'human native input is not intercepted',
   );
   await page.locator('#control-agent').click();
-  await page.locator('#control-agent[aria-pressed="true"]').waitFor();
-  // Released to the agent, its next command takes the page back.
+  // Handed back, the page stays the person's until the agent acts: Human Mode shows.
+  await waitFor(async () => (await page.evaluate(() => window.oyaBrowser.getControlState())).mode === 'agent');
+  await page.locator('#control-action[aria-pressed="true"]').waitFor();
+  // Released to the agent, its next command takes the page back, and AI Mode shows.
   assert.equal((await command('run_script', { script: 'return 1' })).ok, true);
+  await page.locator('#control-agent[aria-pressed="true"]').waitFor();
   await app.evaluate(async ({ BrowserWindow }) => {
     const view = BrowserWindow.getAllWindows()[0]
       .getBrowserViews()
@@ -267,6 +271,9 @@ async function personBesideAgent(page, views) {
   await page.evaluate((url) => window.oyaBrowser.newTab(url), mine);
   await page.waitForFunction(() => !document.getElementById('url-bar').hasAttribute('readonly'));
   await waitFor(async () => (await shownPage(app)).top === mine);
+  // On their own tab the person sees Human Mode, and can still choose it to take over from the agent.
+  await page.locator('#control-action[aria-pressed="true"]').waitFor();
+  assert.equal(await page.locator('#control-action').isEnabled(), true, 'Human Mode still takes over');
   const stack = await views();
   assert.deepEqual(
     stack.map((v) => v.url),

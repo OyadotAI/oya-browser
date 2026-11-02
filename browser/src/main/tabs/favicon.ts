@@ -48,9 +48,9 @@ function pageChanged(tabs: TabListSink, tab: Tab, url: string): void {
   tabs.sendTabList();
 }
 
-/** Listens for the tab's icons and for it leaving the site they belong to; `tabs` is told when the icon changes. */
-export function wireFavicon(tabs: TabListSink, tab: Tab): void {
+/** Listens for the tab's icons and for it leaving the site they belong to; `tabs` (the window that owns the tab now) is told when the icon changes. */
+export function wireFavicon(tabs: () => TabListSink, tab: Tab): void {
   const contents = tab.view.webContents;
-  contents.on('page-favicon-updated', (_e, icons) => iconChanged(tabs, tab, icons?.[0]));
-  contents.on('did-navigate', (_e, url) => pageChanged(tabs, tab, url));
+  contents.on('page-favicon-updated', (_e, icons) => iconChanged(tabs(), tab, icons?.[0]));
+  contents.on('did-navigate', (_e, url) => pageChanged(tabs(), tab, url));
 }

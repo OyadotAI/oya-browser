@@ -19,7 +19,7 @@ import {
 } from './constants.ts';
 
 /** The services the layout uses. */
-type Deps = Pick<AppServices, 'tabs' | 'shell' | 'shield' | 'config'>;
+type Deps = Pick<AppServices, 'tabs' | 'shell' | 'shield' | 'config' | 'findBar'>;
 
 /** The dev panel's state and the active tab's bounds. */
 export class PanelLayout {
@@ -77,7 +77,8 @@ export class PanelLayout {
   /** Tells the shell the layout, moves the page, and keeps the shield over it. */
   private apply(view: BrowserView | null, progress: number): void {
     const bounds = this.deps.shell.window!.getContentBounds(); // layoutActiveTab checked it
-    const layout = shellLayout(bounds.width, bounds.height, progress, this.width, chromeHeight(this.deps.config));
+    const top = chromeHeight(this.deps.config) + this.deps.findBar.height();
+    const layout = shellLayout(bounds.width, bounds.height, progress, this.width, top);
     this.deps.shell.send('shell-layout', { ...layout, panelOpen: this.open });
     if (view && this.deps.shell.browsingMode) view.setBounds(layout.page);
     this.deps.shield.sync();

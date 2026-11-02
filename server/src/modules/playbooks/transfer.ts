@@ -6,7 +6,7 @@
 import * as keyConfig from '../config/service.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { MAX_STEPS, WORKFLOW_SCHEMA } from './constants.ts';
+import { MAX_LEN, MAX_STEPS, WORKFLOW_SCHEMA } from './constants.ts';
 import { checkName, describe } from './catalog.ts';
 import { replayableAction } from './replay.ts';
 import { validateWorkflow } from './sanitize.ts';
@@ -20,13 +20,30 @@ export const EXPORT_VERSION = 1;
 const CARRIED = ['prompt', 'steps', 'defaults', 'secrets', 'schemaVersion', 'variables'];
 
 /** Only the fields that travel. */
-const carried = (pb) => Object.fromEntries(CARRIED.filter((k) => pb[k] !== undefined).map((k) => [k, pb[k]]));
+export const carried = (pb) => Object.fromEntries(CARRIED.filter((k) => pb[k] !== undefined).map((k) => [k, pb[k]]));
 
-/** A saved playbook as a document another environment can import. */
+/**
+ * The playbook's fields with every secret's value left out: a classic playbook's
+ * defaults for names it lists as secrets, and a workflow's secret variable
+ * defaults. Once saved, a secret's value is never sent back, by an export or an
+ * editor's read alike.
+ */
+export function withoutSecretValues(pb) {
+  const secrets = new Set((pb.secrets ?? []).map(String));
+  const defaults = pb.defaults && Object.fromEntries(Object.entries(pb.defaults).filter(([k]) => !secrets.has(k)));
+  const variables =
+    pb.variables &&
+    Object.fromEntries(
+      Object.entries(pb.variables).map(([n, v]: [string, any]) => [n, v?.secret ? { ...v, default: undefined } : v]),
+    );
+  return { ...pb, ...(defaults ? { defaults } : {}), ...(variables ? { variables } : {}) };
+}
+
+/** A saved playbook as a document another environment can import, its secrets' values left out. */
 export function exportPlaybook(apiKey, name) {
   const pb = keyConfig.getPlaybook(apiKey, name);
   if (!pb || name.endsWith(':draft')) throw new HttpError(Status.NOT_FOUND, `No playbook named ${name}`);
-  const playbook = { name, ...carried(pb) };
+  const playbook = { name, ...withoutSecretValues(carried(pb)) };
   return { format: EXPORT_FORMAT, version: EXPORT_VERSION, exportedAt: new Date().toISOString(), playbook };
 }
 
@@ -37,13 +54,32 @@ function checkDocument(doc) {
     throw new HttpError(Status.BAD_REQUEST, `Export version ${doc.version} is not supported here`);
 }
 
+/** A 400 for a playbook that is not what it should be. */
+const refused = (message: string) => new HttpError(Status.BAD_REQUEST, message);
+
+/** A secret's name: what a recording's secrets carry. */
+const SECRET_NAME = /^\w{1,64}$/;
+
+/**
+ * Refuses the playbook's fields besides its steps when they are not what replay
+ * and the playbook list read: a secrets value that is not a list of names broke
+ * the list for the key it was saved under.
+ */
+function checkFields(pb) {
+  if (pb.defaults != null && (typeof pb.defaults !== 'object' || Array.isArray(pb.defaults)))
+    throw refused('defaults must be an object of values');
+  if (pb.secrets != null && (!Array.isArray(pb.secrets) || !pb.secrets.every((k) => SECRET_NAME.test(String(k)))))
+    throw refused('secrets must be a list of variable names');
+  if (pb.prompt != null && (typeof pb.prompt !== 'string' || pb.prompt.length > MAX_LEN))
+    throw refused(`prompt must be text of at most ${MAX_LEN} characters`);
+}
+
 /** Refuses steps this server could not replay, naming the first. */
-function checkSteps(pb) {
+export function checkSteps(pb) {
   const steps = pb?.steps;
   if (!Array.isArray(steps) || !steps.length || steps.length > MAX_STEPS)
-    throw new HttpError(Status.BAD_REQUEST, `A playbook needs 1 to ${MAX_STEPS} steps`);
-  if (pb.defaults != null && (typeof pb.defaults !== 'object' || Array.isArray(pb.defaults)))
-    throw new HttpError(Status.BAD_REQUEST, 'defaults must be an object of values');
+    throw refused(`A playbook needs 1 to ${MAX_STEPS} steps`);
+  checkFields(pb);
   if (pb.schemaVersion === WORKFLOW_SCHEMA) return void validateWorkflow(pb);
   const bad = steps.findIndex((step) => !step || typeof step !== 'object' || !replayableAction(step.action));
   if (bad >= 0) throw new HttpError(Status.BAD_REQUEST, `Step ${bad + 1} is not a step this server can replay`);
