@@ -27,7 +27,7 @@ use crate::log::{debug, trace, warn};
 use crate::msgs::base::{Payload, PayloadU8};
 use crate::msgs::ccs::ChangeCipherSpecPayload;
 use crate::msgs::codec::{Codec, Reader};
-use crate::msgs::enums::{ExtensionType, KeyUpdateRequest};
+use crate::msgs::enums::{ExtensionType, KeyUpdateRequest, NamedGroup};
 use crate::msgs::handshake::{
     CERTIFICATE_MAX_SIZE_LIMIT, CertificatePayloadTls13, ClientExtensions, EchConfigPayload,
     HandshakeMessagePayload, HandshakePayload, KeyShareEntry, NewSessionTicketPayloadTls13,
@@ -197,6 +197,7 @@ pub(super) fn handle_server_hello(
             server_hello_encoded,
             suite.common.hash_provider,
             &mut server_name,
+            cx.common,
         )? {
             // The server accepted our ECH offer, so complete the inner transcript with the
             // server hello message, and switch the relevant state to the copies for the
@@ -214,12 +215,6 @@ pub(super) fn handle_server_hello(
             None => EchStatus::Rejected,
         };
     }
-
-    // Remember what KX group the server liked for next time.
-    config
-        .resumption
-        .store
-        .set_kx_hint(server_name.clone(), their_key_share.group);
 
     // If we change keying when a subsequent handshake message is being joined,
     // the two halves will have different record layer protections.  Disallow this.
@@ -245,6 +240,7 @@ pub(super) fn handle_server_hello(
         suite,
         transcript,
         key_schedule,
+        kx_group: their_key_share.group,
         hello,
     }))
 }
@@ -480,6 +476,7 @@ struct ExpectEncryptedExtensions {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     hello: ClientHelloDetails,
 }
 
@@ -593,6 +590,7 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
                     suite: self.suite,
                     transcript: self.transcript,
                     key_schedule: self.key_schedule,
+                    kx_group: self.kx_group,
                     client_auth: None,
                     cert_verified,
                     sig_verified,
@@ -615,6 +613,7 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
                         suite: self.suite,
                         transcript: self.transcript,
                         key_schedule: self.key_schedule,
+                        kx_group: self.kx_group,
                         ech_retry_configs,
                     })
                 } else {
@@ -625,6 +624,7 @@ impl State<ClientConnectionData> for ExpectEncryptedExtensions {
                         suite: self.suite,
                         transcript: self.transcript,
                         key_schedule: self.key_schedule,
+                        kx_group: self.kx_group,
                         ech_retry_configs,
                     })
                 })
@@ -644,6 +644,7 @@ struct ExpectCertificateOrCompressedCertificateOrCertReq {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
 }
 
@@ -667,6 +668,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCompressedCertificateOrC
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: None,
                 message_already_in_transcript: false,
                 ech_retry_configs: self.ech_retry_configs,
@@ -682,6 +684,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCompressedCertificateOrC
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: None,
                 ech_retry_configs: self.ech_retry_configs,
             })
@@ -696,6 +699,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCompressedCertificateOrC
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 offered_cert_compression: true,
                 ech_retry_configs: self.ech_retry_configs,
             })
@@ -724,6 +728,7 @@ struct ExpectCertificateOrCompressedCertificate {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     client_auth: Option<ClientAuthDetails>,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
 }
@@ -748,6 +753,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCompressedCertificate {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: self.client_auth,
                 message_already_in_transcript: false,
                 ech_retry_configs: self.ech_retry_configs,
@@ -763,6 +769,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCompressedCertificate {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: self.client_auth,
                 ech_retry_configs: self.ech_retry_configs,
             })
@@ -790,6 +797,7 @@ struct ExpectCertificateOrCertReq {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
 }
 
@@ -813,6 +821,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCertReq {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: None,
                 message_already_in_transcript: false,
                 ech_retry_configs: self.ech_retry_configs,
@@ -828,6 +837,7 @@ impl State<ClientConnectionData> for ExpectCertificateOrCertReq {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 offered_cert_compression: false,
                 ech_retry_configs: self.ech_retry_configs,
             })
@@ -858,6 +868,7 @@ struct ExpectCertificateRequest {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     offered_cert_compression: bool,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
 }
@@ -941,6 +952,7 @@ impl State<ClientConnectionData> for ExpectCertificateRequest {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: Some(client_auth),
                 ech_retry_configs: self.ech_retry_configs,
             })
@@ -952,6 +964,7 @@ impl State<ClientConnectionData> for ExpectCertificateRequest {
                 suite: self.suite,
                 transcript: self.transcript,
                 key_schedule: self.key_schedule,
+                kx_group: self.kx_group,
                 client_auth: Some(client_auth),
                 message_already_in_transcript: false,
                 ech_retry_configs: self.ech_retry_configs,
@@ -971,6 +984,7 @@ struct ExpectCompressedCertificate {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     client_auth: Option<ClientAuthDetails>,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
 }
@@ -1055,6 +1069,7 @@ impl State<ClientConnectionData> for ExpectCompressedCertificate {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
+            kx_group: self.kx_group,
             client_auth: self.client_auth,
             message_already_in_transcript: true,
             ech_retry_configs: self.ech_retry_configs,
@@ -1074,6 +1089,7 @@ struct ExpectCertificate {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     client_auth: Option<ClientAuthDetails>,
     message_already_in_transcript: bool,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
@@ -1120,6 +1136,7 @@ impl State<ClientConnectionData> for ExpectCertificate {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
+            kx_group: self.kx_group,
             server_cert,
             client_auth: self.client_auth,
             ech_retry_configs: self.ech_retry_configs,
@@ -1139,6 +1156,7 @@ struct ExpectCertificateVerify<'a> {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     server_cert: ServerCertDetails<'a>,
     client_auth: Option<ClientAuthDetails>,
     ech_retry_configs: Option<Vec<EchConfigPayload>>,
@@ -1210,6 +1228,7 @@ impl State<ClientConnectionData> for ExpectCertificateVerify<'_> {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
+            kx_group: self.kx_group,
             client_auth: self.client_auth,
             cert_verified,
             sig_verified,
@@ -1225,6 +1244,7 @@ impl State<ClientConnectionData> for ExpectCertificateVerify<'_> {
             suite: self.suite,
             transcript: self.transcript,
             key_schedule: self.key_schedule,
+            kx_group: self.kx_group,
             server_cert: self.server_cert.into_owned(),
             client_auth: self.client_auth,
             ech_retry_configs: self.ech_retry_configs,
@@ -1327,6 +1347,7 @@ struct ExpectFinished {
     suite: &'static Tls13CipherSuite,
     transcript: HandshakeHash,
     key_schedule: KeyScheduleHandshake,
+    kx_group: NamedGroup,
     client_auth: Option<ClientAuthDetails>,
     cert_verified: verify::ServerCertVerified,
     sig_verified: verify::HandshakeSignatureValid,
@@ -1431,6 +1452,12 @@ impl State<ClientConnectionData> for ExpectFinished {
         emit_finished_tls13(&mut flight, &verify_data);
         flight.finish(cx.common);
 
+        // Remember what KX group the server liked for next time.
+        st.config
+            .resumption
+            .store
+            .set_kx_hint(st.server_name.clone(), st.kx_group);
+
         /* We're now sure this server supports TLS1.3.  But if we run out of TLS1.3 tickets
          * when connecting to it again, we definitely don't want to attempt a TLS1.2 resumption. */
         st.config
@@ -1442,15 +1469,18 @@ impl State<ClientConnectionData> for ExpectFinished {
         cx.common.check_aligned_handshake()?;
         let (key_schedule, resumption) =
             key_schedule_pre_finished.into_traffic(cx.common, st.transcript.current_hash());
-        cx.common
-            .start_traffic(&mut cx.sendable_plaintext);
 
         // Now that we've reached the end of the normal handshake we must enforce ECH acceptance by
         // sending an alert and returning an error (potentially with retry configs) if the server
-        // did not accept our ECH offer.
+        // did not accept our ECH offer. This must happen before the connection is made available
+        // for application data, since the server has only been authenticated for the ECH config's
+        // `public_name`.
         if cx.data.ech_status == EchStatus::Rejected {
             return Err(ech::fatal_alert_required(st.ech_retry_configs, cx.common));
         }
+
+        cx.common
+            .start_traffic(&mut cx.sendable_plaintext);
 
         let st = ExpectTraffic {
             config: st.config.clone(),

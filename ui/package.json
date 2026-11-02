@@ -13,7 +13,8 @@
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write src tests",
-    "format:check": "prettier --check src tests"
+    "format:check": "prettier --check src tests",
+    "postinstall": "node ../browser/build/minimatch-compat.cjs"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -54,5 +55,13 @@
     "tailwindcss": "^4",
     "typescript": "^6.0.3",
     "vitest": "^5.0.3"
+  },
+  "overrides": {
+    "minimatch": "11.0.4",
+    "zod": "4.6.6",
+    "undici@^6.0.0": "6.29.1",
+    "undici@^7.0.0": "7.30.1",
+    "undici@^8.0.0": "8.12.2",
+    "vite": "8.3.5"
   }
 }

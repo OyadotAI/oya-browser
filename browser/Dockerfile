@@ -57,6 +57,7 @@ COPY --from=native-engine / /opt/oya-engine/
 
 # Install dependencies without downloading stock Electron.
 COPY package.json package-lock.json* ./
+COPY build/minimatch-compat.cjs ./build/minimatch-compat.cjs
 RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 
 # Copy browser source

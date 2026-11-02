@@ -1,6 +1,14 @@
-# Vendored rustls 0.23.45, with one addition
+# Vendored rustls 0.23.46, with one addition
 
-This is the registry crate `rustls` 0.23.45 (`src/`, `Cargo.toml`, `build.rs`, licences),
+The 0.23.46 security update was imported from the official registry crate
+(`https://static.crates.io/crates/rustls/rustls-0.23.46.crate`, SHA-256
+`48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf`).
+The complete upstream delta, including its regression tests, was merged over the
+existing shaping changes. This includes bounded Brotli decompression, redacted
+session debug output, authenticated key-exchange hints and ECH rejection before
+buffered application data is sent. See the upstream [release notes](https://github.com/rustls/rustls/releases/tag/v/0.23.46).
+
+This is the registry crate `rustls` 0.23.46 (`src/`, `Cargo.toml`, `build.rs`, licences),
 reached through `[patch.crates-io]` in `mars/Cargo.toml`, with one additive change:
 `ClientHelloShaping` (`src/client/shaping.rs`, a `pub hello_shaping` field on `ClientConfig`).
 With the default value the crate writes byte for byte what upstream writes. With Relay's value
@@ -30,7 +38,7 @@ results to the shaped one; that is the whole reason for the fork.
 
 ## Diffing against upstream
 
-    diff -r ~/.cargo/registry/src/*/rustls-0.23.45/src mars/vendor/rustls/src
+    diff -r ~/.cargo/registry/src/*/rustls-0.23.46/src mars/vendor/rustls/src
 
 Upstream's own unit tests need `testdata/` and `test-ca/`, which the registry tarball does not
 ship, so they are not run here; Relay's `hello/tests_hello.rs` pins the shaped hello (suites,

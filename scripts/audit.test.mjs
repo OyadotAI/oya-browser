@@ -33,8 +33,13 @@ describe('the dependency audit', () => {
   });
 
   it('lets an allowed advisory through', () => {
-    assert.deepEqual(blocking(report(advisory('GHSA-vfj7-8cjw-p6xm', 'high', 'braces'))), []);
-    assert.ok(Object.hasOwn(ALLOWED, 'GHSA-vfj7-8cjw-p6xm'));
+    const allowed = { 'GHSA-aaaa': 'Explicit test-only exception' };
+    assert.deepEqual(blocking(report(advisory('GHSA-aaaa', 'high')), allowed), []);
+  });
+
+  it('no longer exempts the advisories removed by the dependency security update', () => {
+    assert.deepEqual(ALLOWED, {});
+    assert.equal(blocking(report(advisory('GHSA-vfj7-8cjw-p6xm', 'high', 'braces'))).length, 1);
   });
 
   it('counts an advisory reached through several packages once, and skips the names that only point to it', () => {
