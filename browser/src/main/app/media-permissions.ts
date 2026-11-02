@@ -70,7 +70,9 @@ export class MediaPermissions {
     const origin = details && this.gate.eligible(contents, details.securityOrigin || details.requestingUrl);
     const types = details ? requestedMedia(details) : [];
     if (!origin || !types.length) return Promise.resolve(false);
-    return this.gate.locked(() => this.approve(contents, origin, types));
+    const current = this.gate.guard(contents, origin);
+    const key = this.gate.decisionKey(contents, origin, types);
+    return this.gate.locked(current, () => this.approve(contents, origin, types), key);
   }
 
   /**

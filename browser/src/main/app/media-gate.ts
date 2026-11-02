@@ -9,9 +9,10 @@ import type { WebContents, MessageBoxOptions, MessageBoxReturnValue } from 'elec
 import type { AppServices } from './services.ts';
 import { SCREEN_RECORDING_SETTINGS_URL } from '../screen-share/index.ts';
 import { OS_DENIED_PROMPT, SCREEN_DENIED_PROMPT } from './media-prompts.ts';
+import { MediaApprovalQueue } from './media-queue.ts';
 
 /** Sensitive access uses native dialogs and the normal control boundary. */
-type Deps = Pick<AppServices, 'electron' | 'shell' | 'tabs' | 'agentTab' | 'governance'>;
+type Deps = Pick<AppServices, 'electron' | 'shell' | 'tabs' | 'agentTab' | 'governance' | 'persona'>;
 
 /** HTTPS origins are displayed rather than private paths and query strings. */
 export function mediaOrigin(raw: string): string | null {
@@ -33,8 +34,8 @@ export class MediaGate {
   private readonly documents = new WeakMap<WebContents, number>();
   /** The committed document Oya handed a camera, microphone or screen to: that document counts as in a call. */
   private readonly live = new WeakMap<WebContents, number>();
-  /** Prevents a page from stacking permission dialogs. */
-  private pending = false;
+  /** One native consent at a time, with bounded waiting for overlapping media requests. */
+  private readonly approvals = new MediaApprovalQueue();
 
   /** `deps` is the main-process services (see src/main/main.ts). */
   constructor(deps: Deps) {
@@ -96,13 +97,30 @@ export class MediaGate {
     return this.live.has(contents) && this.live.get(contents) === this.documents.get(contents);
   }
 
-  /** Runs `prompt` as the one dialog up; a request while one is up is refused, not queued. Always settles to a boolean. */
-  locked(prompt: () => Promise<boolean>): Promise<boolean> {
-    if (this.pending) return Promise.resolve(false);
-    this.pending = true;
-    return prompt()
-      .catch(() => false)
-      .finally(() => void (this.pending = false));
+  /** Capture before queueing, so waiting cannot authorize a replacement document or profile. */
+  guard(contents: WebContents, origin: string): () => boolean {
+    const generation = this.watch(contents);
+    const partition = this.deps.persona.partitionName();
+    return () =>
+      this.current(contents, generation) &&
+      this.eligible(contents, origin) === origin &&
+      this.deps.persona.partitionName() === partition;
+  }
+
+  /** Serializes consent while preserving each callback's original requester and independent decision. */
+  locked(current: () => boolean, prompt: () => Promise<boolean>, key?: string): Promise<boolean> {
+    return this.approvals.run(current, prompt, key);
+  }
+
+  /** A denial applies only to duplicates already waiting for this exact document, profile, site and device set. */
+  decisionKey(contents: WebContents, origin: string, devices: string[]): string {
+    return JSON.stringify([
+      contents.id,
+      this.watch(contents),
+      this.deps.persona.partitionName(),
+      origin,
+      [...devices].sort(),
+    ]);
   }
 
   /** Whether the person clicked Allow. */
