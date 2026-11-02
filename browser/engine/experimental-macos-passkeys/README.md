@@ -1,7 +1,7 @@
 # Isolated native phone-passkey integration
 
-This is preparatory code for a separately authorized macOS test build. It is
-**not a completed engine patch or a runnable phone-passkey fix**. Production
+This is an incomplete native integration for a separately authorized macOS test
+build. It is **not a completed engine or a runnable phone-passkey fix**. Production
 desktop packages continue to use stock Electron. Nothing here enables the
 associated-domain `platformPasskeys` provider or changes a website's RP/origin.
 
@@ -27,7 +27,27 @@ patches are not a compatible or current test artifact.
 - `oya_passkey_policy_state.h` implements the portable native dispatch state.
   Its executable tests cover duplicate/late decisions, allow-then-throw, native
   identity changes, persistent cancellation, reentrancy and final success once.
-  It is not yet connected to Chromium's request or Apple discovery.
+  The partial request-policy patch connects it to Chromium's request boundary;
+  Apple discovery and Electron policy dispatch remain unwired.
+
+- `chromium-request-policy.patch` adds actual native admission and central final
+  success gates, request/attempt/document/context/window checks, deferred bounded
+  cancellation and retirement, and stale callback guards. Selection defaults off.
+  It includes six native request-flow regression tests and the build-manifest
+  entry. Those six tests have **not compiled or run** in this partial checkout.
+
+The patch applies and reverse-checks against the selectively retrieved pinned
+upstream files. The portable state test also compiles against its applied header.
+Neither check compiles the Chromium request implementation or proves the full
+engine can link. In a complete checkout at the pinned Chromium commit, apply
+`chromium-request-policy.patch` from the Chromium source root after checking it
+with `git apply --check`; do not enable the runtime capability from this patch.
+
+Firefox is the behavior reference: its [native service](https://searchfox.org/firefox-main/source/dom/webauthn/MacOSWebAuthnService.mm)
+uses Apple's browser credential flow and hybrid option. This increment reuses Chromium's compatible
+bridge design rather than copying Gecko source. Signing must use Oya's own
+Developer ID and app-specific browser capability profile. Mozilla's installed
+signature and profile authorize Firefox's identity, not Oya.
 
 Run the portable native tests from the repository root:
 
@@ -83,7 +103,9 @@ not implemented by this preparatory code.
 The engine integration, hybrid-only and mixed-credential transport tests,
 controller cancellation/quarantine tests, engine compilation/link, signed
 packaging/launch, and physical Google phone sign-in have not run or passed.
-There is no completed native integration patch in this directory yet.
+The request-policy patch is only the first native integration increment. It
+does not implement the Electron emitter, Apple discovery/transport bridge or
+OS-controller ownership required to enable the capability.
 
 A full build also needs adequate build space and a matching Apple profile with
 `com.apple.developer.web-browser.public-key-credential`. Neither the installed
