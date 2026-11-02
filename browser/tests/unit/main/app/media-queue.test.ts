@@ -4,6 +4,56 @@ import assert from 'node:assert/strict';
 import { MediaApprovalQueue } from '../../../../src/main/app/media-queue.ts';
 import { MEDIA_PERMISSION_WAITERS, MEDIA_PERMISSION_WAIT_MS } from '../../../../src/main/app/constants.ts';
 
+test('denying a request refuses queued duplicates without repeating consent or denying other devices', async () => {
+  const queue = new MediaApprovalQueue();
+  const pending = Promise.withResolvers<boolean>();
+  const first = queue.run(
+    () => true,
+    () => pending.promise,
+    'document:audio',
+  );
+  const duplicate = queue.run(
+    () => true,
+    async () => assert.fail('duplicate prompt'),
+    'document:audio',
+  );
+  const independent = queue.run(
+    () => true,
+    async () => true,
+    'document:screen',
+  );
+  pending.resolve(false);
+  assert.deepEqual(await Promise.all([first, duplicate, independent]), [false, false, true]);
+  assert.equal(
+    await queue.run(
+      () => true,
+      async () => true,
+      'document:audio',
+    ),
+    true,
+    'later retry is independent',
+  );
+});
+
+test('a grant still runs each duplicate request through its own authorization', async () => {
+  const queue = new MediaApprovalQueue();
+  const pending = Promise.withResolvers<boolean>();
+  const first = queue.run(
+    () => true,
+    () => pending.promise,
+    'same',
+  );
+  let prompts = 0;
+  const second = queue.run(
+    () => true,
+    async () => (prompts++, true),
+    'same',
+  );
+  pending.resolve(true);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(prompts, 1);
+});
+
 test('concurrent media requests wait in order and receive their own decision', async () => {
   const queue = new MediaApprovalQueue();
   const pending = Promise.withResolvers<boolean>();

@@ -108,8 +108,19 @@ export class MediaGate {
   }
 
   /** Serializes consent while preserving each callback's original requester and independent decision. */
-  locked(current: () => boolean, prompt: () => Promise<boolean>): Promise<boolean> {
-    return this.approvals.run(current, prompt);
+  locked(current: () => boolean, prompt: () => Promise<boolean>, key?: string): Promise<boolean> {
+    return this.approvals.run(current, prompt, key);
+  }
+
+  /** A denial applies only to duplicates already waiting for this exact document, profile, site and device set. */
+  decisionKey(contents: WebContents, origin: string, devices: string[]): string {
+    return JSON.stringify([
+      contents.id,
+      this.watch(contents),
+      this.deps.persona.partitionName(),
+      origin,
+      [...devices].sort(),
+    ]);
   }
 
   /** Whether the person clicked Allow. */
