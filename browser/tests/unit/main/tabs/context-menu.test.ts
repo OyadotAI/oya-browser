@@ -200,6 +200,18 @@ describe('context menu: translate', () => {
     assert.deepEqual(calls, [['original', 7]]);
   });
 
+  it('contains native menu promise failures after translation publishes its failure state', async () => {
+    const failed = async () => {
+      throw Error('native document unavailable');
+    };
+    ctx.translation.translate = failed;
+    ctx.translation.showOriginal = failed;
+    item().click();
+    ctx.translation.translated = () => true;
+    item().click();
+    await flush();
+  });
+
   it('leaves the item out where translation does not exist (governed, cloud, recording, not a web page)', () => {
     ctx.translation.offered = () => false;
     assert.equal(item(), undefined);

@@ -12,6 +12,7 @@ import { PageSource } from './page-source.ts';
 import { languageName } from '../../shared/language.ts';
 import { openLink } from './tab-order.ts';
 import { isIncognito } from '../incognito/index.ts';
+import type { Tab } from './types.ts';
 
 /** The services the menu uses. */
 type Deps = Pick<
@@ -135,9 +136,15 @@ export class ContextMenu {
     if (!translation || !tab || !translation.offered(tab)) return [];
     const undo = translation.translated(tab);
     const label = undo ? 'Show Original' : `Translate to ${languageName(translation.target(), translation.target())}`;
-    const click = () =>
-      agentTab.humanMay(tab.id) && void (undo ? translation.showOriginal(tab) : translation.translate(tab));
+    const click = () => this.chooseTranslation(tab, undo);
     return [{ label, enabled: agentTab.humanMay(tab.id), click }, { type: 'separator' }];
+  }
+
+  /** Native menus do not consume promises; translation owns failure feedback while this edge contains rejection. */
+  private chooseTranslation(tab: Tab, undo: boolean): void {
+    const { translation, agentTab } = this.deps;
+    if (!translation || !agentTab.humanMay(tab.id)) return;
+    void (undo ? translation.showOriginal(tab) : translation.translate(tab)).catch(() => {});
   }
 
   /** Translate (when it applies), then View Page Source, Inspect Element, Open DevTools. */

@@ -123,6 +123,10 @@ export const TRANSLATE_CONSENT = {
     `Oya will also translate the next ${language} pages on ${origin} in this tab, up to ${pages} pages. Choose Show original to stop.`,
   pageOnly: 'This translates only the current page. Choose Show original to restore its text.',
   cancellation: 'Requests already sent may still count toward your allowance.',
+  starting: 'Starting translation…',
+  cancelling: 'Cancelling…',
+  confirmFailed: "Couldn't confirm translation. Try again or cancel.",
+  cancelFailed: "Couldn't cancel translation. Try again.",
 } as const;
 /** A page at actual size, as a percentage: the zoom chip hides at it. */
 export const FULL_SIZE_PERCENT = 100;

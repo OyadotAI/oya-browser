@@ -9,5 +9,8 @@ export const TRANSLATE_BATCH_CHARS = 4_000;
 /** Most text segments (DOM text nodes) one request may carry. */
 export const TRANSLATE_BATCH_SEGMENTS = 200;
 
+/** Bounds language metadata independently of the page-text budget before building a model prompt. */
+export const TRANSLATE_TAG_CHARS = 64;
+
 /** A BCP 47 language tag, loosely: the primary subtag and any subtags after it. */
 export const TRANSLATE_TAG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
