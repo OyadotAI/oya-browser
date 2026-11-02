@@ -888,7 +888,9 @@ fn cached_unit(
 }
 
 /** Hand the deferred functions of the cached unit at `offset` to `workers` executor threads
-(see `v9::precompile_deferred`); the units stay the cache's and the stubs' own. */
+(see `v9::precompile_deferred`) and wait for them; the units stay the cache's and the stubs'
+own. Waiting bounds the threads alive at once to `workers`: a page's scripts are compiled one
+after another, and a load that stops early joins its compile thread, which joins these. */
 pub(in crate::v9) fn precompile_deferred(
     text: &cache::Key,
     offset: usize,
@@ -908,20 +910,26 @@ pub(in crate::v9) fn precompile_deferred(
     }
     let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let lazies = Arc::new(lazies);
-    for index in 0..workers.min(total) {
-        let (next, lazies) = (Arc::clone(&next), Arc::clone(&lazies));
-        let _ = crate::v9::execution_thread::spawn_execution_thread(
-            format!("oya-defer-{index}"),
-            move || {
-                loop {
-                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some((code, lazy)) = lazies.get(at) else {
-                        return;
-                    };
-                    let _ = lazy.unit(code.source.as_ref());
-                }
-            },
-        );
+    let pool: Vec<_> = (0..workers.min(total))
+        .filter_map(|index| {
+            let (next, lazies) = (Arc::clone(&next), Arc::clone(&lazies));
+            crate::v9::execution_thread::spawn_execution_thread(
+                format!("oya-defer-{index}"),
+                move || {
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((code, lazy)) = lazies.get(at) else {
+                            return;
+                        };
+                        let _ = lazy.unit(code.source.as_ref());
+                    }
+                },
+            )
+            .ok()
+        })
+        .collect();
+    for worker in pool {
+        let _ = worker.join();
     }
     total
 }
@@ -1683,5 +1691,38 @@ mod filing_tests {
             );
         }
         assert!(registry.codes.get(&entry).is_some());
+    }
+}
+
+#[cfg(test)]
+mod deferred_pool_tests {
+    use super::{cache, precompile, precompile_deferred, source_key};
+
+    /** The pool has compiled every deferred function of the script when the call returns, so
+    the compile thread that waits on it leaves no worker running on its own. */
+    #[test]
+    fn deferred_pool_finishes_before_returning() {
+        let source = "function a(){return 1}function b(){return a()+1}function c(){return b()+1}\
+            const d=()=>c()+1;d();";
+        let offset = 7;
+        let text = source_key(source);
+        precompile(text, source, offset, || {
+            crate::v9::parse_at(source, offset, None)
+        })
+        .unwrap();
+        let unit = cache::get(&cache::at(&text, offset)).expect("cached");
+        let deferred = unit.codes.iter().filter(|code| code.lazy.is_some()).count();
+        assert!(deferred > 0, "the functions were deferred");
+        assert_eq!(precompile_deferred(&text, offset, 2), deferred);
+        let compiled = unit
+            .codes
+            .iter()
+            .filter_map(|code| code.lazy.as_ref())
+            .filter(|lazy| lazy.compiled().is_some())
+            .count();
+        assert_eq!(
+            compiled, deferred,
+            "every deferred function compiled before the return"
+        );
     }
 }
