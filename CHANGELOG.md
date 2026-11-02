@@ -13,6 +13,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 ### Added
 
 - Added optional macOS on-screen window selection with a separate Oya confirmation before capture. The existing window list remains available, and closed windows or changed requesting tabs cannot inherit a pending choice.
+- Added page translation through the project's model, with confirmation before sending text, a disclosed same-site continuation limit, and Show original. Translation stops on navigation outside that scope, recording, or agent takeover; agent reads wait for the original page to be restored.
 
 - Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.
 

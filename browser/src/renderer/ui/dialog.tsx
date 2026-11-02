@@ -14,6 +14,8 @@ export interface DialogProps {
   onClose: () => void;
   /** The id of the control focused when it opens. */
   focusId: string;
+  /** Used when the initiating control disappears or a native menu opened the dialog. */
+  fallbackFocusId?: string;
   /** The backdrop's id. */
   id: string;
   /** The backdrop's classes. */
@@ -27,9 +29,19 @@ export interface DialogProps {
 }
 
 /** A modal dialog. */
-export function Dialog({ open, onClose, focusId, id, className, label, hidden, children }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  focusId,
+  fallbackFocusId,
+  id,
+  className,
+  label,
+  hidden,
+  children,
+}: DialogProps) {
   const root = useRef<HTMLDivElement>(null);
-  useDialog(root, open, onClose, focusId);
+  useDialog(root, open, onClose, focusId, fallbackFocusId);
   return (
     <div
       className={className}

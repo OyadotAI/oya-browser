@@ -11,6 +11,8 @@ type Deps = Pick<AppServices, 'config' | 'socket'>;
 interface ErrorBody {
   /** The server's own reason. */
   error?: string;
+  /** The server's code for it (llm_unconfigured, llm_quota, …), when it gave one. */
+  code?: string;
 }
 
 /** The HTTP origin behind the control socket. */
@@ -21,10 +23,14 @@ export function serverHttpBase(serverUrl: string | undefined): string {
     .replace(/\/ws\/?$/, '');
 }
 
-/** A response's JSON, or an error with the server's own message and the status. */
+/** A response's JSON, or an error with the server's own message, the status, and the server's code when it gave one. */
 export async function readApiAnswer(res: Response): Promise<unknown> {
   const body = (await res.json().catch(() => ({}))) as ErrorBody;
-  if (!res.ok) throw Object.assign(new Error(body.error || `Server returned ${res.status}`), { status: res.status });
+  if (!res.ok)
+    throw Object.assign(new Error(body.error || `Server returned ${res.status}`), {
+      status: res.status,
+      code: body.code,
+    });
   return body;
 }
 

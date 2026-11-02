@@ -372,17 +372,22 @@ async function complete(ctx: LoopContext, allMessages) {
   // Every iteration of the agentic loop bills, so account per iteration
   // rather than once per request. Each is also one agent step, the unit the
   // platform fee is on, whoever's model it ran on; the verifier's calls are not steps.
-  billUsage(ctx, completion.usage);
+  recordUsage(ctx, completion.usage);
   usage.record(ctx.apiKey, 'agent_steps', 1);
   return completion;
 }
 
 /** Counts a model call's tokens against the key. */
-function billUsage(ctx: LoopContext, used) {
+function recordUsage(ctx: LoopContext, used) {
   ctx.usage ??= { input: 0, output: 0 };
   ctx.usage.input += used?.prompt_tokens || 0;
   ctx.usage.output += used?.completion_tokens || 0;
   ctx.onUsage?.({ ...ctx.usage });
+  billUsage(ctx, used);
+}
+
+/** Counts a model call's tokens against the key, so the hourly chat cap sees them; on the operator's model, its cost too. */
+export function billUsage(ctx: Pick<LoopContext, 'apiKey' | 'llm'>, used) {
   bill(ctx.apiKey, 'input', 'chat_input_tokens', used?.prompt_tokens || 0);
   bill(ctx.apiKey, 'output', 'chat_output_tokens', used?.completion_tokens || 0);
   if (ctx.llm.hosted) usage.record(ctx.apiKey, 'hosted_llm_microusd', llmCost(ctx.llm.model, used));
@@ -395,7 +400,7 @@ function billUsage(ctx: LoopContext, used) {
  */
 async function accepted(ctx: LoopContext, allMessages, text: string) {
   if (!ctx.verify || failed(text) || !ctx.guard?.total || (ctx.rechecks || 0) >= VERIFY_ROUNDS) return true;
-  const verdict = await verify(ctx, allMessages, text, (used) => billUsage(ctx, used));
+  const verdict = await verify(ctx, allMessages, text, (used) => recordUsage(ctx, used));
   if (verdict.pass) return true;
   ctx.rechecks = (ctx.rechecks || 0) + 1;
   allMessages.push({ role: 'assistant', content: text }, { role: 'user', content: recheck(verdict.reason) });

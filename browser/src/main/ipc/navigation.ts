@@ -7,6 +7,7 @@ import { HOME_URL } from '../tabs/constants.ts';
 import { isIncognito } from '../incognito/index.ts';
 import { moveTabTo } from '../tabs/tab-order.ts';
 import { TabMenu } from '../tabs/tab-menu.ts';
+import type { Tab } from '../tabs/types.ts';
 import { zoomShownPage } from '../shell/page-zoom.ts';
 
 /** The services navigation uses. */
@@ -26,6 +27,7 @@ type Deps = Pick<
   | 'persona'
   | 'windows'
   | 'agentTab'
+  | 'translation'
   | 'shareIndicator'
   | 'findBar'
 >;
@@ -59,7 +61,10 @@ type Channel =
   | 'activate-tab'
   | 'go-to-share-call'
   | 'move-tab'
-  | 'tab-menu';
+  | 'tab-menu'
+  | 'translate-page'
+  | 'confirm-translation'
+  | 'show-original';
 
 /** Navigation and the tab strip, as the shell asks for them. */
 export class NavigationHandlers {
@@ -101,6 +106,9 @@ export class NavigationHandlers {
       this.deps.agentTab.requireFor(id);
       new TabMenu(this.deps).show(id);
     },
+    'translate-page': (_e, id) => this.deps.translation.translate(this.ownTab(id)),
+    'confirm-translation': (_e, id, confirmation) => this.deps.translation.confirm(this.ownTab(id), confirmation),
+    'show-original': (_e, id) => this.deps.translation.showOriginal(this.ownTab(id)),
   };
   /** The main-process services. */
   private readonly deps: Deps;
@@ -116,6 +124,14 @@ export class NavigationHandlers {
     if (this.deps.windows?.drag.carrying(id)) return this.deps.windows.drag.drop();
     if (!Number.isSafeInteger(id) || !this.deps.tabs.find(id)) throw new Error('Tab is not in this window');
     await this.deps.windows?.detach(id, this.deps.electron.screen.getCursorScreenPoint());
+  }
+
+  /** The person's tab `id` in this window; throws when an agent holds it or it is not here. */
+  private ownTab(id: number): Tab {
+    this.deps.agentTab.requireFor(id);
+    const tab = this.deps.tabs.find(id);
+    if (!tab) throw new Error('Tab is not in this window');
+    return tab;
   }
 
   /** Throws unless the person may use the tab their window shows: under the agent, any tab but the agent's. */

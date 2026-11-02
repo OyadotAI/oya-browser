@@ -167,3 +167,60 @@ describe('page source', () => {
     });
   });
 });
+
+describe('context menu: translate', () => {
+  let ctx, view, calls;
+  beforeEach(() => {
+    ctx = mainCtx();
+    view = new FakeBrowserView();
+    calls = [];
+    ctx.tabs.list = [{ id: 7, view, url: 'https://a.jp/' }];
+    ctx.translation = {
+      offered: () => true,
+      translated: () => false,
+      target: () => 'en-US',
+      translate: async (tab) => calls.push(['translate', tab.id]),
+      showOriginal: async (tab) => calls.push(['original', tab.id]),
+    };
+  });
+
+  /** The translate item, if the menu has one. */
+  const item = () => menuFor(ctx, view, PARAMS).find((i) => /^Translate to|^Show Original/.test(i.label || ''));
+
+  it('offers Translate to the person’s language, whatever the page declares, and translates on click', () => {
+    assert.equal(item().label, 'Translate to English');
+    item().click();
+    assert.deepEqual(calls, [['translate', 7]]);
+  });
+
+  it('offers Show Original once the page is translated', () => {
+    ctx.translation.translated = () => true;
+    item().click();
+    assert.equal(item().label, 'Show Original');
+    assert.deepEqual(calls, [['original', 7]]);
+  });
+
+  it('contains native menu promise failures after translation publishes its failure state', async () => {
+    const failed = async () => {
+      throw Error('native document unavailable');
+    };
+    ctx.translation.translate = failed;
+    ctx.translation.showOriginal = failed;
+    item().click();
+    ctx.translation.translated = () => true;
+    item().click();
+    await flush();
+  });
+
+  it('leaves the item out where translation does not exist (governed, cloud, recording, not a web page)', () => {
+    ctx.translation.offered = () => false;
+    assert.equal(item(), undefined);
+  });
+
+  it('disables the item on an agent’s tab, and checks again on click', () => {
+    ctx.agentTab.humanMay = () => false;
+    assert.equal(item().enabled, false);
+    item().click();
+    assert.deepEqual(calls, []);
+  });
+});

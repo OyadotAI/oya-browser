@@ -79,7 +79,7 @@ export class AppNativeBackend implements NativeBackend {
   readonly passesThrough = passesThrough;
   /** Passes one page method through to the exact tab, after the same ownership and protection checks. */
   async passthrough(target: string, method: string, params: Record<string, unknown>, child = ''): Promise<unknown> {
-    await whenProtected(this.tab(target));
+    await readyForRead(this.deps, this.tab(target));
     return this.through.send(target, method, params, child);
   }
   /** Forwards the exact tab's events while this browser's control rules let it be observed. */
@@ -124,7 +124,7 @@ export class AppNativeBackend implements NativeBackend {
   }
   /** Every event rechecks the current control owner and exact live tab. */
   private observable(tab: Tab): boolean {
-    return nativeCanObserve(this.deps) && this.tabs().includes(tab);
+    return nativeCanObserve(this.deps) && this.tabs().includes(tab) && !this.deps.translation?.translated(tab);
   }
   /** Home/internal/protection-pending tabs cannot become remote page targets. */
   private tabs(): Tab[] {
@@ -206,7 +206,7 @@ export class AppNativeBackend implements NativeBackend {
   /** A per-command driver is pinned to the requested target; UI focus never selects its destination. */
   async execute(target: string, action: string, params: Record<string, unknown>): Promise<unknown> {
     const tab = this.tab(target);
-    await whenProtected(tab);
+    await readyForRead(this.deps, tab);
     this.tab(target);
     if (action === 'network:body')
       return this.browser.network(tab.view.webContents).body(tab.view.webContents, params.requestId as string);
@@ -230,6 +230,11 @@ export class AppNativeBackend implements NativeBackend {
     if (action === 'history:read') return this.history.read(tab.view);
     return this.history.navigate(tab.view, params, (url) => isWebAddress(url) && this.deps.governance.allowed(url));
   }
+}
+/** Native and compatibility reads share the protection and original-text restoration barrier. */
+async function readyForRead(deps: AppServices, tab: Tab): Promise<void> {
+  await whenProtected(tab);
+  await deps.translation?.released(tab.view);
 }
 /** The external protocol always terminates in native operations; tab protection remains mandatory. */
 export function startAppNativeCdp(deps: AppServices, config = nativeDoorConfig(process.env)): void {
