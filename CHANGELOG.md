@@ -38,6 +38,18 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 - Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
 
+- Made Mars pages show sooner: the first paint lands before images and web fonts resolve and again when they do, the head's scripts download on the loader while the sheets arrive, classic scripts and their deferred functions compile on their own threads while the document is styled, and the scripts' own DOM paints before the lifecycle events. YouTube's home paints in under a second and publishes in about two.
+
+- Kept Mars's YouTube realm resident between timer and event tasks, so each one runs in place instead of restoring the page's state first; loads and module steps keep the copying path. Audio for content playback now sounds from the first frame: the native player applies the page's volume when it is built rather than on a later settings change.
+
+- Fixed Mars pages that stayed blank or failed to load: DOMContentLoaded now waits for the parser's module scripts (DuckDuckGo's results), a script V9 asks for again before it lands is no longer started twice (github.com and airbnb.com hit the delivered-bytes limit), `DOMParser.parseFromString` no longer stops the page on text that opens with a multibyte letter, and a script inserted with `async = false` runs after the ones inserted before it however their downloads land.
+
+- Fixed a Mars closure-capture miscompile: a parameter default that reads an outer name the function body also declares now reads the outer binding, as the default runs before the body's declarations exist.
+
+- Stopped Mars's macOS painter from drawing a box shadow at the viewport's edge for an element parked far off the page (Amazon's keyboard-shortcut menu): a shadow whose landing spot misses the clip is skipped.
+
+- Sped up Mars styling of large pages: the parsed-sheet cache resumes after the longest shared prefix of the sheet list, rule buckets key a compound selector by its rarest class (airbnb's atomic classes dropped from millions of candidates per cascade to thousands), and a page with due work ticks every 16 ms.
+
 - Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
 
 - Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
