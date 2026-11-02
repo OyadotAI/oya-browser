@@ -111,6 +111,12 @@ export const DEFAULT_COMMANDS_BURST = 120;
 export const DEFAULT_CHAT_PER_MIN = 60;
 /** Chat requests a key may send in one burst. */
 export const DEFAULT_CHAT_BURST = 10;
+
+/** Page-translation batches per minute per key: a long page of short texts (links, menus) is up to about ten. */
+export const DEFAULT_TRANSLATE_PER_MIN = 60;
+
+/** Translation batches allowed at once before the per-minute rate applies: three long pages back to back. */
+export const DEFAULT_TRANSLATE_BURST = 30;
 /** Browsers a key may provision per minute. */
 export const DEFAULT_PROVISION_PER_MIN = 20;
 /** Browsers a key may provision in one burst. */

@@ -59,6 +59,75 @@ export const SUBMIT_KEY = 'Enter';
 /** A dedicated overlay prevents native page views from covering the suggestions. */
 export const ADDRESS_OVERLAY = 'address';
 
+/** What the translate chip says: `{lang}` is the page's language and `{target}` the person's, both by name. */
+export const TRANSLATE_TEXT = {
+  offer: 'Translate from {lang}',
+  offerTitle: "Translate this page into {target} with your project's AI model",
+  translating: 'Translating…',
+  translatingTitle: 'Stop and show original. Requests already sent may still count toward your allowance.',
+  translated: 'Translated from {lang} · Show original',
+  translatedTo: 'Translated to {target} · Show original',
+  partial: 'Partially translated · Show original',
+  partialTitle: 'Some page text could not be translated and remains in its original language.',
+  signIn: 'Sign in to translate',
+  signInTitle: "Sign in to Oya to translate pages with your project's AI model.",
+  connect: 'Connect a model to translate',
+  connectTitle: 'Connect an AI model to translate pages. It is the same model Assistant uses.',
+  notAllowed: 'Model not allowed',
+  keyRefused: 'Model key refused',
+  payment: 'Provider needs payment',
+  unavailable: "Model didn't answer",
+  limit: 'Hourly limit reached',
+  limitTitle:
+    "Translation and Assistant share your project's hourly model allowance, and it is used up. Try again later, or connect your own key in Assistant.",
+  rate: 'Too many requests',
+  rateTitle: 'Too many model requests in the last minute. Wait a moment, then click to try again.',
+  claim: 'Free steps used up',
+  offline: "Couldn't reach Oya",
+  offlineTitle: "Oya's server can't be reached. Check your connection, then click to try again.",
+  timeout: 'Translation timed out',
+  timeoutTitle: 'The translation took too long and was stopped. Click to try again.',
+  empty: 'Nothing to translate',
+  emptyTitle: "This page has no text Oya can translate. Text inside images, PDFs and frames isn't covered.",
+  failed: "Couldn't translate",
+  malformedTitle: "The model's answer couldn't be used, so the page was left as it was. Click to try again.",
+  /** What a screen reader hears as the chip changes; never when it first offers. */
+  saidStart: 'Translating to {target}',
+  saidDone: 'Translated to {target}',
+  saidPartial: 'Partially translated. Some page text remains in its original language.',
+  saidOriginal: 'Showing the original page',
+  reload: 'Reload page',
+  restoreTitle: 'Could not restore the original page. Reload it before continuing.',
+  short: {
+    translate: 'Translate',
+    stop: 'Stop',
+    original: 'Original',
+    retry: 'Retry',
+    signIn: 'Sign in',
+    setup: 'Set up',
+    limit: 'Limit reached',
+    reload: 'Reload',
+    empty: 'No text',
+  },
+} as const;
+
+/** Native overlay ownership is separate from other shell dialogs. */
+export const TRANSLATE_OVERLAY = 'translation';
+
+/** Disclosure shown before page text is sent, including bounded continuation and allowance use. */
+export const TRANSLATE_CONSENT = {
+  title: (target: string) => `Translate to ${target}?`,
+  disclosure:
+    'Page text will be sent to your project’s model provider. Translation uses the same model allowance as Assistant.',
+  continuation: (language: string, origin: string, pages: number) =>
+    `Oya will also translate the next ${language} pages on ${origin} in this tab, up to ${pages} pages. Choose Show original to stop.`,
+  pageOnly: 'This translates only the current page. Choose Show original to restore its text.',
+  cancellation: 'Requests already sent may still count toward your allowance.',
+  starting: 'Starting translation…',
+  cancelling: 'Cancelling…',
+  confirmFailed: "Couldn't confirm translation. Try again or cancel.",
+  cancelFailed: "Couldn't cancel translation. Try again.",
+} as const;
 /** A page at actual size, as a percentage: the zoom chip hides at it. */
 export const FULL_SIZE_PERCENT = 100;
 

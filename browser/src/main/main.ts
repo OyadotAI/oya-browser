@@ -57,6 +57,7 @@ import { DesktopDialogs, dialogPresenter } from './dialogs/index.ts';
 import { World, useFramePages, useStockWorld } from './native/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
+import { Translator } from './translate/index.ts';
 import { AgentTab } from './control/agent-tab.ts';
 import { CookieSync, cookieSyncMark } from './sync/cookie-sync.ts';
 import { Routines } from './routines/routines.ts';
@@ -208,9 +209,12 @@ ctx.socket = new ControlSocket(ctx);
 ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
 ctx.routines = new Routines(ctx);
+ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.tabs.sendTabList()));
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () => {
   ctx.passkeys.sync();
+  // A claim takes the tab from the person: its translation is undone before the agent reads it.
+  void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.findBar.sync();
@@ -222,6 +226,7 @@ ctx.control = new DesktopControl({
   changed: (state) => {
     ctx.agentTab.sync(state);
     ctx.passkeys.sync();
+    void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
     ctx.windows?.each((scope) => scope.findBar.sync());

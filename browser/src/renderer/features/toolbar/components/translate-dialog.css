@@ -1,0 +1,26 @@
+/** Consent keeps the shell's established dialog geometry and readable wrapping at its minimum window size. */
+.translation-dialog-body {
+  padding: 8px 20px 18px;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.translation-dialog-body p + p {
+  margin-top: 12px;
+}
+.translation-allowance {
+  color: var(--secondary);
+}
+.translation-action-error {
+  color: var(--danger);
+}
+#translate-action-status:empty {
+  display: none;
+}
+.translation-dialog footer {
+  justify-content: flex-end;
+}
+.translation-dialog button[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
