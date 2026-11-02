@@ -12,6 +12,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed passkey account selection being refused in a human-controlled tab while an agent works elsewhere. Account selection follows its real window and requesting document, without cancelling for unrelated iframe or same-page navigation.
 - Added page translation through the project's model, with confirmation before sending text, a disclosed same-site continuation limit, and Show original. Translation stops on navigation outside that scope, recording, or agent takeover; agent reads wait for the original page to be restored.
 
 - Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.

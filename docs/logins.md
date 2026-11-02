@@ -49,10 +49,18 @@ factor included. There is nothing to save: changes sync to the persona as you
 go, and once more when you quit. **Save profile** in the connection dialog
 forces a sync and tells you how many sites the persona now holds.
 
-A passkey prompt cannot be shown inside Oya Browser. When a site asks for one
-(Google does, for accounts that have a passkey), it is answered as if you had
-dismissed the prompt, and the site offers its other ways in: choose **Try
-another way** and use your password.
+Signed macOS builds configure device-bound Touch ID passkeys through Electron's
+native WebAuthn support. When account selection is required, Oya opens a native
+chooser for the requesting human-controlled tab or focused popup; an agent
+working in another tab does not block it. Navigation of that requesting
+document, profile changes, or an agent taking its tab cancels the chooser.
+
+Existing iCloud/Apple Passwords passkeys and nearby-phone passkeys are not an
+implemented path in the stock desktop runtime. Apple's restricted browser
+credential entitlement alone does not add that implementation. If your site's
+passkey cannot be used, choose **Try another way** and use its password or
+another method offered by the site. Session/cookie syncing does not copy private
+passkey material between personas or devices.
 
 ## Copy between personas
 
