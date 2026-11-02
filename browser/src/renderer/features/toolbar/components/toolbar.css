@@ -530,17 +530,17 @@ body.mode-browsing .toolbar {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Narrow windows: icon only; the text stays for screen readers. */
+.translate-chip-short {
+  display: none;
+}
+/* A short action remains visible at the desktop's minimum width. */
 @media (max-width: 959px) {
   .translate-chip-text {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    border: 0;
+    display: none;
+  }
+  .translate-chip-short {
+    display: inline;
+    white-space: nowrap;
   }
 }
 

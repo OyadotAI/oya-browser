@@ -213,7 +213,7 @@ ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.t
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () => {
   // A claim takes the tab from the person: its translation is undone before the agent reads it.
-  void ctx.translation.sync();
+  void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.findBar.sync();
@@ -224,7 +224,7 @@ ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
   changed: (state) => {
     ctx.agentTab.sync(state);
-    void ctx.translation.sync();
+    void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
     ctx.dialogs.controlChanged();
     ctx.shield.controlChanged(state);
     ctx.windows?.each((scope) => scope.findBar.sync());

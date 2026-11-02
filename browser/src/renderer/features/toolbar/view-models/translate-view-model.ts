@@ -8,9 +8,11 @@ import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { TabSummary, TabTranslation } from '../../../../shared/ipc.ts';
 import { languageName } from '../../../../shared/language.ts';
 import { TRANSLATE_TEXT as T } from '../model/constants.ts';
+import { TranslateDialogViewModel, type TranslationDialogBridge } from './translate-dialog-view-model.ts';
 
 /** The parts of the bridge the chip uses. */
-export type TranslateBridge = Pick<OyaBrowser, 'translatePage' | 'showOriginal' | 'onTabsUpdated'>;
+export type TranslateBridge = Pick<OyaBrowser, 'translatePage' | 'showOriginal' | 'onTabsUpdated' | 'reload'> &
+  TranslationDialogBridge;
 
 /** Where a setup or refusal click takes the person: the root wires each to the Assistant panel. */
 export interface TranslateHost {
@@ -20,15 +22,19 @@ export interface TranslateHost {
   openModels(): void;
   /** Opens the page that turns this browser's key into an account. */
   openClaim(): void;
+  /** Restore keyboard focus when explicit restoration removes the chip. */
+  focusAddress?(): void;
 }
 
 /** What a click does: translate, show the original, open a host's page, or nothing. */
-type Action = 'translate' | 'original' | 'ask' | 'models' | 'claim' | 'none';
+type Action = 'translate' | 'original' | 'ask' | 'models' | 'claim' | 'reload' | 'none';
 
 /** How the chip looks. */
 export interface ChipLook {
   /** Its visible text, which is also its accessible name. */
   text: string;
+  /** A visible action at narrow widths, with the full text retained as its accessible name. */
+  short?: string;
   /** The full reason: its tooltip and description. */
   title: string;
   /** Its colour: plain, accent once translated, danger on a failure. */
@@ -64,6 +70,7 @@ const REFUSALS: Record<string, Refusal> = {
   timeout: [T.timeout, T.timeoutTitle, 'translate'],
   nothing_to_translate: [T.empty, T.emptyTitle, 'none', 'idle'],
   translate_malformed: [T.failed, T.malformedTitle, 'translate'],
+  restore_failed: [T.reload, T.restoreTitle, 'reload'],
 };
 
 /** `text` with `{lang}` and `{target}` filled in by name, in the person's language. */
@@ -90,14 +97,40 @@ function doneLook(t: TabTranslation): ChipLook {
 }
 
 /** How the chip looks for a tab's translation; null hides it. */
-export function chipLook(t: TabTranslation | undefined): ChipLook | null {
+function fullLook(t: TabTranslation | undefined): ChipLook | null {
   if (!t) return null;
-  if (t.state === 'offer')
+  if (t.state === 'offer' || t.state === 'confirming')
     return { text: fill(T.offer, t), title: fill(T.offerTitle, t), tone: 'idle', action: 'translate' };
   if (t.state === 'translating') {
     return { text: T.translating, title: fill(T.translatingTitle, t), tone: 'idle', action: 'original' };
   }
   return t.state === 'failed' ? failedLook(t) : doneLook(t);
+}
+
+/** A short action remains visible instead of requiring colour or an icon to explain state. */
+export function chipLook(t: TabTranslation | undefined): ChipLook | null {
+  const look = fullLook(t);
+  if (!look || !t) return null;
+  return { ...look, short: shortLabel(t, look.action) };
+}
+
+/** Compact labels for failure recovery actions. */
+const SHORT_ACTIONS: Record<Action, string> = {
+  translate: T.short.retry,
+  original: T.short.original,
+  ask: T.short.signIn,
+  models: T.short.setup,
+  claim: T.short.setup,
+  reload: T.short.reload,
+  none: T.short.empty,
+};
+
+/** Narrow copy names the action while the accessible name retains the complete state. */
+function shortLabel(t: TabTranslation, action: Action): string {
+  if (t.state === 'translating') return T.short.stop;
+  if (t.state !== 'failed') return action === 'original' ? T.short.original : T.short.translate;
+  if (t.error?.code === 'llm_quota') return T.short.limit;
+  return SHORT_ACTIONS[action];
 }
 
 /** What a screen reader hears when a tab's chip goes from `before` to `now`; '' for nothing (an offer appearing, a tab switch). */
@@ -112,6 +145,8 @@ export function announcement(before: TabTranslation | undefined, now: TabTransla
 
 /** The translate chip, following the active tab. */
 export class TranslateViewModel extends ViewModel<TranslateState> {
+  /** Confirmation is shared by toolbar and native context-menu entry points. */
+  readonly dialog: TranslateDialogViewModel;
   /** The main process. */
   private readonly bridge: TranslateBridge;
   /** Where setup and refusal clicks go. */
@@ -124,12 +159,15 @@ export class TranslateViewModel extends ViewModel<TranslateState> {
     super({ chip: null, said: '' });
     this.bridge = bridge;
     this.host = host;
+    this.dialog = new TranslateDialogViewModel(bridge);
+    this.own(() => this.dialog.dispose());
     this.own(bridge.onTabsUpdated((tabs) => this.follow(tabs)));
   }
 
   /** Draws the active tab's chip, announcing a change on the same tab only. */
   private follow(tabs: readonly TabSummary[]): void {
     const active = tabs.find((t) => t.active);
+    this.dialog.follow(active);
     const translation = /^https?:/i.test(active?.url ?? '') ? active?.translation : undefined;
     const said = active?.id === this.shown.id ? announcement(this.shown.translation, translation) : '';
     this.shown = { id: active?.id, translation };
@@ -137,22 +175,29 @@ export class TranslateViewModel extends ViewModel<TranslateState> {
   }
 
   /** What each click does, for the tab `id`. */
-  private actions(id: number): Record<Action, () => unknown> {
+  private actions(id: number) {
     return {
       translate: () => this.bridge.translatePage(id),
-      original: () => this.bridge.showOriginal(id),
+      original: () => this.restore(id),
       ask: () => this.host?.openAsk(),
       models: () => this.host?.openModels(),
       claim: () => this.host?.openClaim(),
-      none: () => undefined,
+      reload: () => this.bridge.reload(),
     };
+  }
+
+  /** Explicit restoration announces success even when an unknown-language chip disappears. */
+  private async restore(id: number): Promise<void> {
+    await this.bridge.showOriginal(id);
+    this.set({ said: T.saidOriginal });
+    if (!this.state.chip) this.host?.focusAddress?.();
   }
 
   /** The chip was clicked: does what its state says. A refusal from main shows on the chip, so it is not repeated here. */
   activate(): void {
     const id = this.shown.id;
     const action = this.state.chip?.action;
-    if (id === undefined || !action) return;
+    if (id === undefined || !action || action === 'none') return;
     void Promise.resolve(this.actions(id)[action]()).catch(() => undefined);
   }
 }

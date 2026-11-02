@@ -96,6 +96,8 @@ export interface Tab {
  * TRANSLATE_KEEP_PAGES of them.
  */
 export interface TranslateKeep {
+  /** The OS language explicitly approved for this continuation. */
+  target: string;
   /** The primary language it translates from. */
   lang: string;
   /** The site the person clicked on. */

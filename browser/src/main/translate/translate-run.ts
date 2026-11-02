@@ -1,13 +1,12 @@
 /**
  * One translation of one page: collect its text in the translation world, send
- * it to the server in batches one after another, and write each answer back.
- * Every await is followed by a check of `signal`, so a run that was stopped
- * (Show original, an agent's claim, a navigation) never writes into the page.
+ * it to the server with bounded parallelism, and write each answer back. Main
+ * rechecks consent and page-side document/run fences reject queued stale writes.
  */
 import type { WebContents } from 'electron';
 import { runInWorld } from '../native/stock-world.ts';
 import { readApiAnswer, type ServerApi } from '../connection/server-api.ts';
-import { applyJs, collectJs, restoreJs } from '../../page/translate.ts';
+import { applyFor, collectFor, restoreFor } from '../../page/translation-guard.ts';
 import {
   TOO_MANY_REQUESTS,
   TRANSLATE_BATCH_CHARS,
@@ -17,6 +16,7 @@ import {
   TRANSLATE_PARALLEL,
   TRANSLATE_PAGE_CHARS,
   TRANSLATE_WORLD_ID,
+  TRANSLATE_RESPONSE_CHARS,
 } from './constants.ts';
 
 /** A run's failure, with the code the chip looks its words up by. */
@@ -41,6 +41,12 @@ export interface RunRequest {
   target: string;
   /** Aborts the run. */
   signal: AbortSignal;
+  /** Exact isolated document identity. */
+  document: string;
+  /** Run sequence, tombstoned by restoration. */
+  serial: number;
+  /** Rechecks the main-owned grant before sending or applying text. */
+  check(): void;
 }
 
 /** An error as the server, fetch or a timeout leaves it. */
@@ -67,6 +73,21 @@ interface Collected {
 interface Translated {
   /** The translations, in the order sent. */
   texts: string[];
+}
+
+/** Malformed or oversized model replies never reach a page script. */
+function translations(value: unknown, count: number): string[] {
+  const texts = (value as Translated)?.texts;
+  if (!Array.isArray(texts) || texts.length !== count || texts.some((text) => typeof text !== 'string'))
+    throw new TranslateError('translate_malformed');
+  return boundedTexts(texts);
+}
+
+/** Bound aggregate expansion before serializing a model reply into a page script. */
+function boundedTexts(texts: string[]): string[] {
+  if (texts.reduce((total, text) => total + text.length, 0) > TRANSLATE_RESPONSE_CHARS)
+    throw new TranslateError('translate_malformed');
+  return texts;
 }
 
 /** Whether `text` still fits in `batch`, the first batch being the small one. ponytail: re-sums the batch per text; at most 200 short strings. */
@@ -101,23 +122,29 @@ async function translateBatch(req: RunRequest, texts: string[]): Promise<string[
   // The page's own tag is not sent: the model reads the language from the text, and a tag like "DE" is not one the server takes.
   const body = { texts, target: req.target };
   try {
+    req.check();
     const res = await req.api.postToBrowser('translate', body, TRANSLATE_BATCH_TIMEOUT_MS, req.signal);
-    return ((await readApiAnswer(res)) as Translated).texts;
+    return translations(await readApiAnswer(res), texts.length);
   } catch (err) {
     throw req.signal.aborted ? err : failureOf(err);
   }
 }
 
 /** Collects the page's text in the translation world. */
-const collect = (contents: WebContents): Promise<Collected> =>
-  runInWorld<Collected>(contents, TRANSLATE_WORLD_ID, collectJs(TRANSLATE_PAGE_CHARS, TRANSLATE_BATCH_CHARS));
+const collect = (req: RunRequest): Promise<Collected> =>
+  runInWorld<Collected>(
+    req.contents,
+    TRANSLATE_WORLD_ID,
+    collectFor(req.document, req.serial, TRANSLATE_PAGE_CHARS, TRANSLATE_BATCH_CHARS),
+  );
 
 /** Takes batches off `queue` one at a time, sending each and writing its answer, until the queue is empty or the run stops. */
 async function worker(req: RunRequest, queue: Array<[number, string[]]>): Promise<void> {
   for (let next = queue.shift(); next && !req.signal.aborted; next = queue.shift()) {
     const out = await translateBatch(req, next[1]);
     if (req.signal.aborted) return;
-    await runInWorld(req.contents, TRANSLATE_WORLD_ID, applyJs(next[0], out));
+    req.check();
+    await runInWorld(req.contents, TRANSLATE_WORLD_ID, applyFor(req.document, req.serial, next[0], out));
   }
 }
 
@@ -128,18 +155,36 @@ async function worker(req: RunRequest, queue: Array<[number, string[]]>): Promis
  * stopped run ends quietly.
  */
 export async function translatePage(req: RunRequest): Promise<Pick<Collected, 'partial'>> {
-  const page = await collect(req.contents);
+  req.check();
+  const page = await collect(req);
+  req.check();
   if (!page.texts.length) throw new TranslateError('nothing_to_translate');
-  const stop = new AbortController();
-  const run = { ...req, signal: AbortSignal.any([req.signal, stop.signal]) };
-  const queue = batches(page.texts);
-  const workers = Array.from({ length: TRANSLATE_PARALLEL }, () => worker(run, queue));
-  await Promise.all(workers).catch((err) => (stop.abort(), Promise.reject(err)));
+  await translateCollected(req, page.texts);
   return { partial: page.partial };
 }
 
+/** Stop sibling workers on the first failure, then settle every issued operation before reporting it. */
+async function translateCollected(req: RunRequest, texts: string[]): Promise<void> {
+  const stop = new AbortController();
+  const run = { ...req, signal: AbortSignal.any([req.signal, stop.signal]) };
+  const queue = batches(texts);
+  const workers = workersFor(run, queue, stop);
+  const results = await Promise.allSettled(workers);
+  const failed = results.find((result) => result.status === 'rejected');
+  if (failed?.status === 'rejected') throw failed.reason;
+}
+
+/** A failed worker stops its siblings without letting an issued operation escape the settlement barrier. */
+const workersFor = (run: RunRequest, queue: Array<[number, string[]]>, stop: AbortController) =>
+  Array.from({ length: TRANSLATE_PARALLEL }, () =>
+    worker(run, queue).catch((error) => {
+      stop.abort();
+      throw error;
+    }),
+  );
+
 /** Puts the page's original text back where it still holds the translation; a page already gone has nothing to restore. */
-export function restorePage(contents: WebContents): Promise<unknown> {
+export function restorePage(contents: WebContents, document: string, serial: number): Promise<unknown> {
   if (contents.isDestroyed()) return Promise.resolve();
-  return runInWorld(contents, TRANSLATE_WORLD_ID, restoreJs).catch(() => undefined);
+  return runInWorld(contents, TRANSLATE_WORLD_ID, restoreFor(document, serial));
 }

@@ -91,7 +91,7 @@ export const HUMAN_MENU_ITEMS: readonly string[] = [
 /** Cmd/Ctrl + this digit goes to the last tab, whatever their number (Chrome's rule). */
 export const LAST_TAB_DIGIT = 9;
 /** Named overlays the renderer may raise over the page. */
-export const OVERLAYS: readonly string[] = ['legacy', 'shell', 'address', 'notifications', 'profiles'];
+export const OVERLAYS: readonly string[] = ['legacy', 'shell', 'address', 'notifications', 'profiles', 'translation'];
 
 /** Native dialog response selecting an explicit takeover. */
 export const TAKEOVER_CHOICE = 1;

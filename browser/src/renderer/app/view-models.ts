@@ -169,6 +169,7 @@ function translateHost({ env, panel }: ShellViewModels, ask: ShellViewModels['as
     openAsk: () => void panel.open('chat'),
     openModels: () => void panel.open('chat').then(() => ask.state.current.model.openCard()),
     openClaim: () => void env.bridge.openClaim(),
+    focusAddress: focusById(env.frames, 'url-bar'),
   };
 }
 

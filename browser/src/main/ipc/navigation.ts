@@ -63,6 +63,7 @@ type Channel =
   | 'move-tab'
   | 'tab-menu'
   | 'translate-page'
+  | 'confirm-translation'
   | 'show-original';
 
 /** Navigation and the tab strip, as the shell asks for them. */
@@ -106,6 +107,7 @@ export class NavigationHandlers {
       new TabMenu(this.deps).show(id);
     },
     'translate-page': (_e, id) => this.deps.translation.translate(this.ownTab(id)),
+    'confirm-translation': (_e, id, confirmation) => this.deps.translation.confirm(this.ownTab(id), confirmation),
     'show-original': (_e, id) => this.deps.translation.showOriginal(this.ownTab(id)),
   };
   /** The main-process services. */

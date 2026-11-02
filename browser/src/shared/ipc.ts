@@ -34,13 +34,22 @@ export interface Failure {
 /** The address bar's translate chip for one tab, as main/translate sets it. */
 export interface TabTranslation {
   /** Offered, running, done (in whole or in part), or failed. */
-  state: 'offer' | 'translating' | 'translated' | 'partial' | 'failed';
+  state: 'offer' | 'confirming' | 'translating' | 'translated' | 'partial' | 'failed';
   /** The page's declared language tag, '' when it declared none. */
   lang: string;
   /** The person's language tag (the OS's, never the persona's). */
   target: string;
   /** Why it failed. */
   error?: TranslateFailure;
+  /** Main-owned consent scope; the renderer can only confirm its opaque id. */
+  confirmation?: {
+    /** Identifies the exact pending document confirmation. */
+    id: string;
+    /** Origin disclosed before page text leaves the browser. */
+    origin: string;
+    /** Further pages covered by consent; zero for unknown source language. */
+    pages: number;
+  };
 }
 
 /** Why a translation failed. */
@@ -366,6 +375,8 @@ export interface ShellCalls {
   toggleBookmark(): Promise<void>;
   /** Translates the tab's page into the person's language with the project's model (the translate chip). */
   translatePage(tabId: number): Promise<void>;
+  /** Confirms only the exact main-owned document and scope the dialog displayed. */
+  confirmTranslation(tabId: number, id: string): Promise<void>;
   /** Stops a translation, or undoes one, and shows the page's own text. */
   showOriginal(tabId: number): Promise<void>;
   /** Searches the shown page for `text` as the person types; empty text clears the highlights. */
@@ -694,6 +705,8 @@ export const CALL_CHANNELS = {
   toggleBookmark: 'toggle-bookmark',
   /** Translates a tab's page. */
   translatePage: 'translate-page',
+  /** Accepts an existing translation confirmation. */
+  confirmTranslation: 'confirm-translation',
   /** Shows a tab's page untranslated. */
   showOriginal: 'show-original',
   /** Searches the shown page as the person types. */
