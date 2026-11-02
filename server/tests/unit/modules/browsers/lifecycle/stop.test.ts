@@ -101,6 +101,17 @@ describe('stopBrowser: a browser held here', () => {
     usage.browserDisconnected('key-a', B);
   });
 
+  it('a reconnect during vendor release is not persisted as stopped', async () => {
+    const { update } = stubControl({ findSession: async () => ({ state: 'ready' }) });
+    connectBrowser(B);
+    registry.get(B).release = async () => void connectBrowser(B);
+    await stopBrowser(req(), B);
+    assert.deepEqual(
+      update.mock.calls.map((call) => call.arguments[2].state),
+      ['cleanup_pending'],
+    );
+  });
+
   it('stops an Oya browser that has a persona', async () => {
     connectBrowser(B);
     assert.equal((await stopBrowser(req(), B)).ok, true);
