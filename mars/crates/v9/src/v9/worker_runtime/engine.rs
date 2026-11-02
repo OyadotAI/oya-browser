@@ -106,6 +106,7 @@ fn execute(
         environment,
         None,
         &modules,
+        &[],
     )?;
     let Compiled::Each(codes) = compiled else {
         return Err(EngineError::invalid("Worker compilation mode mismatch."));

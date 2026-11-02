@@ -4,25 +4,26 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /** A value with its compact JSON kept until the value changes. Reads go through `Deref`; every
 mutable access goes through `DerefMut`, which drops the kept bytes first. The borrow checker is
 the invalidation: a kept encoding cannot describe an older value, and no writer has to report a
-change. Clones keep the bytes, which stay valid because the clone holds the same value. */
+change. Snapshots share the value and its bytes; a writer copies a shared value before changing
+it, so an idle step or a summary never deep-copies unchanged page maps. */
 #[derive(Clone, Debug, Default)]
 pub(in crate::v9) struct Encoded<T> {
-    /** The value itself. */
-    value: T,
+    /** Immutable between writes, shared with saved states and coordinator summaries. */
+    value: Arc<T>,
     /** Its compact JSON, filled on first use and dropped by any mutable access. */
-    json: OnceLock<Box<RawValue>>,
+    json: OnceLock<Arc<RawValue>>,
 }
 
 impl<T> Encoded<T> {
     /** Wrap `value` with no encoding kept yet. */
     pub fn new(value: T) -> Self {
         Self {
-            value,
+            value: Arc::new(value),
             json: OnceLock::new(),
         }
     }
@@ -44,7 +45,7 @@ impl<T: Serialize> Encoded<T> {
         if let Some(json) = self.json.get() {
             return Ok(json);
         }
-        let json = serde_json::value::to_raw_value(&self.value)?;
+        let json = Arc::from(serde_json::value::to_raw_value(self.value.as_ref())?);
         Ok(self.json.get_or_init(|| json))
     }
 }
@@ -64,12 +65,12 @@ impl<T> Deref for Encoded<T> {
     }
 }
 
-impl<T> DerefMut for Encoded<T> {
+impl<T: Clone> DerefMut for Encoded<T> {
     /** Mutable access to the value. It drops the kept encoding, because the caller may change the
     value through the reference. */
     fn deref_mut(&mut self) -> &mut T {
         self.json.take();
-        &mut self.value
+        Arc::make_mut(&mut self.value)
     }
 }
 
@@ -93,6 +94,43 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Encoded<T> {
 #[cfg(test)]
 mod tests {
     use super::Encoded;
+    use std::sync::Arc;
+
+    /** Saved states and summaries retain the same allocations until a writer needs a copy. */
+    #[test]
+    fn snapshots_share_unchanged_values_and_encodings() {
+        let saved = Encoded::new(vec![1_u8, 2, 3]);
+        saved.keep_encoding();
+        let summary = saved.clone();
+        assert!(Arc::ptr_eq(&saved.value, &summary.value));
+        assert!(Arc::ptr_eq(
+            saved.json.get().unwrap(),
+            summary.json.get().unwrap()
+        ));
+    }
+
+    /** A retried task sees its original base even after a candidate mutated and re-encoded. */
+    #[test]
+    fn candidate_writes_leave_the_saved_value_and_bytes_unchanged() {
+        let saved = Encoded::new(vec![1_u8]);
+        saved.keep_encoding();
+        let mut candidate = saved.clone();
+        candidate.push(2);
+        assert_eq!(saved.as_slice(), &[1]);
+        assert_eq!(serde_json::to_string(&candidate).unwrap(), "[1,2]");
+        assert_eq!(serde_json::to_string(&saved).unwrap(), "[1]");
+        assert!(!Arc::ptr_eq(&saved.value, &candidate.value));
+    }
+
+    /** Deserialization owns fresh data; a later copy cannot change the decoded base. */
+    #[test]
+    fn decoded_values_keep_snapshot_isolation() {
+        let saved: Encoded<Vec<u8>> = serde_json::from_str("[1]").unwrap();
+        let mut candidate = saved.clone();
+        candidate.push(2);
+        assert_eq!(serde_json::to_string(&saved).unwrap(), "[1]");
+        assert_eq!(serde_json::to_string(&candidate).unwrap(), "[1,2]");
+    }
 
     /** A change made through the mutable reference is what the next encoding shows, so a kept
     encoding cannot outlive the value it describes. */

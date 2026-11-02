@@ -72,18 +72,65 @@ sandboxed subprocesses instead, for hermetic tests, crash recovery and the platf
 - **Synchronous layout** (`crates/v9/src/v9/platform/layout_host.rs`,
   `src/runtime/scripting/sync_layout.rs`): when script reads a box or computed style the last
   layout cannot answer, V9 calls the `LayoutHost` the app put on `PageEnvironment`. The host
-  applies the step's change log to the step's base document, cascades and lays out with Eye on
-  V9's thread, and the same run continues. At most `LAYOUT_CALLS` per step; past that, or with no
+  applies the step's change log, cascades and lays out on Eye's engine thread while V9 waits,
+  and the same run continues. Successful reads seal the attribute journal prefix. The next
+  read moves the previous document back to Eye and applies only the new suffix; changed
+  prefixes restart from the original document. `MutationCursor` retains the identity frontier
+  and whole-journal limits across reads, including IDs removed before a read. Commit also
+  reuses this document, marking styles dirty when it applies a final suffix.
+  At most `LAYOUT_CALLS` per step; past that, or with no
   host (subprocess mode), V9 reports `stale_geometry`/`style_requests` and the coordinator lays
   out and runs the step again, as before.
+- **Shared computed styles** (`crates/eye/src/document/style/shared.rs`): DOM nodes retain a
+  pointer to immutable computed values. Document snapshots and unchanged cascade results share
+  those values; a native edit detaches only the changed style. Node insertions and moves carry
+  the pointer instead of every CSS field. Serialization still writes the same value object.
+- **Persistent execution thread** (`crates/v9/src/v9/execution_thread.rs`): the in-process V9
+  service owns the full execution stack and runs successive calls on that thread, preserving
+  thread-local shape caches. Each call retains its panic boundary. Standalone callers and
+  framed services still acquire an execution thread when their caller does not own that stack.
+  This does not yet retain a live VM between tasks; resident state restoration remains.
+- **Custom element lifetime**: an upgrade registration does not root each instance. Connected
+  custom elements retain their wrappers and upgraded prototypes; detached instances follow
+  ordinary script and DOM reachability. Construction and queued slot changes keep their targets
+  alive until those operations finish. Opt-in `v9.allocations` records allocation charges per
+  resident step without serializing the heap.
+- **Native task collection**: desktop pages and workers enable `PageEnvironment.live_gc`.
+  Heap growth or bound pressure runs ordinary collection at the task checkpoint, reclaiming
+  unreachable weak-key cycles. Standalone snapshot callers retain weak identities as before.
+  Reachable DOM targets own mutation observers; observer registrations hold their target weakly,
+  so discarded observer/target cycles do not retain callbacks. Pending records remain roots.
+  Observation traversal includes the owning document and stops at shadow roots. A stable heap
+  near a bound does not trigger another collection without growth or actual bound pressure.
+- **Resident heap admission**: identity bounds use radix-tree lower bounds and proxy presence is
+  maintained with allocation/recounting, avoiding two whole-heap scans during task restoration.
+- **Script call forwarding**: the intrinsic `Function.prototype.call` enters a script closure on
+  the current interpreter loop, retaining the original caller and exception boundary. Native
+  callbacks, proxies, bound targets and replaced call properties retain ordinary dispatch.
+- **Dictionary property caches**: large objects retain a layout identity for own-property slots.
+  Dictionary snapshots share that identity until a key is added or removed, when only the changed
+  snapshot receives a fresh identity. Slot reads still inspect data/accessor kind and writes still
+  inspect writability, so redefinitions need no structural invalidation. Identities are process
+  metadata, rebuilt when state is deserialized.
+- **Request submission**: validated script tasks give their outgoing requests a bounded admission
+  turn before followup script loading. Network workers can download concurrently with that work;
+  responses stay queued for the ordinary network task source. Resize observer broadcasts continue
+  deferring resource work until their rendering cycle allows it.
+- **Closure environments**: function locals used by nested functions live in shared environment
+  slots; other locals remain activation registers and disappear when that activation returns.
+  Dependency analysis is memoized across lazy compilation. Direct eval, mapped arguments and
+  module scopes keep their existing full environments. Class scopes and lexical block scopes
+  retain their established layout.
 - **Engine call bound**: `rpc_timeout()` never sits under the effective V9 script deadline plus a
   margin, so a slow but bounded script reports its own limit instead of having its engine killed.
 
 ### V9 JIT bridge
-`v9::jit::JitBridge` only profiles today: it counts calls per function and reports V8-style tier
-bits to `%GetOptimizationStatus`. Nothing is compiled. The plan is inline caches in the
-interpreter first, then a baseline template JIT (dynasm-rs, ARM64 and x86-64), then an
-optimizing tier (Cranelift) for hot loops. A signed build needs the `allow-jit` entitlement.
+On Apple silicon macOS, hot functions use the owned ARM64 assembler and executable-memory
+manager in `v9::jit`. Forward jumps become native branches; other instructions call the
+interpreter's instruction helper and dispatch through a block table. This preserves interpreter
+semantics but does not yet specialize arithmetic or property accesses into native operations.
+Compilation currently runs on the execution thread. The separate conformance tier-status bridge
+reports optimization metadata; its status alone is not evidence of native specialization.
 
 ## Ownership and transactions
 
@@ -116,6 +163,12 @@ site plus origin), applies commits atomically and seals each partition's record 
 profile vault under a digest name; ephemeral profiles keep them in memory. Clearing saved
 site storage removes them. A database is bounded at 4 MiB of keys and values, an origin at
 32 MiB; contexts see other pages' commits on their next open of a database.
+
+Persistence encoder selection uses the stored value's native Rust brand, with shared
+encoder functions for every graph node. Ordinary records do not throw Date/ArrayBuffer
+brand errors or allocate a fresh dispatch table while serializing. The tagged graph wire
+format is unchanged, including aliases, cycles, sparse arrays, typed views and special
+numbers; Blob classification reads its private brand without copying payload bytes.
 
 The Runtime broker captures recipients at Post, excludes only the sender endpoint,
 and isolates authoritative exact origins plus schemeful registrable-domain sites.
@@ -423,6 +476,25 @@ module requests keep their prior charset decoding. Fetch text/JSON readers apply
 UTF-8 independently of MIME charset. Image/navigation/preflight requests cannot
 select the raw script response flag, and existing network/VM response caps remain.
 
+Request and Response expose one lazy native default ReadableStream over their buffered
+bytes. Stream locks and disturbance govern whole-body consumers, cloning and inherited
+Request bodies; an absent body remains distinct from a present empty body. Fetched streams
+retain their AbortSignal independently of the Response wrapper. Whole-body reads avoid
+allocating a stream unless script requests it. This does not add incremental network
+streaming, BYOB readers or ReadableStream upload bodies.
+
+Independent dynamic classic-script requests use the existing bounded parallel prefetch
+path before ordered delivery. Prefetch and final acquisition share URL/CSP admission;
+JavaScript MIME and integrity checks still govern execution. Request keys include the
+shaped credentials and headers, and batch duplicate detection uses an ordered set.
+
+The asynchronous network loader keeps waiting hops in one pool queue instead of assigning
+them behind busy workers. Each completion admits the next waiting hop directly on a free
+worker, even while the coordinator is executing JavaScript. Idle workers retain URL cache
+affinity; cache-maintenance commands keep their per-worker FIFO ordering. The queue lock
+covers admission only, never network I/O, and workers hold weak scheduler references so
+runtime shutdown can close the queues under the existing cancellation flag.
+
 Dedicated workers can create one nested worker level. A single page scheduler
 routes bounded owner paths rather than treating realm-local handles as globally
 unique. Pending and live workers share the six-worker admission ceiling; existing
@@ -469,6 +541,12 @@ layout before the one final intersection delivery. Deadline exhaustion preserves
 registrations and last-delivered sizes, with one cycle per settle and a rendering
 cooldown preventing immediate restart. Callback-created resource work waits for
 ordinary processing; unrelated timers/fetch/worker turns never run inside cycles.
+
+Synchronous layout caches retain the exact DOM and extended change logs used by
+Eye. V9 coalesces repeated attribute writes in place, so matching log lengths do
+not establish freshness. Both mid-task geometry reuse and final styled-document
+reuse compare the actual edits. Immutable log snapshots are shared with Eye's
+job through Arc, keeping unchanged reads cached without duplicating input logs.
 
 Static and inserted HTTP(S) iframes share scripted-frame admission: cross-origin
 frames and same-origin sandboxes allowing both scripts and their origin may use
@@ -567,8 +645,11 @@ classic sources and module input by digest, and each page's script state (heap, 
 platform state) by token, so a step sends a token instead of the heap (25 MB on YouTube). Per
 page it keeps only the committed state, the last step's base and that step's result, for at most
 RESIDENT_PAGES pages; the coordinator keeps the state's summary (listeners, detached nodes,
-images) and the token. A state V9 built itself skips re-validation; one decoded from a frame is
-always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
+images) and the token. Encoded page maps and their compact JSON are shared by immutable snapshots;
+mutable access first discards that snapshot's encoding and copies a shared map. Unchanged maps
+therefore avoid deep copies between steps, while retries and abandoned candidates retain their
+original values and byte-size validation remains exact. A state V9 built itself skips re-validation;
+one decoded from a frame is always validated. When V9 restarts or drops a page, the next step gets `state_missing` and the
 coordinator reloads the page (a POST result is never replayed; its scripts stop). In the desktop, a
 navigation shows its parsed and styled page in the window before its scripts run (`window.inspect`
 reports it with `settling`); the committed page, history and the navigation's reply still wait
@@ -629,9 +710,12 @@ mute, rate and pitch setting, its resource loader reads only from the hub (it ne
 socket), and frames are pulled from a BGRA output and painted into the element's box with
 `object-fit`/`object-position`, under captions and Chromium-like native controls. Eye lays
 media out as replaced boxes (300 by 150 video, 300 by 54 audio with controls, audio without
-controls hidden) and never renders their children. Media Source appends are parsed for
-buffered ranges, but the native player cannot yet play appended segments, so
-`MediaSource.isTypeSupported` answers false.
+controls hidden) and never renders their children. Supported H.264/AAC fragmented MP4
+Media Source appends reach the native video and audio decoders. Sample ends are calculated
+in integer presentation timestamps before conversion to seconds, so contiguous buffered
+ranges merge without floating-point gaps. Unsupported codec combinations remain explicit
+refusals. Native MediaMetadata owns title, artist, album and normalized immutable artwork
+records; broader Media Session behavior and chapter metadata remain unfinished.
 
 ## Performance and footprint targets
 

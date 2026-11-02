@@ -27,7 +27,7 @@ pub(in crate::document::render) struct Frame {
     pub(super) content: [(f64, f64); 2],
     /** A subgrid's adopted style, whose inherited line names its boxes' lines resolve
      * against; None for a grid that inherits nothing. */
-    pub(super) adopted: Option<crate::document::ComputedStyle>,
+    pub(super) adopted: Option<crate::document::SharedStyle>,
     /** `direction: rtl`: the columns' offsets run from the right padding edge leftwards. */
     pub(super) rtl: bool,
 }

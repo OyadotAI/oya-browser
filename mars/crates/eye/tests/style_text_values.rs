@@ -22,12 +22,12 @@ fn style(parent: &str, own: &str) -> mars_eye::ComputedStyle {
     let sheet = format!("#p {{ {parent} }} #t {{ {own} }}");
     let markup = "<div id=p><span id=t>x</span></div>";
     let document = compute_styles(&parse(markup).unwrap(), &[sheet]).unwrap();
-    document
+    (*document
         .nodes
         .iter()
         .find(|n| n.html_id == "t")
         .unwrap()
-        .style
+        .style)
         .clone()
 }
 /** The computed width of a `#t` block whose width is `value`. */

@@ -89,7 +89,7 @@ fn node(local_id: usize, generated: Generated, root: bool) -> Option<Node> {
         "local_id": local_id, "html_id": id, "tag": tag, "text": generated.content,
     }))
     .ok()?;
-    node.style = *generated.style;
+    node.style = (*generated.style).into();
     node.style.generated.clear();
     Some(node)
 }

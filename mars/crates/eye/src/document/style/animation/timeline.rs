@@ -50,7 +50,7 @@ impl OpacityAnimations {
             document
                 .nodes
                 .iter()
-                .map(|n| (TransitionTarget::Node(n.local_id), &n.style)),
+                .map(|n| (TransitionTarget::Node(n.local_id), &*n.style)),
         );
         let mut targets = BTreeMap::new();
         for (target, style) in subjects {

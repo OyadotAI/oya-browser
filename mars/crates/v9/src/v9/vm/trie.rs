@@ -49,6 +49,25 @@ impl<V> Node<V> {
             Self::Branch(Box::new(std::array::from_fn(|_| None)))
         }
     }
+
+    /** Find a lower-bound key by descending only matching or later branches. */
+    fn first_at_or_after(&self, key: u32, shift: u32) -> Option<u32> {
+        let first = ((key >> shift) & MASK) as usize;
+        match self {
+            Self::Leaf(slots) => slots[first..].iter().flatten().next().map(|(key, _)| *key),
+            Self::Branch(children) => {
+                children
+                    .iter()
+                    .enumerate()
+                    .skip(first)
+                    .find_map(|(index, child)| {
+                        child
+                            .as_ref()?
+                            .first_at_or_after(if index == first { key } else { 0 }, shift - BITS)
+                    })
+            }
+        }
+    }
 }
 
 /** The map: a shared root, its entry count and its height. The root covers only as many levels
@@ -125,6 +144,13 @@ impl<V> Trie<V> {
     /** Whether `key` is held. */
     pub fn contains_key(&self, key: &u32) -> bool {
         self.get(key).is_some()
+    }
+
+    /** Identity frontier checks need only a lower-bound lookup, not a walk over the whole heap. */
+    pub fn first_key_at_or_after(&self, key: u32) -> Option<u32> {
+        self.covers(key)
+            .then(|| self.root.first_at_or_after(key, self.shift))
+            .flatten()
     }
     /** Add a level above the root: the old root becomes the new one's first child, holding
     the same keys at the same paths below. */
@@ -334,6 +360,31 @@ impl<'a, V: Clone> IntoIterator for &'a Trie<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /** Lower-bound lookup agrees with ordered keys across sparse branches, deletion and snapshots. */
+    #[test]
+    fn lower_bounds_preserve_sparse_keys_after_mutation() {
+        let keys = [0, 1, 63, 64, 4095, 4096, 70_000, 0x4000_0000, u32::MAX];
+        let mut trie: Trie<()> = keys.into_iter().map(|key| (key, ())).collect();
+        let original = trie.clone();
+        for key in [64, 4096, 0x4000_0000] {
+            trie.remove(&key);
+        }
+        for map in [&trie, &original, &Trie::<()>::default()] {
+            for lower in keys
+                .into_iter()
+                .flat_map(|key| [key.saturating_sub(1), key, key.saturating_add(1)])
+            {
+                assert_eq!(
+                    map.first_key_at_or_after(lower),
+                    map.keys().copied().find(|key| *key >= lower),
+                    "{lower}"
+                );
+            }
+        }
+        trie.retain(|key, _| *key < 64);
+        assert_eq!(trie.first_key_at_or_after(64), None);
+    }
 
     /** Reads, writes, removals and order hold across sparse keys, including the intrinsic range. */
     #[test]

@@ -6,12 +6,12 @@
  * or MODULE_BYTES, is delivered as failed, which fails only the graphs that import it.
  */
 use super::page::Page;
-use super::resources::{Credentials, ScriptAnswer, ScriptRequest};
+use super::resources::{Credentials, Progress, ScriptAnswer, ScriptLoad, ScriptRequest};
 use super::scripting::Step;
 use super::supervisor::Runtime;
-use crate::constants::{MODULE_BYTES, MODULE_SOURCES, SCRIPT_BYTES, SCRIPT_LOADS};
+use crate::constants::{MODULE_BYTES, MODULE_SOURCES, SCRIPT_BYTES};
 use crate::document::{ScriptKind, ScriptMode, ScriptResource};
-use crate::network::{Destination, Method, WebRequest, cors};
+use crate::network::{Method, cors};
 use crate::protocol::{EngineError, EngineResult};
 use crate::v9::{
     EntryKind, FrameRequest, ModuleEntry, ModuleInput, ModuleRequest, ModuleSource,
@@ -22,13 +22,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, Instant};
 use url::Url;
 
-/// Fetch rounds one step may make; each round fetches every module the last one found. A chain
-/// of dynamic scripts, each inserted by the last one's load, needs one round per link, so the
-/// rounds match SCRIPT_LOADS, the most a page may start. MODULE_WALL still bounds the time; what
-/// is still pending when rounds run out fails its whole graph.
-const MODULE_ROUNDS: usize = SCRIPT_LOADS;
-/// Real time one step may spend loading module graphs, inside the navigation's own deadline.
+/// Real time a script load may take on the loader, and the longest the `load` event waits for
+/// the scripts and images the page's scripts started, inside the navigation's own deadline.
 const MODULE_WALL: Duration = Duration::from_millis(15_000);
+/// How long one wait for a landing hop lasts before the pre-load settle looks again.
+const LOAD_WAIT_SLICE: Duration = Duration::from_millis(250);
 
 /// A page's module scripts and the modules fetched for them, kept between V9 requests.
 #[derive(Clone, Default)]
@@ -52,6 +50,8 @@ pub(super) struct Modules {
     /// Every URL delivered to V9, as a module or a classic script: a set, so the check before
     /// each fetch costs the same whether the page has ten scripts or a thousand.
     delivered: HashSet<String>,
+    /// A load landed (or a frame arrived) since the last `modules` step, which delivers it.
+    pub landed: bool,
     /// Frame documents V9 asked for that the next round fetches.
     pub frame_requests: Vec<FrameRequest>,
     /// Bytes of frame documents delivered to the page, bounded by FRAME_BYTES_TOTAL.
@@ -136,182 +136,224 @@ impl Modules {
 
 impl Runtime {
     /**
-     * Load the module graphs a step asked for: fetch every requested module, run a `modules`
-     * step, and repeat while it finds more, within MODULE_ROUNDS and MODULE_WALL. Past either,
-     * what is still missing is delivered as failed so no module script waits forever. A modules
-     * step V9 refuses stops module loading for the page; the page itself carries on.
+     * Start what a step asked for: every module and classic script goes to the loader, as a
+     * browser fetches an inserted `<script>` (CORS mode and same-origin credentials for a
+     * module; no-cors with cookies for a classic script, its `crossorigin` attribute honoured),
+     * under the page's Content-Security-Policy. The page keeps running meanwhile; `land` hands
+     * each answer to V9 and the next `modules` step continues the graph. Fetching each script
+     * on the coordinator held YouTube's page, and every other tab, about 150 ms per script.
+     * Frames still load here, in one round.
      */
     pub(super) fn follow_modules(&mut self, page: &mut Page, step: &mut Step) -> EngineResult<()> {
+        self.start_module_loads(page)?;
+        self.start_script_loads(page)?;
+        let frames = !page.scripting.modules.frame_requests.is_empty();
         let deadline = Instant::now() + MODULE_WALL;
-        for round in 0..=MODULE_ROUNDS {
-            if page.scripting.modules.pending.is_empty()
-                && page.scripting.modules.pending_scripts.is_empty()
-                && page.scripting.modules.frame_requests.is_empty()
-            {
-                return Ok(());
-            }
-            let give_up = round == MODULE_ROUNDS || Instant::now() >= deadline;
-            self.fetch_modules(page, deadline, give_up)?;
-            self.fetch_script_loads(page, deadline, give_up)?;
-            step.changed |= self.fetch_frames(page, deadline, give_up)?;
-            match self.script_step(page, json!({"kind":"modules"})) {
-                Ok(next) => {
-                    step.changed |= next.changed;
-                    step.failed.extend(next.failed);
-                }
-                Err(error) if stops(&error) => return Err(error),
-                Err(error) => {
-                    page.scripting.modules.pending.clear();
-                    let entry = crate::v9::ConsoleEntry {
-                        level: "error".into(),
-                        text: format!("Module scripts stopped: {}", error.message),
-                    };
-                    super::scripting::record_console(&mut page.scripting, vec![entry], 0);
-                    return Ok(());
-                }
-            }
+        step.changed |= self.fetch_frames(page, deadline, false)?;
+        if frames {
+            page.scripting.modules.landed = true;
         }
         Ok(())
     }
-    /** Fetch this round's modules, batched when there are several. */
-    fn fetch_modules(
-        &mut self,
-        page: &mut Page,
-        deadline: Instant,
-        give_up: bool,
-    ) -> EngineResult<()> {
+    /** Every module V9 asked for, started; one with no admissible hop lands at once as failed. */
+    fn start_module_loads(&mut self, page: &mut Page) -> EngineResult<()> {
         let requests = std::mem::take(&mut page.scripting.modules.pending);
-        let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
-        let known = |url: &str, page: &Page| page.scripting.modules.known(url);
-        let requests: Vec<ModuleRequest> = requests
-            .into_iter()
-            .filter(|request| !known(&request.url, page))
-            .collect();
-        if !give_up {
-            let batch = requests
-                .iter()
-                .filter_map(|request| Url::parse(&request.url).ok())
-                .map(|url| (module_request(&base, &url), base.clone()))
-                .collect();
-            self.prefetch(batch, deadline)?;
-        }
-        for request in requests {
-            if known(&request.url, page) {
-                continue;
-            }
-            let source = if give_up {
-                None
-            } else {
-                self.fetch_module(page, &base, &request, deadline)?
-            };
-            hand_over(page, request.url, source, false);
-        }
-        Ok(())
-    }
-    /**
-     * Fetch this round's classic script loads the way a browser fetches `<script src>`: with
-     * the page's Content-Security-Policy (the element's nonce counts), a JavaScript media type
-     * and the element's integrity metadata. A refusal or failure is delivered as failed, so the
-     * element fires `error` instead of waiting forever.
-     */
-    fn fetch_script_loads(
-        &mut self,
-        page: &mut Page,
-        deadline: Instant,
-        give_up: bool,
-    ) -> EngineResult<()> {
-        let requests = std::mem::take(&mut page.scripting.modules.pending_scripts);
-        let base = Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))?;
+        let base = page_base(page)?;
         for request in requests {
             if page.scripting.modules.known(&request.url) {
                 continue;
             }
-            let source = if give_up {
-                None
-            } else {
-                self.fetch_script_load(page, &base, &request, deadline)?
+            let integrity = request
+                .integrity
+                .clone()
+                .or_else(|| page.scripting.modules.integrity.get(&request.url).cloned());
+            let load = ScriptLoad {
+                url: request.url.clone(),
+                classic: false,
+                integrity,
             };
-            hand_over(page, request.url, source, true);
+            match module_hop(page, &base, &request.url) {
+                Hop::Fetch(script) => self.submit_load(page, &base, *script, load)?,
+                Hop::Source(source) => land(page, load, source),
+            }
         }
         Ok(())
     }
-    /** One classic script a page element asked for; None for any refusal or failure. */
-    fn fetch_script_load(
-        &mut self,
-        page: &mut Page,
-        base: &Url,
-        request: &ScriptLoadRequest,
-        deadline: Instant,
-    ) -> EngineResult<Option<String>> {
-        let Ok(url) = Url::parse(&request.url) else {
-            return Ok(None);
-        };
-        let candidate = super::csp::Candidate {
-            url: Some(&url),
-            nonce: request.nonce.as_deref(),
-            source: "",
-        };
-        if !["http", "https", "data"].contains(&url.scheme())
-            || !super::csp::allows(&page.document.csp, base, &candidate)
-        {
-            return Ok(None);
+    /** Every classic script a page element asked for, started the same way. */
+    fn start_script_loads(&mut self, page: &mut Page) -> EngineResult<()> {
+        let requests = std::mem::take(&mut page.scripting.modules.pending_scripts);
+        let base = page_base(page)?;
+        for request in requests {
+            if page.scripting.modules.known(&request.url) {
+                continue;
+            }
+            let load = ScriptLoad {
+                url: request.url.clone(),
+                classic: true,
+                integrity: request.integrity.clone(),
+            };
+            match classic_hop(page, &base, &request) {
+                Hop::Fetch(script) => self.submit_load(page, &base, *script, load)?,
+                Hop::Source(source) => land(page, load, source),
+            }
         }
-        let Ok(source) = self.fetch_script(base, url.as_str(), deadline)? else {
-            return Ok(None);
-        };
-        let verified = request
-            .integrity
-            .as_deref()
-            .is_none_or(|metadata| super::integrity::matches(metadata, source.as_bytes()));
-        Ok(verified.then_some(source))
+        Ok(())
     }
-    /** One module, as a browser fetches a module script; None for any refusal or failure. */
-    fn fetch_module(
+    /** One load's first hop to the loader; an answer without the network lands at once. */
+    fn submit_load(
         &mut self,
         page: &mut Page,
         base: &Url,
-        request: &ModuleRequest,
-        deadline: Instant,
-    ) -> EngineResult<Option<String>> {
-        let Ok(url) = Url::parse(&request.url) else {
-            return Ok(None);
-        };
-        if !csp_allows(&page.document.csp, base, &url) {
-            return Ok(None);
-        }
-        if url.scheme() == "data" {
-            // A data: module is same-origin-clean and needs no network (old.reddit's bootstraps).
-            return Ok(super::navigation::data_script(url.as_str()));
-        }
-        if !["http", "https"].contains(&url.scheme()) {
-            return Ok(None);
-        }
-        let script = ScriptRequest {
-            request_id: None,
-            raw_response: false,
-            worker_policy: None,
-            url,
-            method: Method::Get,
-            body: Vec::new(),
-            headers: Vec::new(),
-            mode: cors::Mode::Cors,
-            credentials: Credentials::SameOrigin,
-        };
+        request: ScriptRequest,
+        load: ScriptLoad,
+    ) -> EngineResult<()> {
+        let until = Instant::now() + MODULE_WALL;
         let mut preflights = std::mem::take(&mut page.scripting.preflights);
-        let answer = self.fetch_for_script(base, script, &mut preflights, deadline);
+        let progress = self.start_script_load(base, request, load.clone(), &mut preflights, until);
         page.scripting.preflights = preflights;
-        let ScriptAnswer::Readable(response, _) = answer? else {
-            return Ok(None);
-        };
-        let integrity = request
-            .integrity
-            .as_ref()
-            .or_else(|| page.scripting.modules.integrity.get(&request.url));
-        let verified = integrity
-            .is_none_or(|metadata| super::integrity::matches(metadata, response.source.as_bytes()));
-        let javascript = mars_core::http::is_javascript_mime_essence(&response.mime);
-        Ok((response.status == 200 && javascript && verified).then_some(response.source))
+        match progress? {
+            Progress::Sent(state) => page.scripting.in_flight.push(*state),
+            Progress::Answered(answer) => {
+                let source = loaded_source(&load, answer);
+                land(page, load, source);
+            }
+        }
+        Ok(())
     }
+    /**
+     * What the `load` event waits for, as a browser's does: the images the scripts started and
+     * the scripts they inserted, each delivered as it lands, within MODULE_WALL. Returns
+     * whether the document changed.
+     */
+    pub(super) fn settle_resources_before_load(
+        &mut self,
+        page: &mut Page,
+        deadline: Instant,
+    ) -> EngineResult<bool> {
+        let until = deadline.min(Instant::now() + MODULE_WALL);
+        let mut changed = false;
+        while Instant::now() < until {
+            if page.scripting.modules.landed {
+                page.scripting.modules.landed = false;
+                changed |= self.script_step(page, json!({"kind":"modules"}))?.changed;
+            } else if !page.scripting.image_loading.pending.is_empty() {
+                changed |= self.settle_images_before_load(page, until)?;
+            } else if loading(page) {
+                changed |= self.deliver_landed(page, until)?;
+            } else {
+                break;
+            }
+        }
+        Ok(changed)
+    }
+    /** Wait one slice for a hop to land, then deliver what did: script loads to V9 through
+    `drain_landed`, and any fetch answers that landed with them to the page. */
+    fn deliver_landed(&mut self, page: &mut Page, until: Instant) -> EngineResult<bool> {
+        let slice = until.min(Instant::now() + LOAD_WAIT_SLICE);
+        if !self.wait_for_network(page, slice) {
+            return Ok(false);
+        }
+        let responses = self.perform_requests(page, Vec::new(), slice)?;
+        if responses.is_empty() {
+            return Ok(false);
+        }
+        let step = self.script_step(page, json!({"kind":"resume","responses":responses}))?;
+        Ok(step.changed)
+    }
+}
+
+/** Whether a script the page asked for is still on the loader. */
+pub(super) fn loading(page: &Page) -> bool {
+    page.scripting
+        .in_flight
+        .iter()
+        .any(|hop| hop.load.is_some())
+}
+
+/** A landed load: its source (or failure) goes to V9, and the next `modules` step runs it. */
+pub(super) fn land(page: &mut Page, load: ScriptLoad, source: Option<String>) {
+    hand_over(page, load.url, source, load.classic);
+    page.scripting.modules.landed = true;
+}
+
+/** The source a load's answer delivers: a 200 with a JavaScript media type whose bytes match
+the integrity metadata. Anything else (opaque, failed, refused) is None, so the element fires
+`error`, as a browser's does. */
+pub(super) fn loaded_source(load: &ScriptLoad, answer: ScriptAnswer) -> Option<String> {
+    let ScriptAnswer::Readable(response, _) = answer else {
+        return None;
+    };
+    let verified = load
+        .integrity
+        .as_deref()
+        .is_none_or(|metadata| super::integrity::matches(metadata, response.source.as_bytes()));
+    let javascript = mars_core::http::is_javascript_mime_essence(&response.mime);
+    (response.status == 200 && javascript && verified).then_some(response.source)
+}
+
+/** A load's first hop, or the source it has without the network (a `data:` URL, a refusal).
+The request is boxed so the small variant stays small. */
+enum Hop {
+    Fetch(Box<ScriptRequest>),
+    Source(Option<String>),
+}
+
+/** A module's hop: CORS mode, same-origin credentials, admitted by every policy. */
+fn module_hop(page: &Page, base: &Url, url: &str) -> Hop {
+    let Ok(url) = Url::parse(url) else {
+        return Hop::Source(None);
+    };
+    if !csp_allows(&page.document.csp, base, &url) {
+        return Hop::Source(None);
+    }
+    if url.scheme() == "data" {
+        // A data: module is same-origin-clean and needs no network (old.reddit's bootstraps).
+        return Hop::Source(super::navigation::data_script(url.as_str()));
+    }
+    if !["http", "https"].contains(&url.scheme()) {
+        return Hop::Source(None);
+    }
+    Hop::Fetch(Box::new(script_request(
+        url,
+        cors::Mode::Cors,
+        Credentials::SameOrigin,
+    )))
+}
+
+/** A classic script's hop: no-cors with cookies unless `crossorigin` asks for CORS. */
+fn classic_hop(page: &Page, base: &Url, request: &ScriptLoadRequest) -> Hop {
+    let Some(url) = classic_script_url(page, base, request) else {
+        return Hop::Source(None);
+    };
+    if url.scheme() == "data" {
+        return Hop::Source(super::navigation::data_script(url.as_str()));
+    }
+    let (mode, credentials) = match request.cross_origin.as_deref() {
+        Some("use-credentials") => (cors::Mode::Cors, Credentials::Include),
+        Some(_) => (cors::Mode::Cors, Credentials::SameOrigin),
+        None => (cors::Mode::NoCors, Credentials::Include),
+    };
+    Hop::Fetch(Box::new(script_request(url, mode, credentials)))
+}
+
+/** A GET for a script, as the sync module fetch built it. */
+fn script_request(url: Url, mode: cors::Mode, credentials: Credentials) -> ScriptRequest {
+    ScriptRequest {
+        request_id: None,
+        raw_response: false,
+        worker_policy: None,
+        url,
+        method: Method::Get,
+        body: Vec::new(),
+        headers: Vec::new(),
+        mode,
+        credentials,
+    }
+}
+
+/** The page URL every load resolves against. */
+fn page_base(page: &Page) -> EngineResult<Url> {
+    Url::parse(&page.url).map_err(|_| EngineError::invalid("Invalid page URL."))
 }
 
 /**
@@ -329,15 +371,17 @@ fn hand_over(page: &mut Page, url: String, source: Option<String>, classic: bool
     super::scripting::record_console(&mut page.scripting, vec![entry], 0);
 }
 
-/** The first hop `fetch_for_script` sends for a module, so a batch prefetch can answer it. */
-fn module_request(base: &Url, url: &Url) -> WebRequest {
-    let cross = url.origin() != base.origin();
-    WebRequest {
-        destination: Destination::Empty,
-        origin: cross.then(|| base.origin().ascii_serialization()),
-        mode: Some(cors::Mode::Cors),
-        ..WebRequest::get(url.as_str())
-    }
+/** Prefetch and final delivery share admission, so blocked scripts never start a speculative hop. */
+fn classic_script_url(page: &Page, base: &Url, request: &ScriptLoadRequest) -> Option<Url> {
+    let url = Url::parse(&request.url).ok()?;
+    let candidate = super::csp::Candidate {
+        url: Some(&url),
+        nonce: request.nonce.as_deref(),
+        source: "",
+    };
+    (["http", "https", "data"].contains(&url.scheme())
+        && super::csp::allows(&page.document.csp, base, &candidate))
+    .then_some(url)
 }
 
 /** Every policy admits the module: by its URL, or because the policy trusts what trusted
@@ -352,10 +396,4 @@ fn csp_allows(policies: &[String], base: &Url, url: &Url) -> bool {
         policy.to_ascii_lowercase().contains("'strict-dynamic'")
             || super::csp::allows(std::slice::from_ref(policy), base, &candidate)
     })
-}
-
-/** Authority, ownership and engine-service failures stop the operation. */
-fn stops(error: &EngineError) -> bool {
-    error.service.is_some()
-        || ["permission_denied", "control_denied"].contains(&error.code.as_str())
 }

@@ -98,6 +98,8 @@ pub(in crate::v9) mod symbol {
 pub(in crate::v9) struct Ids {
     pub object_prototype: ObjectId,
     pub function_prototype: ObjectId,
+    /** The intrinsic call forwarder is identified independently of mutable function properties. */
+    pub function_call: ObjectId,
     pub array_prototype: ObjectId,
     /** Canonical Array constructor for cross-realm ArraySpeciesCreate, immune to property edits. */
     pub array: ObjectId,

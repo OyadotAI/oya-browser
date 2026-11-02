@@ -640,19 +640,7 @@ impl Registry {
         offset: usize,
         parse: impl FnOnce() -> EngineResult<Program>,
     ) -> EngineResult<Arc<Code>> {
-        let key = cache::at(&text, offset);
-        let unit = match cache::get(&key) {
-            Some(unit) => unit,
-            None => {
-                let unit = match cache::elsewhere(&text) {
-                    Some((at, unit)) => Arc::new(unit.rebased(offset as i64 - at as i64)),
-                    None => compile_script(&parse()?, Some((source, offset)))?,
-                };
-                cache::put(key, unit.clone());
-                cache::remember(text, offset, key);
-                unit
-            }
-        };
+        let unit = cached_unit(text, source, offset, parse)?;
         self.adopt(&unit)?;
         Ok(unit.entry.clone())
     }
@@ -873,6 +861,42 @@ fn is_same_source(code: &Code, source: &str, offset: usize, scopes: Option<&str>
             .is_some_and(|(text, at)| *at == offset && **text == *source)
 }
 
+/**
+ * The process cache's unit for `source` as a classic script at `offset`: the one a request
+ * compiled there before, a copy compiled at another offset rebased, or else `parse` compiled
+ * and kept. Free of any registry, so a page load can fill the cache from a side thread while
+ * its stylesheets and images are still resolved, and the load step only adopts.
+ */
+fn cached_unit(
+    text: cache::Key,
+    source: &str,
+    offset: usize,
+    parse: impl FnOnce() -> EngineResult<Program>,
+) -> EngineResult<Arc<cache::Unit>> {
+    let key = cache::at(&text, offset);
+    if let Some(unit) = cache::get(&key) {
+        return Ok(unit);
+    }
+    let unit = match cache::elsewhere(&text) {
+        Some((at, unit)) => Arc::new(unit.rebased(offset as i64 - at as i64)),
+        None => compile_script(&parse()?, Some((source, offset)))?,
+    };
+    cache::put(key, unit.clone());
+    cache::remember(text, offset, key);
+    Ok(unit)
+}
+
+/** Fill the process cache with `source` compiled as a classic script at `offset`, for a page
+load that compiles ahead of its load step; the unit itself stays this module's. */
+pub(in crate::v9) fn precompile(
+    text: cache::Key,
+    source: &str,
+    offset: usize,
+    parse: impl FnOnce() -> EngineResult<Program>,
+) -> EngineResult<()> {
+    cached_unit(text, source, offset, parse).map(|_| ())
+}
+
 /** Compile a classic script and its nested functions into one shareable unit. */
 fn compile_script(
     program: &Program,
@@ -972,6 +996,8 @@ struct Scope {
     index: std::collections::HashMap<Name, usize>,
     /// Whether this scope has a runtime environment record.
     env: bool,
+    /// Known nested references restrict function environments; dynamic scopes retain every binding.
+    captured: Option<Arc<std::collections::HashSet<Name>>>,
     /// Slots allocated in that environment.
     slots: Slot,
     /// First scope of a function: lookups crossing it leave the function.
@@ -1067,6 +1093,8 @@ struct Compiler {
     checked: bool,
     /// Compile every function now, as the deferred-compile oracle test does.
     eager: bool,
+    /// Shared dependency analysis survives deferred compilation without repeating whole syntax walks.
+    captures: scan::CaptureCache,
 }
 
 /** Most registers any one function may use. */
@@ -1172,6 +1200,7 @@ impl Compiler {
             bindings: Vec::new(),
             index: std::collections::HashMap::default(),
             env,
+            captured: None,
             slots: 0,
             boundary,
             global: false,
@@ -1188,7 +1217,13 @@ impl Compiler {
         }
         let place = if scope.global {
             Place::Global
-        } else if scope.env {
+        } else if scope.env
+            && ((declared == Declared::Hidden && &**name != "this")
+                || scope
+                    .captured
+                    .as_ref()
+                    .is_none_or(|captured| captured.contains(name)))
+        {
             let slot = scope.slots;
             scope.slots = scope
                 .slots
@@ -1284,6 +1319,7 @@ impl Compiler {
             bindings: Vec::new(),
             index: std::collections::HashMap::default(),
             env: false,
+            captured: None,
             slots: 0,
             boundary: true,
             global: true,

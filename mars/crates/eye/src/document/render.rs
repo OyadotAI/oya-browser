@@ -1,5 +1,7 @@
-mod bfc_fit;
 /** Oya owns point-based block flow, wrapping and control placement. */
+mod agent_visibility;
+pub use agent_visibility::agent_hidden_nodes;
+mod bfc_fit;
 mod bidi;
 mod block_in_inline;
 mod blur;

@@ -177,15 +177,17 @@ fn parse_script_deadline(raw: Option<&str>) -> Duration {
         .map_or(SCRIPT_DEADLINE_DEFAULT, Duration::from_millis)
 }
 
-/// A heap count this close to its bound (numerator over denominator) collects before the bounds
-/// are checked: counts only overestimate between collections, so a state is refused for being
-/// over a bound only once garbage is out of the count. Below it the running counts stand: a
-/// large app's requests (YouTube keeps half a million objects) skip every walk over the heap.
-pub const NEAR_BOUNDS_FRACTION: (usize, usize) = (19, 20);
+/// Sites whose media may autoplay unmuted before any click, as Chrome's shipped media
+/// engagement list lets youtube.com play a typed watch URL in a fresh profile; a host matches
+/// exactly or as a subdomain. Everywhere else the autoplay policy needs a trusted click or key.
+pub const AUTOPLAY_SEEDED_HOSTS: [&str; 1] = ["youtube.com"];
 /// Heap entries a page may add between end-of-request collections before one runs again.
 pub const GC_GROWTH_MIN: usize = 1_000;
-/// Or this fraction of the entries alive after the last collection, whichever is larger.
-pub const GC_GROWTH_DIVISOR: usize = 4;
+/// Or the entries alive after the last collection divided by this, whichever is larger: at 1
+/// the heap doubles between collections, as V8 lets a growing heap do. At 4 YouTube spent a
+/// tenth of its script time in collections that each marked the same hundred thousand live
+/// objects again; the bounds still collect a heap that reaches them.
+pub const GC_GROWTH_DIVISOR: usize = 1;
 /// Real time one timer run may spend before it leaves the rest of its due callbacks for the
 /// next run, as a browser does on a busy main thread: a page with many timers (YouTube) would
 /// otherwise run all of them in one uninterruptible step while the person's click waits.
@@ -375,11 +377,11 @@ pub const FUNCTION_PARAMETERS: usize = u16::MAX as usize - 10;
 /// Five large libraries together hold 680 live environments. Every live closure may hold its
 /// own captured environment, so this is at least VM_FUNCTIONS.
 pub const VM_ENVIRONMENTS: usize = VM_FUNCTIONS;
-/// Closures are records rather than serialized executable callbacks. Five large libraries
-/// together hold 2458 live functions, but YouTube's app keeps over 65536 alive once it renders
-/// (one per module-level function, then one per bound handler of every stamped component); kept
-/// at the old object bound, since environments and bindings scale with it.
-pub const VM_FUNCTIONS: usize = 262_144;
+/// Live closures include per-component accessors and reactive callbacks. YouTube's search-to-watch
+/// flow reaches the old 262144 ceiling with live components: 43566 callbacks at its three busiest
+/// sites belonged to 397 connected elements. Keep room for the player while retaining independent
+/// object, property, string and committed-state bounds.
+pub const VM_FUNCTIONS: usize = 524_288;
 /// Function literals one page's sources may contain, fetched scripts included; YouTube's app
 /// bundle and the chunks it loads declare tens of thousands.
 pub const VM_CODE_SITES: usize = 131_072;

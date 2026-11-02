@@ -10,6 +10,8 @@
  */
 (function installIndexedDB(global, host) {
   'use strict';
+  // Shell contexts have no event targets, so they cannot expose the event-based database API.
+  if (typeof global.EventTarget !== 'function') return;
 
   /** Primordials captured now, so page code that replaces them cannot change IndexedDB. */
   const ObjectCreate = Object.create;
@@ -19,7 +21,6 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const objectKeys = Object.keys;
   const hasOwn = Object.prototype.hasOwnProperty;
-  const objectToString = Object.prototype.toString;
   const apply = Reflect.apply;
   const construct = Reflect.construct;
   const isArray = Array.isArray;

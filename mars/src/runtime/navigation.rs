@@ -463,6 +463,31 @@ impl Runtime {
             deadline,
         )?;
         let mut gaps = Gaps::default();
+        // Scripts resolve as soon as the batch lands, so V9 compiles them while the page is
+        // styled rather than after; see `precompile`.
+        let resolved = self.resolve_scripts(
+            script_resources,
+            &acquired.response.url,
+            &document.csp,
+            deadline,
+            &mut gaps,
+        )?;
+        perf::record("page.fetch_scripts", phase, || {
+            let bytes: usize = resolved.iter().map(|script| script.source.len()).sum();
+            format!("{}\t{bytes}", resolved.len())
+        });
+        let scripts: std::sync::Arc<Vec<String>> = std::sync::Arc::new(
+            resolved
+                .iter()
+                .map(|script| script.source.clone())
+                .collect(),
+        );
+        let classic: Vec<bool> = resolved
+            .iter()
+            .map(|script| !script.refused && script.module.is_none())
+            .collect();
+        let precompile = super::precompile::Precompile::start(scripts.clone(), &classic);
+        phase = Instant::now();
         let sheets = self.stylesheets(&document, &acquired.response.url, deadline, &mut gaps)?;
         perf::record("page.fetch_styles", phase, || {
             sheets.iter().map(String::len).sum::<usize>().to_string()
@@ -474,14 +499,18 @@ impl Runtime {
         let all = crate::constants::IMAGE_COUNT;
         self.prefetch_images(&document, &acquired.response.url, deadline, &|_| true, all)?;
         let fonts = document.formatting.fonts.len();
+        perf::record("page.prefetch_images", phase, String::new);
+        phase = Instant::now();
         let images =
             self.resolve_images(&mut document, &acquired.response.url, deadline, &mut gaps)?;
+        perf::record("page.images", phase, || images.len().to_string());
+        phase = Instant::now();
         // `ch` and `ic` resolved against fallback faces before the web fonts arrived; Blink
         // restyles font-relative lengths when a font loads, so the page styles once more.
         if document.formatting.font_metrics && document.formatting.fonts.len() > fonts {
             document = self.styled(std::sync::Arc::new(document), &sheets, self.render_context)?;
+            perf::record("page.font_restyle", phase, String::new);
         }
-        perf::record("page.images", phase, || images.len().to_string());
         phase = Instant::now();
         let mut images = images;
         let mut frame_tree = self.initial_frame_tree(&document)?;
@@ -495,18 +524,6 @@ impl Runtime {
             }
         };
         perf::record("page.frames", phase, || frames.len().to_string());
-        phase = Instant::now();
-        let resolved = self.resolve_scripts(
-            script_resources,
-            &acquired.response.url,
-            &document.csp,
-            deadline,
-            &mut gaps,
-        )?;
-        perf::record("page.fetch_scripts", phase, || {
-            let bytes: usize = resolved.iter().map(|script| script.source.len()).sum();
-            format!("{}\t{bytes}", resolved.len())
-        });
         let origin = canonical_origin(&acquired.response.url)?;
         let base_storage = self.storage_for(&origin)?;
         let generation = self
@@ -568,12 +585,7 @@ impl Runtime {
             revision: 1,
             document: std::sync::Arc::new(document),
             source_bytes: acquired.response.source.len(),
-            scripts: std::sync::Arc::new(
-                resolved
-                    .iter()
-                    .map(|script| script.source.clone())
-                    .collect(),
-            ),
+            scripts,
             resolved_stylesheets: std::sync::Arc::new(sheets),
             local_sheets: (0, 0),
             top_level_url: embedding
@@ -636,6 +648,7 @@ impl Runtime {
             self.first_paint(&page);
             perf::record("page.first_paint", phase, String::new);
         }
+        precompile.finish();
         page.scripting.loading = true;
         let restyle = self.run_scripts(&mut page, &resolved, deadline, &mut gaps, settle);
         page.scripting.loading = false;
@@ -713,8 +726,9 @@ impl Runtime {
         for event in ["dom_content_loaded", "load"] {
             if event == "load" {
                 page.scripting.load_pending = true;
-                changed |= self.settle_images_before_load(page, deadline)?;
-                if !page.scripting.image_loading.pending.is_empty() {
+                changed |= self.settle_resources_before_load(page, deadline)?;
+                if !page.scripting.image_loading.pending.is_empty() || super::modules::loading(page)
+                {
                     break;
                 }
                 page.scripting.load_pending = false;

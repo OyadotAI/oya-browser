@@ -33,7 +33,7 @@ pub(super) fn open(
         .first_line
         .as_ref()
         .filter(|line| fonts_differ(&node.style, line))
-        .map(|line| (Box::new(node.style.clone()), line.clone()));
+        .map(|line| (Box::new((*node.style).clone()), line.clone()));
     let inherited = saved.clone().filter(|_| !fresh && outer_open);
     context.first_line = own.or(inherited);
     Scope { saved, fresh }
@@ -52,7 +52,7 @@ pub(super) fn styled(context: &LayoutContext<'_>, node: &Node, flow: &Flow) -> O
         return None;
     }
     let mut styled = node.clone();
-    styled.style = merged(block, line, &node.style, inherits(node));
+    styled.style = merged(block, line, &node.style, inherits(node)).into();
     Some(styled)
 }
 

@@ -72,8 +72,8 @@ pub use platform::{MediaEvaluator, MediaViewport, set_media_evaluator};
 pub use value::{BigInteger, CodePointCursor, JsString, JsValue};
 
 use crate::constants::{
-    NEAR_BOUNDS_FRACTION, SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES,
-    STORAGE_ENTRIES, STORAGE_VALUE_BYTES, TEXT_BYTES, script_deadline,
+    SCRIPT_BYTES, SCRIPT_COUNT, SCRIPT_TOTAL_BYTES, STORAGE_AREA_BYTES, STORAGE_ENTRIES,
+    STORAGE_VALUE_BYTES, TEXT_BYTES, script_deadline,
 };
 use crate::document::{
     DomChange, FragmentParser, ScriptChange, ScriptDocument, ScriptNode, TextChange,
@@ -81,6 +81,9 @@ use crate::document::{
 use crate::protocol::{EngineError, EngineResult, SourceLocation};
 use compile::{Code, Registry};
 use serde::{Deserialize, Serialize};
+mod execution_thread;
+pub use execution_thread::spawn_execution_thread;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use vm::data::{Class, HostData, Job};
@@ -505,6 +508,21 @@ impl VmState {
     pub fn globals(&self) -> &Globals {
         &self.globals
     }
+
+    /** Object, function, environment and binding charges, without walking or encoding the heap.
+    Counts are exact after collection and conservative between collections. */
+    pub fn allocation_counts(&self) -> [usize; 4] {
+        let counts = self.heap.counts;
+        let bindings = counts.bindings + self.globals.len();
+        #[cfg(feature = "conformance")]
+        let bindings = bindings + self.realms.bindings();
+        [
+            counts.objects,
+            counts.functions,
+            counts.environments,
+            bindings,
+        ]
+    }
     /// A state holding only lexical globals (used by tests and legacy callers).
     pub fn from_globals(globals: Globals) -> Self {
         Self {
@@ -819,9 +837,13 @@ impl VmState {
         if self
             .heap
             .objects
-            .keys()
-            .any(|id| *id >= self.heap.next_object && *id < vm::heap::INTRINSIC_BASE)
-            || self.heap.envs.keys().any(|id| *id >= self.heap.next_env)
+            .first_key_at_or_after(self.heap.next_object)
+            .is_some_and(|id| id < vm::heap::INTRINSIC_BASE)
+            || self
+                .heap
+                .envs
+                .first_key_at_or_after(self.heap.next_env)
+                .is_some()
         {
             return Err(EngineError::invalid("Invalid V9 heap identities."));
         }
@@ -1025,6 +1047,18 @@ pub fn source_key(source: &str) -> SourceKey {
     compile::source_key(source)
 }
 
+/// Compile a classic page script into the process code cache before its page's load step asks
+/// for it, so the load only adopts and runs the code. On YouTube, parsing 12 MB of script was
+/// 0.4 s of the load step that the stylesheet and image phases before it could have hidden.
+/// Runs inline on an execution thread, else on a scoped thread with the parser's stack. A
+/// script that does not parse is not cached; the load step reports it as before.
+pub fn precompile_script(source: &str, offset: usize) -> EngineResult<()> {
+    on_v9_stack(|| {
+        let text = compile::source_key(source);
+        compile::precompile(text, source, offset, || parse_at(source, offset, None))
+    })
+}
+
 /// The key under which a module source's compiled code is cached, from `classic` telling a
 /// classic script delivered for a page element (keyed as `source_key`) from a module.
 pub fn module_source_key(source: &str, classic: bool) -> SourceKey {
@@ -1138,20 +1172,9 @@ pub enum PageEvent {
     },
 }
 
-/**
- * Parsing and evaluation recurse along the syntax tree, so every entry point runs on its own
- * thread with V9_STACK_BYTES of stack. A panic stays on that thread and becomes an error.
- */
+/** Persistent engine executors already own V9's stack; standalone calls acquire one per request. */
 fn on_v9_stack<T: Send>(work: impl FnOnce() -> EngineResult<T> + Send) -> EngineResult<T> {
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .name("v9".into())
-            .stack_size(crate::constants::V9_STACK_BYTES)
-            .spawn_scoped(scope, work)
-            .map_err(|_| EngineError::unsupported("V9 could not start its execution thread."))?
-            .join()
-            .unwrap_or_else(|_| Err(EngineError::invalid("V9 stopped on an internal error.")))
-    })
+    execution_thread::run(work)
 }
 
 /** Tokenize and parse one source whose bytes start at `offset` of the page. */
@@ -1724,20 +1747,22 @@ fn restore(vm: &mut Vm, saved: Snapshot) {
     vm.pinning = false;
 }
 
-/** Whether any count has reached three quarters of its bound. Counts are exact when a request
-starts (every one ends collected or recounted), so this only collects garbage before a script
-could run into a bound mid-request; at half, YouTube's 525,000 live properties of 1,048,576
-collected on every request. */
-fn near_bounds(counts: &vm::heap::Counts, limits: &Limits) -> bool {
-    past_fraction(counts, limits, NEAR_BOUNDS_FRACTION)
-}
-
-/** Whether any count has reached `numerator / denominator` of its bound. */
-fn past_fraction(
-    counts: &vm::heap::Counts,
-    limits: &Limits,
-    (numerator, denominator): (usize, usize),
-) -> bool {
+/** Recount at an actual bound; a large stable heap must not trigger collection after every task. */
+fn at_bounds(vm: &Vm<'_>) -> bool {
+    let mut counts = vm.heap.counts;
+    let limits = &vm.limits;
+    counts.bindings += vm.globals.len();
+    counts.units += vm
+        .globals
+        .values()
+        .filter_map(|binding| binding.value.as_ref())
+        .map(JsValue::string_units)
+        .sum::<usize>();
+    #[cfg(feature = "conformance")]
+    {
+        counts.units += vm.page.state.cpu_profile.units() + vm.realms.units();
+        counts.bindings += vm.realms.bindings();
+    }
     [
         (counts.objects, limits.objects),
         (counts.functions, limits.functions),
@@ -1747,7 +1772,7 @@ fn past_fraction(
         (counts.bindings, limits.bindings),
     ]
     .iter()
-    .any(|(count, limit)| count.saturating_mul(denominator) >= limit.saturating_mul(numerator))
+    .any(|(count, limit)| count >= limit)
 }
 
 /** Collect, validate and package the request's outcome. */
@@ -1767,12 +1792,16 @@ fn finish(mut vm: Vm) -> EngineResult<Execution> {
     vm.pins.clear();
     #[cfg(feature = "conformance")]
     vm.prune_number_constants();
-    // Counts only overestimate between collections, so a heap near any bound is collected
+    // Counts only overestimate between collections, so a heap reaching any bound is collected
     // (and counted exactly) before its bounds are checked. Elsewhere the running counts stand:
     // a bound reached mid-script collects there (`collect_if_needed`), so an overestimate
     // carried into the next request can only cause a collection, never a refusal.
-    if vm.heap.grew_since_collection() || near_bounds(&vm.heap.counts, &vm.limits) {
-        vm.collect_snapshot().map_err(fatal)?;
+    if vm.heap.grew_since_collection() || at_bounds(&vm) {
+        if vm.page.environment.live_gc {
+            vm.collect_now().map_err(fatal)?;
+        } else {
+            vm.collect_snapshot().map_err(fatal)?;
+        }
     }
     #[cfg(feature = "conformance")]
     vm.save_interned_strings();
@@ -2975,7 +3004,7 @@ fn _host(_: HostData, _: Class, _: SourceLocation) {}
 #[cfg(test)]
 mod near_bounds_collection_tests {
     //! A heap at 95% of an object bound collects at the end of its step, so garbage the page
-    //! made is not counted toward a refusal (`near_bounds` in `finish`).
+    //! made is not counted toward a refusal; later steps collect only when growth warrants it.
     use super::*;
 
     /** Objects a page keeps alive for the whole test. */
@@ -2986,6 +3015,50 @@ mod near_bounds_collection_tests {
     const GARBAGE: usize = 500;
     /** Entries a step may add beyond the survivors' own, for its bookkeeping. */
     const SLACK: usize = 64;
+
+    /** Small allocations near a bound do not repeatedly traverse a stable page's entire heap. */
+    #[test]
+    fn a_stable_heap_near_a_bound_waits_for_allocation_pressure() {
+        let sources = ["setInterval(()=>{(()=>1)()},1);".to_owned()];
+        let host = DocumentHost {
+            imports: None,
+            canvas: &mars_core::canvas::Unavailable,
+            languages: &[],
+            fragments: &SimpleFragmentParser,
+        };
+        let environment = PageEnvironment {
+            live_gc: true,
+            ..PageEnvironment::default()
+        };
+        let input = || PageInput {
+            sources: &sources,
+            source_keys: &[],
+            module_keys: &[],
+            document: ScriptDocument {
+                identity: "gc-cadence".into(),
+                nodes: Vec::new(),
+                charset: "UTF-8".into(),
+            },
+            storage: StorageState::default(),
+            host: &host,
+            environment: &environment,
+            modules: ModuleInput::NONE,
+        };
+        let initial = load_page(input()).unwrap();
+        let due = initial.effects.next_timer_ms.unwrap();
+        let before = initial.state.heap.counts.functions;
+        let limits = Limits {
+            functions: before + SLACK / 2,
+            ..Limits::default()
+        };
+        let after =
+            on_v9_stack(|| run_timers_with(input(), initial.state, due, 1, limits)).unwrap();
+        assert!(
+            after.state.heap.counts.functions > before,
+            "a small task collected the stable heap merely because it was near a bound: {before} -> {}",
+            after.state.heap.counts.functions
+        );
+    }
 
     /** Load a page that keeps `SURVIVORS` objects and drops `garbage` more; the entries its
     heap holds at the end of the step. */

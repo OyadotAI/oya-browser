@@ -8,6 +8,38 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
+
+- Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.
+
+- Forwarded Mars script functions through the running interpreter loop when invoked with the intrinsic `Function.prototype.call`, avoiding nested native interpreter entry. Increased the live function allowance to accommodate YouTube's connected components and player while retaining resource bounds.
+
+- Reduced Mars closure retention by keeping uncaptured function locals in activation registers. Nested lexical dependencies still share environment slots, with memoized analysis across lazy compilation and conservative handling of direct eval, mapped arguments and modules.
+
+- Made Mars native task checkpoints collect dead weak-key cycles under allocation or bound pressure, while saved-state replay retains snapshot semantics. Mutation observers now follow target reachability instead of retaining discarded target/callback cycles, deliver document-subtree changes and respect shadow boundaries. Resident task restoration uses maintained proxy presence and indexed identity checks.
+
+- Fixed Mars retaining every upgraded custom element as a permanent JavaScript root. Discarded elements can now release their closures; connected elements and script-referenced detached elements preserve their upgraded identity.
+
+- Shared Mars computed styles across document snapshots and unchanged cascades, reducing node movement and copy costs while isolating edits through copy-on-write. The document wire format stays unchanged. Layout fallback checks now index direct children once and only copy documents that need a fallback.
+
+- Reused Mars's V9 execution thread across in-process script tasks, retaining thread-local object-shape caches and each task's panic boundary.
+
+- Made Mars forced-layout mutation replay incremental: successful reads seal the journal prefix, subsequent reads apply its suffix, and commits reuse the latest validated document. Removed identities and whole-journal limits remain enforced across reads.
+
+- Indexed Mars's batch label ancestry and agent visibility lookups, removing repeated linear scans of reordered page nodes during presentation and inspection.
+
+- Fixed stale synchronous layout reuse after coalesced DOM attribute writes in Mars. Forced layouts now use the latest edits, and final writes no longer trigger a false script/document structure disagreement.
+
+- Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
+
+- Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
+
+- Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
+
+- Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
+
+- Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
+
 - Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
 
 - Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.

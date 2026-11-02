@@ -202,6 +202,7 @@ pub(in crate::v9) fn mark_aborted(vm: &mut Vm, signal: ObjectId, value: JsValue)
         vm.pin(JsValue::Object(*id));
     }
     prune_aborted_listeners(&mut vm.page.state, &vm.heap);
+    super::body_stream::abort_streams(vm)?;
     for id in signals {
         cancel_pending(vm, id, &reason)?;
         super::super::fire(vm, Target::Object(id), "abort", false)?;

@@ -2,6 +2,8 @@
 use super::super::syntax::*;
 use std::collections::HashSet;
 use std::sync::Arc;
+mod captures;
+pub(super) use captures::Cache as CaptureCache;
 
 /** What a function body (including nested arrows) refers to. */
 #[derive(Default, Clone, Copy)]
@@ -17,9 +19,12 @@ pub(super) struct Uses {
 }
 
 /** A walker; `into_arrows` follows `this`-sharing arrows, never ordinary functions. */
+#[derive(Default)]
 struct Walker {
     uses: Uses,
     into_arrows: bool,
+    /** Capture analysis shares syntax traversal while ordinary use scans keep their existing boundary. */
+    capture: Option<captures::Walk>,
 }
 
 impl Walker {
@@ -137,17 +142,31 @@ impl Walker {
     /** A nested function: always a closure; arrows share `this` and `arguments`. */
     fn func(&mut self, func: &Arc<Func>) {
         self.uses.closure = true;
+        if let Some(capture) = &mut self.capture {
+            capture.nested(func);
+            return;
+        }
         if func.flags.arrow && self.into_arrows {
-            for param in &func.params {
-                self.pattern(param);
-            }
-            if let Some(rest) = &func.rest {
-                self.pattern(rest);
-            }
-            match &func.body {
-                Body::Block(body) => self.stmts(body),
-                Body::Expr(value) => self.expr(value),
-            }
+            self.function_contents(func);
+        }
+    }
+    /** Parameters and body share the same visitor in use and capture analysis. */
+    fn function_contents(&mut self, func: &Func) {
+        for param in &func.params {
+            self.pattern(param);
+        }
+        if let Some(rest) = &func.rest {
+            self.pattern(rest);
+        }
+        match &func.body {
+            Body::Block(body) => self.stmts(body),
+            Body::Expr(value) => self.expr(value),
+        }
+    }
+    /** Plain identifier references contribute to the function's lexical dependencies. */
+    fn capture_name(&mut self, name: &Name) {
+        if let Some(capture) = &mut self.capture {
+            capture.name(name);
         }
     }
     /** A class: its heritage and computed keys run in the enclosing context. */
@@ -162,6 +181,20 @@ impl Walker {
         for key in super::class_fields::keys(class) {
             self.expr(key);
         }
+        if self.capture.is_some() {
+            self.func(&class.constructor);
+            for func in [&class.fields, &class.statics].into_iter().flatten() {
+                self.func(func);
+            }
+            for member in &class.members {
+                match &member.kind {
+                    MemberKind::Method(func)
+                    | MemberKind::Getter(func)
+                    | MemberKind::Setter(func) => self.func(func),
+                    MemberKind::AutoAccessor(_) => {}
+                }
+            }
+        }
     }
     /** Computed keys are expressions. */
     fn key(&mut self, key: &PropKey) {
@@ -172,7 +205,7 @@ impl Walker {
     /** Destructuring defaults and computed keys are expressions. */
     fn pattern(&mut self, pattern: &Pattern) {
         match pattern {
-            Pattern::Ident(..) => {}
+            Pattern::Ident(name, _) => self.capture_name(name),
             Pattern::Expr(value) => self.expr(value),
             Pattern::Object(props, rest, _) => {
                 for prop in props {
@@ -210,13 +243,22 @@ impl Walker {
     fn expr(&mut self, expr: &Expr) {
         match &expr.kind {
             ExprKind::Ident(name) => {
+                self.capture_name(name);
                 if &**name == "arguments" {
                     self.uses.arguments = true;
                 }
             }
-            ExprKind::This => self.uses.this = true,
-            ExprKind::NewTarget => self.uses.new_target = true,
+            ExprKind::This => {
+                self.uses.this = true;
+                self.capture_name(&Name::from("this"));
+            }
+            ExprKind::NewTarget => {
+                self.uses.new_target = true;
+                self.capture_name(&Name::from("new.target"));
+            }
             ExprKind::Super => {
+                self.capture_name(&Name::from("this"));
+                self.capture_name(&Name::from("%home"));
                 self.uses.home = true;
                 self.uses.this = true;
             }
@@ -240,11 +282,15 @@ impl Walker {
                             self.expr(value);
                         }
                         PropDef::Shorthand(name, _) => {
+                            self.capture_name(name);
                             if &**name == "arguments" {
                                 self.uses.arguments = true;
                             }
                         }
-                        PropDef::ShorthandDefault(_, _, value) => self.expr(value),
+                        PropDef::ShorthandDefault(name, _, value) => {
+                            self.capture_name(name);
+                            self.expr(value);
+                        }
                         PropDef::Method(key, func)
                         | PropDef::Getter(key, func)
                         | PropDef::Setter(key, func) => {
@@ -283,6 +329,9 @@ impl Walker {
                 if matches!(&expr.kind, ExprKind::Call(..))
                     && matches!(&callee.kind, ExprKind::Ident(name) if &**name == "eval")
                 {
+                    if let Some(capture) = &mut self.capture {
+                        capture.dynamic = true;
+                    }
                     // Direct eval reads any binding, `this`, `arguments`, `new.target` and
                     // `super`, so every scope it can see lives in an environment.
                     self.uses = Uses {
@@ -340,6 +389,7 @@ pub(super) fn function_uses(func: &Func) -> Uses {
     let mut walker = Walker {
         uses: Uses::default(),
         into_arrows: true,
+        ..Walker::default()
     };
     for param in &func.params {
         walker.pattern(param);
@@ -359,6 +409,7 @@ pub(super) fn has_closure(body: &[Stmt]) -> bool {
     let mut walker = Walker {
         uses: Uses::default(),
         into_arrows: false,
+        ..Walker::default()
     };
     walker.stmts(body);
     walker.uses.closure
@@ -656,6 +707,7 @@ pub(super) fn pattern_has_closure(pattern: &Pattern) -> bool {
     let mut walker = Walker {
         uses: Uses::default(),
         into_arrows: false,
+        ..Walker::default()
     };
     walker.pattern(pattern);
     walker.uses.closure

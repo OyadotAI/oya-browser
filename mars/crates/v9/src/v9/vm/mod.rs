@@ -852,11 +852,7 @@ impl<'h> Vm<'h> {
             proxies: false,
             modules: super::modules::Modules::default(),
         };
-        vm.proxies = vm
-            .heap
-            .objects
-            .values()
-            .any(|object| matches!(object.class, Class::Proxy(_)));
+        vm.proxies = vm.heap.has_proxies;
         if vm.heap.get(GLOBAL).is_none() {
             let proto = if vm.page.environment.worker_name.is_some() {
                 realm::realm().ids.worker_prototype

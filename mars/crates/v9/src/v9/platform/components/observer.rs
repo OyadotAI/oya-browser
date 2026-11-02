@@ -7,7 +7,7 @@ use super::{Mutation, OBSERVATIONS, OBSERVER_RECORDS, Observation, get_slot, ids
 use crate::v9::platform::dom::{self, native_name, node_of, wrap};
 use crate::v9::value::{JsValue, ObjectId};
 use crate::v9::vm::data::{Class, Job};
-use crate::v9::vm::heap::{Key, Object};
+use crate::v9::vm::heap::{FastSet, Key, Object};
 use crate::v9::vm::{Call, Res, Thrown, Vm};
 
 /** `new MutationObserver(callback)`. */
@@ -158,7 +158,7 @@ pub(super) fn record(vm: &mut Vm, mutation: &Mutation) -> Res<()> {
     let Some((target, kind)) = subject(mutation) else {
         return Ok(());
     };
-    let ancestors = vm.page.ancestors(target);
+    let ancestors = observation_ancestors(vm, target);
     let mut interested: Vec<(ObjectId, bool)> = Vec::new();
     for observation in &vm.page.state.components.observations {
         let reaches = observation.target == target
@@ -192,6 +192,19 @@ pub(super) fn record(vm: &mut Vm, mutation: &Mutation) -> Res<()> {
         schedule(vm)?;
     }
     Ok(())
+}
+
+/** Observations include the owning document but cannot cross a shadow root into its host. */
+fn observation_ancestors(vm: &mut Vm, target: usize) -> FastSet<usize> {
+    let mut ancestors = FastSet::default();
+    let mut cursor = dom::traverse_parent(vm, target);
+    while let Some(node) = cursor {
+        if !ancestors.insert(node) {
+            break;
+        }
+        cursor = dom::traverse_parent(vm, node);
+    }
+    ancestors
 }
 
 /** One MutationRecord. */

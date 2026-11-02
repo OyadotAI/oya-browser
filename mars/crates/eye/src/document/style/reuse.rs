@@ -17,7 +17,7 @@
  * trees (flat-tree styling) and any changed global input fall back to the full cascade. The
  * previous cascade lives in a thread-local: Eye's engine thread runs every cascade of the page.
  */
-use super::ComputedStyle;
+use super::{ComputedStyle, SharedStyle};
 use crate::document::{Document, Node, RenderContext};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
@@ -28,7 +28,7 @@ use std::rc::Rc;
 const DESCENDANT_FEATURES: [&str; 4] = [":has(", ":focus-within", ":empty", ":blank"];
 
 /** A reusable result: the previous computed style, its custom properties, and whether it was reused. */
-type ReusedStyle = (ComputedStyle, BTreeMap<Rc<str>, Rc<str>>, bool);
+type ReusedStyle = (SharedStyle, BTreeMap<Rc<str>, Rc<str>>, bool);
 
 /** What decides whether a node's previous style still stands. */
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ struct Entry {
     /** What it was computed from. */
     key: Key,
     /** Its final computed style. */
-    style: ComputedStyle,
+    style: SharedStyle,
     /** Its custom properties, replayed into the scopes so descendants' `var()` resolve. */
     custom: BTreeMap<Rc<str>, Rc<str>>,
     /** Whether its top margin came from the UA sheet, for the quirks margin rule. */
@@ -138,10 +138,10 @@ impl Plan {
             return None;
         }
         let old_parent = match node.parent {
-            Some(parent) => &previous.entries.get(&parent)?.style,
+            Some(parent) => &*previous.entries.get(&parent)?.style,
             None => &previous.body,
         };
-        (old_parent == parent_style).then(|| {
+        (std::ptr::eq(old_parent, parent_style) || old_parent == parent_style).then(|| {
             (
                 entry.style.clone(),
                 entry.custom.clone(),
@@ -155,7 +155,7 @@ impl Plan {
         &mut self,
         node: &Node,
         index: usize,
-        style: &ComputedStyle,
+        style: &SharedStyle,
         custom: BTreeMap<Rc<str>, Rc<str>>,
         ua_margin_top: bool,
         reused: bool,

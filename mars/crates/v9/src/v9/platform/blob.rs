@@ -89,6 +89,11 @@ pub(super) fn blob_bytes(vm: &Vm, value: &JsValue) -> Option<Vec<u8>> {
     typed::source_bytes(vm, &read_slot(vm, value, "blobBytes")?)
 }
 
+/** Native storage dispatch checks the private brand without copying the Blob's payload. */
+pub(super) fn is_blob(vm: &Vm, value: &JsValue) -> bool {
+    read_slot(vm, value, "blobBytes").is_some()
+}
+
 /** A File's name and last-modified time. */
 pub(in crate::v9) type FileFacts = (JsValue, JsValue);
 /** A Blob's type and bytes, plus its File facts when it is a File. */

@@ -11,7 +11,7 @@ use url::Url;
 
 mod in_flight;
 mod request_diagnostics;
-pub(super) use in_flight::{InFlight, Progress};
+pub(super) use in_flight::{InFlight, Progress, ScriptLoad};
 use request_diagnostics::{FailureStage, RequestDiagnostic};
 
 /** What a redirect response does to an acquisition. */
@@ -219,9 +219,11 @@ impl Runtime {
     }
 }
 
-/// Requests one `network.fetch_batch` call carries: two rounds of Relay's batch workers, so a
-/// batch of the largest resources still fits one wire frame.
-pub(super) const FETCH_BATCH: usize = 2 * crate::network::network::constants::BATCH_WORKERS;
+/// Requests one `network.fetch_batch` call carries: eight rounds of Relay's batch workers, so a
+/// whole head of sheets and scripts (YouTube sends 13, airbnb 41) goes in one call rather than
+/// serial calls for the remainder, each a round trip after the last; the largest resources
+/// still fit one wire frame.
+pub(super) const FETCH_BATCH: usize = 8 * crate::network::network::constants::BATCH_WORKERS;
 
 /** The outcome of one batched request as the network service reports it. */
 #[derive(serde::Deserialize)]
@@ -309,6 +311,7 @@ impl Runtime {
             return Ok(());
         };
         let mut shaped: Vec<(String, WebRequest)> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
         for (mut request, initiator) in requests {
             let Ok(url) = crate::network::policy::web_url(&request.url) else {
                 continue;
@@ -321,7 +324,7 @@ impl Runtime {
             }
             self.shape_hop(&mut request, &url, Some(&initiator), false, true);
             let key = prefetch_key(&request);
-            if !self.prefetched.contains_key(&key) && !shaped.iter().any(|(k, _)| *k == key) {
+            if !self.prefetched.contains_key(&key) && seen.insert(key.clone()) {
                 shaped.push((key, request));
             }
         }

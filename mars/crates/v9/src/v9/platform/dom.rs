@@ -1122,7 +1122,7 @@ fn traverse_children(vm: &mut Vm, node: usize) -> Vec<usize> {
 }
 
 /** Parent for traversal: html's parent is the document. */
-fn traverse_parent(vm: &mut Vm, node: usize) -> Option<usize> {
+pub(super) fn traverse_parent(vm: &mut Vm, node: usize) -> Option<usize> {
     match node {
         DOCUMENT => None,
         HTML => Some(DOCUMENT),

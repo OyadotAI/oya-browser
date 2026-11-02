@@ -102,6 +102,7 @@ fn environment(base: &PageEnvironment, policy: &Policy, state: Value) -> PageEnv
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0.0, |since| since.as_secs_f64() * 1000.0),
         live_clock: true,
+        live_gc: true,
         random_seed: crate::runtime::scripting::random_seed(),
         timezone_offset_minutes: base.timezone_offset_minutes,
         timezone_transitions: base.timezone_transitions.clone(),

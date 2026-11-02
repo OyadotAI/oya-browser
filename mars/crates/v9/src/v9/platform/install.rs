@@ -287,6 +287,7 @@ pub(in crate::v9) fn install(b: &mut Builder) {
     singletons(b);
     global_object(b);
     super::workers::install(b);
+    super::media_metadata::install(b);
     super::chrome_shapes::install(b);
 }
 
@@ -783,6 +784,7 @@ fn network(b: &mut Builder) {
             "destination",
             "integrity",
             "keepalive",
+            "body",
             "bodyUsed",
             "signal",
         ],
@@ -816,6 +818,7 @@ fn network(b: &mut Builder) {
             "url",
             "redirected",
             "type",
+            "body",
             "bodyUsed",
             "headers",
         ],
