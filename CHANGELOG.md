@@ -12,6 +12,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Added
 
+- Fixed passkey account selection being refused in a human-controlled tab while an agent works elsewhere. Account selection follows its real window and requesting document, without cancelling for unrelated iframe or same-page navigation.
+
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
 
 - Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.
