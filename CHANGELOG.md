@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Security
+
+- Updated vulnerable runtime and development dependencies, including Electron and Mars's vendored Rustls. Retained the existing TLS ClientHello shaping and adapted legacy build tooling to the patched minimatch implementation.
+
 ### Added
 
 - Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
