@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.209](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.209) · 2026-11-03
+
 ### Added
 
 - Added a staff Keel tab for recently reporting installs, current reported license IDs, measured agent-hours and active projects, with daily coverage and explicit UTC windows. Legacy reports retain unavailable measurements rather than fabricated zeroes.
