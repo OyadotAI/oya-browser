@@ -11,7 +11,7 @@ index 3162721..14ca581 100644
        "webauth/virtual_authenticator.h",
        "webauth/virtual_authenticator_manager_impl.cc",
 diff --git a/content/browser/webauth/authenticator_common_impl.cc b/content/browser/webauth/authenticator_common_impl.cc
-index 2a61a29..4b5f57b 100644
+index 2a61a29..513f108 100644
 --- a/content/browser/webauth/authenticator_common_impl.cc
 +++ b/content/browser/webauth/authenticator_common_impl.cc
 @@ -42,6 +42,7 @@
@@ -75,7 +75,7 @@ index 2a61a29..4b5f57b 100644
 +    documents.clear();
 +    origins.clear();
 +    browser_context = nullptr;
-+    window = nullptr;
++    window = gfx::NativeWindow();
 +    if (retirement_callback)
 +      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
 +          FROM_HERE, std::move(retirement_callback));
