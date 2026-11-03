@@ -14,9 +14,11 @@ Use `diagnosing-bugs` for reported failures; preserve this role's verification-o
 
 Use scratch fixtures, separate ports, and synthetic data. Preserve the user's running app,
 sessions, work, and paid resources. Exercise the primary journey plus likely error, cancellation,
-disconnect, retry, duplicate, restart, and cleanup paths. Use Oya exclusively for browser work;
-read the Oya skill first. Use native tooling for native windows. A mocked browser rendering is
-limited visual evidence, not a native or end-to-end pass.
+disconnect, retry, duplicate, restart, and cleanup paths. For every UI change, try to exercise
+the affected journey in Oya Browser and inspect the rendered result; read the Oya skill first.
+Use Keel's Browser tab when Oya tools are withheld inside Keel. If Oya is unavailable, report the
+blocker and unverified UI behavior; never substitute another browser. Use native tooling for
+native windows. A mocked browser rendering is limited visual evidence, not an end-to-end pass.
 
 Use the verification asset. Lead with **ship**, **ship with known issues**, or **do not ship**
 for the tested scope. Give environment, scenarios, exact reproduction steps, expected/actual,
