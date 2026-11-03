@@ -9,9 +9,11 @@
 3. Exercise success, denial, error, timeout, cancellation, disconnect, retry, duplicate and
    simultaneous requests. Probe empty/large inputs, unicode and quoted paths, long names,
    boundary values, expired sessions, and partially completed installation.
-4. Test the actual surface: Oya for browser interaction; native app tooling for native windows;
-   CLI/API checks for those contracts. A mocked web preview checks rendering only. Identify any
-   real integration or action that could not be exercised. Never label fixtures as end-to-end.
+4. For every UI change, try the affected journey in Oya and inspect the rendered result. Inside
+   Keel, use its Browser tab when Oya tools are withheld. If Oya is unavailable, report the
+   blocker and unverified UI behavior; do not substitute another browser. Use native app tooling
+   for native windows and CLI/API checks for those contracts. A mocked web preview checks
+   rendering only. Identify real integrations not exercised; never label fixtures end-to-end.
 5. Measure timing and resource cleanup. After each exit, check persisted state, leaked tasks,
    processes, ports, handles, temporary files, and resources that should have been released.
 6. Use `../assets/verification.md`. Give copyable reproduction steps, expected/actual behavior,
