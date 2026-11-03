@@ -16,17 +16,48 @@ const KEY = 'oya_k_0123456789abcdef0123456789abcdef';
 /** Every seam that takes a key, driven with realistic props. */
 const KEYED: Array<() => void> = [
   () => track.browserStarted(KEY, { provider: 'browserbase', persona: true, via: 'mcp', first: true }),
-  () => track.browserStopped(KEY, { provider: 'cdp', seconds: 42 }),
+  () => track.browserStopped(KEY, { provider: 'oya-desktop', seconds: 3960 }),
   () => track.playbookSaved(KEY, { steps: 14 }),
   () => track.playbookReplayed(KEY, { outcome: 'healed', steps: 14, healed: true }),
   () => track.mcpToolCalled(KEY, { tool: 'click' }),
-  () => track.cdpAttached(KEY, { provider: 'steel' }),
+  () => track.cdpAttached(KEY, { provider: 'oya-cloud' }),
   () => track.desktopConnected(KEY, { platform: 'MacIntel', first: true, version: '1.0.115' }),
   () => track.desktopUpdated(KEY, { platform: 'MacIntel', from: '1.0.114', to: '1.0.115' }),
   () => track.personaCreated(KEY, { has_proxy: false }),
   () => track.serverError(KEY, { ref: '9f2b7c1d', method: 'POST', route: '/browsers/:id/playbooks' }),
   () => track.runFailed(KEY, { run_id: 'run_1', error: 'Timed out' }),
 ];
+
+/** Business alerts, including agent onboarding and both payment outcomes. */
+const BUSINESS: Array<() => void> = [
+  () => track.accountSignedUp({ id: 'u-1', email: 'ana@example.com' }, 'google'),
+  () => track.agentSignedUp(KEY, 'ana@example.com'),
+  () => track.agentKeyClaimed({ id: 'u-1', email: 'ana@example.com' }),
+  () => track.apiKeyCreated({ id: 'u-1', email: 'ana@example.com' }, '7c1e9a02-aaaa'),
+  () =>
+    track.paymentReceived(
+      { id: 'u-1', email: 'ana@example.com' },
+      { amount_cents: 9900, currency: 'usd', reason: 'subscription_cycle' },
+    ),
+  () =>
+    track.paymentFailed({ id: 'u-1', email: 'ana@example.com' }, { amount_cents: 2000, currency: 'eur', attempt: 2 }),
+];
+
+/** Nonbusiness events include every formerly noisy card and signup line. */
+function noise() {
+  for (const seam of KEYED) seam();
+  track.agentCloudRefused(KEY, 'oya-cloud');
+  track.downloadServed('dl-1', {
+    platform: 'mac',
+    version: '1.0.115',
+    file_type: 'installer',
+    via: 'web',
+    source: 'direct',
+    client: '',
+  });
+  track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
+  track.installPinged('i-1', { version: '1.0.135', browsers: 9, peak_cloud: 9, licensed: false });
+}
 
 /** Turns every destination on, pointed at a fake network. */
 function allOn() {
@@ -148,31 +179,92 @@ describe('track', () => {
         ['events', '⚠️ Server error: GET middleware (ref 9f2b7c1d)'],
         ['signups', '🎉 New signup: ana@example.com'],
         ['signups', '🔑 API key created: ana@example.com (project 7c1e9a02)'],
-        ['signups', `🖥️ Desktop connected: ${label} (MacIntel)`],
-        ['signups', '⬇️ Desktop downloaded: mac 1.0.115 · from facebook ad'],
-        ['signups', '⬇️ Desktop downloaded: windows 1.0.115 · from direct · 🤖 not a browser: curl'],
-        ['signups', '🏢 Self-hosted server install-i-1 ran 9 cloud browsers at once (v1.0.135), unlicensed'],
+        ['events', `🖥️ Desktop connected: ${label} (MacIntel)`],
+        ['events', '⬇️ Desktop downloaded: mac 1.0.115 · from facebook ad'],
+        ['events', '⬇️ Desktop downloaded: windows 1.0.115 · from direct · 🤖 not a browser: curl'],
+        ['events', '🏢 Self-hosted server install-i-1 ran 9 cloud browsers at once (v1.0.135), unlicensed'],
         ['signups', '💰 Payment received: $99.00 from bo@example.com (renewal)'],
         ['signups', '⚠️ Payment failed: 20.00 EUR from bo@example.com (attempt 2)'],
       ].sort(),
     );
   });
 
-  it('posts a card to the product channel for each event worth one, naming the person', async () => {
+  it('posts every business alert as a signup line and product card, including payment details', async () => {
     allOn();
     const calls = stubFetch(() => json({}));
-    track.accountSignedUp({ id: 'u-1', email: 'ana@example.com' }, 'google');
-    track.updateChecked('dl-1', { platform: 'mac', from_version: '1.0.115' });
-    track.browserStarted(KEY, { provider: 'oya', persona: false, via: 'mcp', first: true });
-    track.browserStarted(KEY, { provider: 'oya', persona: false, via: 'mcp', first: false });
+    for (const seam of BUSINESS) seam();
     await settle();
     const cards = calls.filter((c) => c.url.endsWith('/product')).map((c) => JSON.parse(c.init.body).text);
     assert.deepEqual(cards.map((t) => t.split('\n')[1]).sort(), [
       '📌 Event: account_signed_up',
-      '📌 Event: browser_started',
+      '📌 Event: agent_key_claimed',
+      '📌 Event: agent_signed_up',
+      '📌 Event: api_key_created',
+      '📌 Event: payment_failed',
+      '📌 Event: payment_received',
     ]);
+    assert.equal(calls.filter((c) => c.url.endsWith('/signups')).length, BUSINESS.length);
     assert.ok(cards.some((t) => t.includes('👤 User: ana@example.com') && t.includes('🔐 Method: google')));
+    assert.ok(cards.some((t) => /payment_received/.test(t) && /\$99\.00/.test(t) && /renewal/.test(t)));
+    assert.ok(cards.some((t) => /payment_failed/.test(t) && /20\.00 EUR/.test(t) && /Attempt: 2/.test(t)));
+    assert.ok(!JSON.stringify(calls).includes(KEY));
   });
+
+  it('keeps all nonbusiness events out of both business feeds while retaining analytics and operational lines', async () => {
+    allOn();
+    const calls = stubFetch(() => json({}));
+    noise();
+    await settle();
+    await drain();
+    assert.equal(calls.filter((c) => /\/(signups|product)$/.test(c.url)).length, 0);
+    const lines = calls.filter((c) => c.url.endsWith('/events')).map((c) => JSON.parse(c.init.body).text);
+    for (const prefix of [
+      '🖥️ Desktop connected:',
+      '⬇️ Desktop downloaded:',
+      '🏢 Self-hosted server',
+      '🔌 CDP attached:',
+    ])
+      assert.ok(
+        lines.some((line) => line.startsWith(prefix)),
+        prefix,
+      );
+    const events = calls.filter((c) => c.url.includes('/batch/')).flatMap((c) => JSON.parse(c.init.body).batch);
+    assert.deepEqual(events.map((e) => e.event).sort(), [
+      'agent_cloud_refused',
+      'browser_started',
+      'browser_stopped',
+      'cdp_attached',
+      'desktop_connected',
+      'desktop_updated',
+      'download_served',
+      'install_pinged',
+      'mcp_tool_called',
+      'persona_created',
+      'playbook_replayed',
+      'playbook_saved',
+      'run_failed',
+      'server_error',
+      'update_checked',
+    ]);
+    const stopped = events.find((e) => e.event === 'browser_stopped');
+    assert.equal(stopped.properties.provider, 'oya-desktop');
+    assert.equal(stopped.properties.seconds, 3960);
+    assert.equal(events.find((e) => e.event === 'cdp_attached').properties.provider, 'oya-cloud');
+  });
+
+  for (const mode of ['product alone', 'shared business webhook']) {
+    it(`suppresses nonbusiness alerts with ${mode} configured`, async () => {
+      process.env.SLACK_OPS_WEBHOOK_PRODUCT = 'https://hooks.example.test/business';
+      if (mode === 'shared business webhook')
+        process.env.SLACK_OPS_WEBHOOK_SIGNUPS = process.env.SLACK_OPS_WEBHOOK_PRODUCT;
+      const calls = stubFetch(() => json({}));
+      noise();
+      await settle();
+      assert.equal(calls.length, 0);
+      track.accountSignedUp({ id: 'u-1' }, 'email');
+      assert.ok(calls.length > 0, 'business alerts still reach the configured destination');
+    });
+  }
 
   it('knows a person in PostHog by user id, never by email, and marks a bare key as no person', async () => {
     allOn();

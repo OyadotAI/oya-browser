@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Restricted business Slack lines and cards to account signups, API keys and payment outcomes. Browser sessions and CDP connections no longer produce business cards; desktop activity, downloads and self-hosted leads use the separate operational feed.
+
 ## [1.0.207](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.207) · 2026-11-03
 
 ### Security

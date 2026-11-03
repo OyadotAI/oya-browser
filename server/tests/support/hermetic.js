@@ -12,7 +12,13 @@ if (!process.env.OYA_TEST_LIVE) process.env.DOTENV_CONFIG_PATH = join(tmpdir(), 
 // Outbound analytics and ops messages are off in tests whatever the shell holds: a test must never
 // post to a real PostHog or Slack. The suites that exercise sending set the variables themselves.
 if (!process.env.OYA_TEST_LIVE)
-  for (const name of ['POSTHOG_KEY', 'POSTHOG_HOST', 'SLACK_OPS_WEBHOOK_SIGNUPS', 'SLACK_OPS_WEBHOOK_EVENTS'])
+  for (const name of [
+    'POSTHOG_KEY',
+    'POSTHOG_HOST',
+    'SLACK_OPS_WEBHOOK_SIGNUPS',
+    'SLACK_OPS_WEBHOOK_EVENTS',
+    'SLACK_OPS_WEBHOOK_PRODUCT',
+  ])
     delete process.env[name];
 // No test fetches OpenRouter's live model list: the catalog serves its built-in one.
 if (!process.env.OYA_TEST_LIVE) process.env.OYA_OPENROUTER_MODELS_URL = '';
