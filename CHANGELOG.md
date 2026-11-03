@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Included the Keel activity migration in every hosted deployment path and added a regression guard against future migration omissions.
+
 ## [1.0.209](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.209) · 2026-11-03
 
 ### Added

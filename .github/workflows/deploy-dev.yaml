@@ -315,7 +315,7 @@ jobs:
         PGCONNECT_TIMEOUT: '10'
       run: |
         : "${PGDATABASE:?Missing database connection for billing migration}"
-        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql
+        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql
 
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/dev
