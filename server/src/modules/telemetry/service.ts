@@ -14,14 +14,14 @@ import { CARD_MAX_CHARS } from '../../platform/constants.ts';
 import { anonymous, keyLabel, nobody, person, whoHolds } from './who.ts';
 import { CLIENTS, CLIENT_HEADER } from './constants.ts';
 
-/** Sends one event about `who` to PostHog, its Slack line when it has one, and its product card when it is worth one. */
+/** Sends analytics independently, an optional ops line, and a card only for business alerts. */
 function send<K extends EventName>(name: K, who: Who, props: EventProps[K]) {
   const profile = who.email !== undefined;
   // The person is known by their user id; their email never goes to PostHog.
   analytics.capture(who.id, name, { ...props, $process_person_profile: profile });
   const line = Object.hasOwn(SLACK_LINES, name) ? SLACK_LINES[name](who, props) : null;
   if (line) slack.post(CHANNEL[name], line);
-  const text = slack.enabled('product') ? card(name, who, props) : null;
+  const text = businessEvent(name) && slack.enabled('product') ? card(name, who, props) : null;
   if (text) slack.post('product', text, CARD_MAX_CHARS);
 }
 
@@ -36,9 +36,12 @@ function emit<K extends EventName>(name: K, key: string | null, props: EventProp
   else send(name, who, props);
 }
 
+/** Reuses signup routing as the business allowlist so the two presentations cannot drift. */
+const businessEvent = (name: EventName) => Object.hasOwn(CHANNEL, name) && CHANNEL[name] === 'signups';
+
 /** Whether a Slack channel will show the event, so nothing is resolved for an event nobody will see. */
 const slackWanted = (name: EventName) =>
-  slack.enabled('product') || (Object.hasOwn(CHANNEL, name) && slack.enabled(CHANNEL[name]));
+  (businessEvent(name) && slack.enabled('product')) || (Object.hasOwn(CHANNEL, name) && slack.enabled(CHANNEL[name]));
 
 /** Which client a start came from, from the header it named itself in; anything else is plain REST. */
 export function clientOf(headers: Record<string, unknown> = {}): EventProps['browser_started']['via'] {

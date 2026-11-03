@@ -112,7 +112,7 @@ describe('BrowserConnection', () => {
   });
 
   it('tells the ops channel about a first desktop with its platform from a fixed list, never the text the client sent', async () => {
-    process.env.SLACK_OPS_WEBHOOK_SIGNUPS = 'https://hooks.example.test/signups';
+    process.env.SLACK_OPS_WEBHOOK_EVENTS = 'https://hooks.example.test/events';
     keyConfig.reset();
     const calls = stubFetch(() => json({}));
     try {
@@ -123,7 +123,7 @@ describe('BrowserConnection', () => {
       assert.match(lines[0], /^🖥️ Desktop connected: .* \(unknown\)$/);
       assert.ok(!lines[0].includes('evil'));
     } finally {
-      delete process.env.SLACK_OPS_WEBHOOK_SIGNUPS;
+      delete process.env.SLACK_OPS_WEBHOOK_EVENTS;
     }
   });
 

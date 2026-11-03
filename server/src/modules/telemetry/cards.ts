@@ -4,11 +4,12 @@
  * products read the same in Slack. The server has no page, browser or
  * location for an event, so a card carries what it does know instead of
  * blank fields. Every value comes from the typed props or `who.label`; an
- * event with no entry, or whose entry answers null, posts no card.
+ * event with no entry, or whose entry answers null, has no card. The service
+ * restricts delivery to business events; formatting alone never posts.
  */
 import { SECONDS_PER_HOUR, SECONDS_PER_MINUTE } from '../../platform/constants.ts';
 import { CARD_DIVIDER_CHARS, CARD_MIN_SESSION_SECONDS, PROJECT_ID_CHARS } from './constants.ts';
-import type { EventName, EventProps, Who } from './catalog.ts';
+import { money, paymentReason, type EventName, type EventProps, type Who } from './catalog.ts';
 
 /** The rule above and below a card. */
 const DIVIDER = '━'.repeat(CARD_DIVIDER_CHARS);
@@ -39,7 +40,9 @@ export const CARD_DETAILS: { [K in EventName]?: (props: EventProps[K]) => string
   agent_key_claimed: () => ['🤝 Claimed the key an agent signed up for'],
   agent_cloud_refused: (p) => [provider(p.provider), '🚧 Unclaimed agent key asked for a paid browser'],
   api_key_created: (p) => [`📁 Project: ${p.project_id.slice(0, PROJECT_ID_CHARS)}`],
-  // Only a key's first browser: that is activation. Every session still ends in a browser_stopped card.
+  payment_received: (p) => [`💰 Amount: ${money(p.amount_cents, p.currency)}`, `🧾 Reason: ${paymentReason(p.reason)}`],
+  payment_failed: (p) => [`⚠️ Amount: ${money(p.amount_cents, p.currency)}`, `🔁 Attempt: ${p.attempt}`],
+  // Retain activity formatting for callers; the service does not deliver activity cards to business feeds.
   browser_started: (p) =>
     p.first ? ['🚀 First browser on this key', provider(p.provider), `🧭 Via: ${p.via}`, persona(p.persona)] : null,
   browser_stopped: (p) =>
