@@ -15,14 +15,15 @@ export const daysAgo = (now: number, days: number) =>
   new Date(now - days * MS_PER_DAY).toISOString().slice(0, DAY_CHARS);
 
 /** How many rows fall on each day, oldest first. */
-export function perDay(rows: Row[], column: string, from: string) {
+export function perDay(rows: Row[], column: string, from: string, until?: string) {
   const counts = new Map<string, number>();
   for (const r of rows)
-    if (dayOf(r[column]) >= from) counts.set(dayOf(r[column]), (counts.get(dayOf(r[column])) || 0) + 1);
+    if (dayOf(r[column]) >= from && (!until || String(r[column]) < until))
+      counts.set(dayOf(r[column]), (counts.get(dayOf(r[column])) || 0) + 1);
   return [...counts.entries()].sort().map(([day, count]) => ({ day, count }));
 }
 
-/** Paying people by plan, and how many are late. */
+/** Recorded subscription states describe access records, not successful or failed payments. */
 export function plans(subscriptions: Row[]) {
   const paying = subscriptions.filter(
     (s) => s.plan !== 'free' && ['active', 'trialing', 'past_due'].includes(s.status),
@@ -30,6 +31,17 @@ export function plans(subscriptions: Row[]) {
   const byPlan: Record<string, number> = {};
   for (const s of paying) byPlan[s.plan] = (byPlan[s.plan] || 0) + 1;
   return { byPlan, pastDue: paying.filter((s) => s.status === 'past_due').length };
+}
+
+/** Active, trialing and past-due subscriptions remain distinct rather than all reading as paying. */
+export function planStatuses(subscriptions: Row[]) {
+  const plans = [...new Set(subscriptions.map((row) => String(row.plan)))].sort();
+  return plans.map((plan) => ({
+    plan,
+    active: subscriptions.filter((row) => row.plan === plan && row.status === 'active').length,
+    trialing: subscriptions.filter((row) => row.plan === plan && row.status === 'trialing').length,
+    past_due: subscriptions.filter((row) => row.plan === plan && row.status === 'past_due').length,
+  }));
 }
 
 /** Each person's usage summed from their own `u:` rows. */
@@ -53,7 +65,7 @@ export function top(people: Row[], field: string, emails: Map<string, string>) {
 /** Installs: how many, how many pinged lately, and how many run past the free cap without a license. */
 export function installSummary(installs: Row[], now: number, freeCap: number) {
   const since = new Date(now - ACTIVE_DAYS * MS_PER_DAY).toISOString();
-  const active = installs.filter((i) => String(i.last_seen) >= since);
+  const active = installs.filter((i) => String(i.last_seen) >= since && Date.parse(i.last_seen) <= now);
   const overCap = active.filter((i) => !i.license_id && Number(i.peak_cloud) > freeCap).length;
   return { total: installs.length, active: active.length, overCap };
 }

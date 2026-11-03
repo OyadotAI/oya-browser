@@ -9,6 +9,9 @@ import { audit } from '../../platform/audit.ts';
 import { adminOnly } from './access.ts';
 import * as admin from './service.ts';
 import { setPlan, grant } from './billing.ts';
+import { HttpError } from '../../platform/errors.ts';
+import { ADMIN_OVERVIEW_VERSION } from './constants.ts';
+import { revenue } from './revenue.ts';
 
 /** The admin routes, mounted on the API router. */
 export const router = Router({ caseSensitive: true });
@@ -17,7 +20,19 @@ export const router = Router({ caseSensitive: true });
 const guard = [userAuthMiddleware, adminOnly];
 
 /** GET /admin/overview, accounts, plans, heaviest users, installs, downloads and the fleet. */
-router.get('/admin/overview', ...guard, async (_req, res) => res.json(await admin.overview()));
+router.get('/admin/overview', ...guard, async (req, res) => {
+  if (req.query.version !== String(ADMIN_OVERVIEW_VERSION))
+    throw new HttpError(Status.CONFLICT, 'Reload the admin page to use the updated metrics.', {
+      code: 'admin_reload_required',
+    });
+  res.json(await admin.overview());
+});
+
+/** GET /admin/revenue has its own bounded Stripe reads so activity never waits for finance. */
+router.get('/admin/revenue', ...guard, async (_req, res) => res.json(await revenue()));
+
+/** GET /admin/keel, anonymous installation, reported-license and measured activity statistics. */
+router.get('/admin/keel', ...guard, async (_req, res) => res.json(await admin.keelOverview()));
 
 /** Audits an admin's action on a person or a license, under the admin. */
 function auditAdmin(req, action: string, targetType: string, targetId: string) {

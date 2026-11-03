@@ -78,7 +78,7 @@ describe('admin service', () => {
     countDownload('installer', 'mac', new Date(NOW));
     countDownload('installer', 'mac', new Date(NOW));
     await flushDownloads();
-    const o = await admin.overview(NOW);
+    const o = await admin.overview(NOW + 86400000);
     assert.equal(o.accounts.total, 1);
     assert.deepEqual(o.installs.total, 1);
     assert.equal(o.installs.overCap, 1);
@@ -89,7 +89,10 @@ describe('admin service', () => {
     assert.equal(typeof o.fleet.total, 'number');
     const today = o.growth.days.at(-1)!;
     assert.deepEqual([today.day, today.installers, today.new_installs], ['2026-03-15', 2, 1]);
-    assert.equal(o.revenue.enabled, false);
+    assert.equal(Object.hasOwn(o, 'revenue'), false);
+    assert.equal(o.version, 2);
+    assert.equal(o.periods.usage.to, '2026-03-15');
+    assert.equal(o.fleet.scope, 'responding_server');
   });
 
   it('adds later downloads to the same day', async () => {
@@ -163,4 +166,26 @@ describe('download counter', () => {
   it('answers 503 for Login as without Supabase Auth', async () => {
     await assert.rejects(admin.impersonate('cust', { id: 'adm' }), { status: 503 });
   });
+});
+
+it('summarizes every installation before limiting its most-recent table', async () => {
+  const before = (await repo.allInstalls()).length;
+  const observed = new Date(NOW - 86400000).toISOString();
+  await getConnection().upsert(
+    'installs',
+    Array.from({ length: 205 }, (_, index) => ({
+      install_id: `population-${index}`,
+      first_seen: observed,
+      last_seen: observed,
+      version: '1',
+      browsers: 0,
+      peak_cloud: 0,
+      license_id: null,
+      pings: 1,
+    })),
+  );
+  const result = await admin.overview(NOW);
+  assert.equal(result.installs.total, before + 205);
+  assert.equal(result.installs.list.length, 50);
+  assert.ok(result.growth.week.new_installs.now >= 205);
 });

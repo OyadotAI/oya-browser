@@ -10,6 +10,8 @@ afterEach(cleanup);
 /** One selected profile and mock admin actions. */
 function fixture() {
   const p: Found = {
+    generated_at: '2026-03-16T12:00:00Z',
+    granularity: 'hourly_buckets',
     profile: { id: 'u', email: 'u@example.com' },
     standing: { plan: 'free', status: null, since: '2026-10-01' },
     used: { agent_steps: 120 },

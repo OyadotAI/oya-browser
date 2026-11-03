@@ -43,6 +43,13 @@ export interface Accounts {
   byPlan: Record<string, number>;
   /** Paying people whose last payment failed. */
   pastDue: number;
+  /** Recorded subscription states, not claims that a person paid. */
+  statuses: {
+    /** Plan name. */ plan: string;
+    /** Active subscriptions. */ active: number;
+    /** Trials. */ trialing: number;
+    /** Past due subscriptions. */ past_due: number;
+  }[];
 }
 
 /** The counters each day carries. */
@@ -54,9 +61,9 @@ export type Counted =
   | 'browsers_started'
   | 'commands'
   | 'installers'
+  | 'updates'
   | 'update_checks'
-  | 'new_installs'
-  | 'revenue_cents';
+  | 'new_installs';
 
 /** One UTC day's counters. */
 export type Day = Record<Counted, number> & {
@@ -88,10 +95,11 @@ export interface Revenue {
 
 /** The overview. */
 export interface Overview {
+  /** Explicit corrected private contract. */ version: number;
+  /** Snapshot time, rather than a live global-fleet claim. */ generated_at: string;
+  /** Exact UTC date/receipt scopes. */ periods: Periods;
   /** Day by day growth. */
   growth: Growth;
-  /** Revenue from Stripe. */
-  revenue: Revenue;
   /** Accounts and plans. */
   accounts: Accounts;
   /** Heaviest users by cloud hours and by steps. */
@@ -107,6 +115,8 @@ export interface Overview {
   downloads: DownloadRow[];
   /** Browsers connected now. */
   fleet: {
+    /** A single responding server owns these connections. */ scope: 'responding_server';
+    /** When the local registry was observed. */ generated_at: string;
     /** In all. */ total: number;
     /** In the cloud. */ cloud: number;
     /** By provider. */ byProvider: Record<string, number>;
@@ -143,6 +153,8 @@ export interface KeyShown {
 
 /** A person found by email. */
 export interface Found {
+  /** Snapshot through time for the displayed customer. */ generated_at: string;
+  /** Existing billing usage is stored in hourly buckets, not precise sub-hour intervals. */ granularity: 'hourly_buckets';
   /** Their profile row. */
   profile: {
     /** Their user id. */ id: string;
@@ -164,6 +176,28 @@ export interface Found {
   grants?: Grant[];
   /** Their keys. */
   keys: KeyShown[];
+}
+
+/** Date labels include both completed dates and exclusive timestamp ends. */
+export interface CompletedPeriod {
+  /** Inclusive first UTC date. */ from: string;
+  /** Inclusive last completed UTC date. */ to: string;
+  /** Exclusive end timestamp. */ end: string;
+}
+
+/** Current snapshots, completed days and customer allowance periods never share an implicit boundary. */
+export interface Periods {
+  /** Exactly thirty completed UTC dates. */ usage: CompletedPeriod;
+  /** Seven completed UTC dates. */ week: CompletedPeriod;
+  /** Seven dates preceding the current week. */ previousWeek: CompletedPeriod;
+  /** Calendar-month leaders through snapshot time. */ month: {
+    /** Month start. */ from: string;
+    /** Snapshot time. */ to: string;
+  };
+  /** Rolling server receipt window. */ reporting: {
+    /** Seven days before the snapshot. */ from: string;
+    /** Snapshot time. */ to: string;
+  };
 }
 
 /** One immutable support grant. */

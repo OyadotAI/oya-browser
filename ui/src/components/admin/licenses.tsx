@@ -4,7 +4,7 @@
  */
 'use client';
 
-import type { InputHTMLAttributes } from 'react';
+import { useState, type InputHTMLAttributes } from 'react';
 import { Section, Table } from './parts';
 import { dayOf } from './model';
 import { useLicenseForm } from './use-license-form';
@@ -72,30 +72,59 @@ function IssueForm({ issue }: { /** Issues a license. */ issue: AdminState['issu
   );
 }
 
+/** A rejected revocation stays visible beside the affected license. */
+function Revoke({
+  id,
+  revoke,
+}: {
+  /** License record. */ id: string;
+  /** Authorized action. */ revoke: AdminState['revoke'];
+}) {
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const run = () => {
+    setBusy(true);
+    void revoke(id)
+      .catch((failure) => setError(failure instanceof Error ? failure.message : 'Could not revoke.'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div>
+      <button type="button" disabled={busy} onClick={run} className="min-h-11 text-red hover:underline">
+        Revoke
+      </button>
+      {error && (
+        <p role="alert" className="text-xs text-red">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** A license's row: who, how many, until when, by whom, and Revoke while it stands. */
 const row = (l: License, revoke: AdminState['revoke']) => [
   l.licensee,
   l.max_concurrent,
   dayOf(l.expires_at),
   l.created_by || '—',
-  l.revoked_at ? (
-    `revoked ${dayOf(l.revoked_at)}`
-  ) : (
-    <button key={l.id} onClick={() => void revoke(l.id)} className="text-red hover:underline">
-      Revoke
-    </button>
-  ),
+  l.revoked_at ? `revoked ${dayOf(l.revoked_at)}` : <Revoke key={l.id} id={l.id} revoke={revoke} />,
 ];
 
 /** Issue a license, and the list of those issued. */
 export default function Licenses({ s }: { /** The page's state. */ s: AdminState }) {
   return (
-    <Section title="Licenses" hint="the key is shown once, on issue">
+    <Section title="Issue a license" hint="The key is shown once, on issue">
       <IssueForm issue={s.issue} />
-      <Table
-        head={['Licensee', 'Browsers', 'Expires', 'Issued by', '']}
-        rows={(s.data?.licenses || []).map((l) => row(l, s.revoke))}
-      />
+      {s.licenseFeed.value &&
+        (s.data.licenses.length ? (
+          <Table
+            head={['Licensee', 'Browsers', 'Expires', 'Issued by', 'Action']}
+            rows={s.data.licenses.map((license) => row(license, s.revoke))}
+          />
+        ) : (
+          <p className="text-xs text-text-dim">No Oya licenses issued.</p>
+        ))}
     </Section>
   );
 }

@@ -6,6 +6,7 @@
  */
 import { FINGERPRINT_HEX_CHARS } from '../../platform/constants.ts';
 import { DAY_CHARS, MONTH_DAYS, MS_PER_DAY, PERCENT, PERSON_PREFIX, WEEK_DAYS } from './constants.ts';
+import { utcMidnight } from './periods.ts';
 
 /** A row as storage hands it back. */
 type Row = Record<string, any>;
@@ -22,14 +23,14 @@ export type Sources = {
   downloads: Row[];
   /** Every self-hosted install. */
   installs: Row[];
-  /** Payments as day and cents. */
-  payments: Row[];
+  /** Legacy caller compatibility only; finance now has its own currency-aware feed. */
+  payments?: Row[];
 };
 
 /** The counters a day row carries, each summed over that day. */
 export const COUNTED = [
   ...['signups', 'active', 'agent_steps', 'cloud_seconds', 'browsers_started', 'commands'],
-  ...['installers', 'update_checks', 'new_installs', 'revenue_cents'],
+  ...['installers', 'updates', 'update_checks', 'new_installs'],
 ] as const;
 
 /** One of the counters a day row carries. */
@@ -50,13 +51,17 @@ const dayOf = (iso: unknown) => String(iso || '').slice(0, DAY_CHARS);
 /** Whether a usage row is a person's own row rather than one key's. */
 const isPerson = (r: Row) => String(r.api_key).startsWith(PERSON_PREFIX);
 
-/** Every UTC day from `days - 1` days before `now` to today, oldest first. */
+/** Exactly `days` completed UTC dates, oldest first; today never leaks into period comparisons. */
 export const lastDays = (now: number, days: number) =>
-  Array.from({ length: days }, (_, i) => dayOf(new Date(now - (days - 1 - i) * MS_PER_DAY).toISOString()));
+  Array.from({ length: days }, (_, i) => dayOf(new Date(utcMidnight(now) - (days - i) * MS_PER_DAY).toISOString()));
 
 /** Who a usage row belongs to: the person of a `u:` row, or the owner of the key it fingerprints. */
 export function ownerOf(keys: Row[]) {
-  const byPrint = new Map(keys.map((k) => [String(k.key_hash).slice(0, FINGERPRINT_HEX_CHARS), String(k.user_id)]));
+  const byPrint = new Map(
+    keys
+      .filter((key) => typeof key.user_id === 'string' && key.user_id.trim())
+      .map((k) => [String(k.key_hash).slice(0, FINGERPRINT_HEX_CHARS), String(k.user_id)]),
+  );
   return (apiKey: string) =>
     apiKey.startsWith(PERSON_PREFIX) ? apiKey.slice(PERSON_PREFIX.length) : byPrint.get(apiKey) || null;
 }
@@ -99,13 +104,22 @@ function usageColumns(usage: Row[]) {
   };
 }
 
+/** Distribution events remain separate counters even when the same app generates all three kinds. */
+function distributionColumns(downloads: Row[]) {
+  return {
+    installers: downloadsOf(downloads, 'installer'),
+    updates: downloadsOf(downloads, 'update'),
+    update_checks: downloadsOf(downloads, 'update_check'),
+  };
+}
+
 /** Each counter's per-day sums. */
 function columns(s: Sources, active: Map<string, Set<string>>): Record<Counted, Map<string, number>> {
   return {
     ...{ signups: sumByDay(s.profiles, 'created_at'), active: new Map([...active].map(([d, p]) => [d, p.size])) },
     ...usageColumns(s.usage),
-    ...{ installers: downloadsOf(s.downloads, 'installer'), update_checks: downloadsOf(s.downloads, 'update_check') },
-    ...{ new_installs: sumByDay(s.installs, 'first_seen'), revenue_cents: sumByDay(s.payments, 'day', 'cents') },
+    ...distributionColumns(s.downloads),
+    new_installs: sumByDay(s.installs, 'first_seen'),
   };
 }
 
@@ -125,13 +139,28 @@ export function compare(days: Day[], field: Counted, span: number) {
 }
 
 /** Every counter compared: the last 7 days against the 7 before, and yesterday (the last whole day) against the day before. */
-export function trends(days: Day[]) {
+export function trends(days: Day[], distinct?: ReturnType<typeof distinctComparison>) {
   const each = (rows: Day[], span: number) => Object.fromEntries(COUNTED.map((c) => [c, compare(rows, c, span)]));
-  return { week: each(days, WEEK_DAYS), day: each(days.slice(0, -1), 1) };
+  const week = each(days, WEEK_DAYS);
+  if (distinct) week.active = distinct;
+  return { week, day: each(days, 1) };
 }
 
 /** Distinct people active today, in the last 7 days and in the last 30. */
 export function reach(active: Map<string, Set<string>>, now: number) {
   const over = (span: number) => new Set(lastDays(now, span).flatMap((d) => [...(active.get(d) || [])])).size;
-  return { today: over(1), week: over(WEEK_DAYS), month: over(MONTH_DAYS) };
+  return {
+    today: active.get(dayOf(new Date(now).toISOString()))?.size ?? 0,
+    week: over(WEEK_DAYS),
+    month: over(MONTH_DAYS),
+  };
+}
+
+/** Distinct-account trends compare unions of identities, never sums of daily person counts. */
+export function distinctComparison(active: Map<string, Set<string>>, now: number) {
+  const count = (time: number) =>
+    new Set(lastDays(time, WEEK_DAYS).flatMap((day) => [...(active.get(day) ?? [])])).size;
+  const current = count(now),
+    before = count(now - WEEK_DAYS * MS_PER_DAY);
+  return { now: current, before, change: before ? Math.round(((current - before) / before) * PERCENT) : null };
 }

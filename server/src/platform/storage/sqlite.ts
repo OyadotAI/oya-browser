@@ -63,7 +63,8 @@ function binder() {
 }
 
 /** Whether a filter value is a bound ({ gte }) or a list ({ notIn }) rather than a plain value. */
-const isTest = (value: unknown) => value !== null && typeof value === 'object' && ('gte' in value || 'notIn' in value);
+const isTest = (value: unknown) =>
+  value !== null && typeof value === 'object' && ('gte' in value || 'lte' in value || 'notIn' in value);
 
 /** SQLite behind the storage contract. */
 export class SqliteConnection implements Connection {

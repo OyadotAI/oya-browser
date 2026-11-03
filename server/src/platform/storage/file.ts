@@ -14,6 +14,7 @@ import type { Connection, Row, SelectOptions, Where } from './connection.ts';
 function passes(value: unknown, test: any) {
   if (test === null) return value === null || value === undefined;
   if (test && typeof test === 'object' && 'gte' in test) return value !== null && value >= test.gte;
+  if (test && typeof test === 'object' && 'lte' in test) return value != null && value <= test.lte;
   if (test && typeof test === 'object' && 'notIn' in test) return !test.notIn.includes(value);
   return value === test;
 }

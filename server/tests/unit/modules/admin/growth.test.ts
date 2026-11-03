@@ -22,7 +22,7 @@ describe('admin growth', () => {
     const days = growth.daily(empty(), NOW, 3);
     assert.deepEqual(
       days.map((d) => d.day),
-      ['2026-03-13', '2026-03-14', '2026-03-15'],
+      ['2026-03-12', '2026-03-13', '2026-03-14'],
     );
     assert.equal(days[0].signups, 0);
   });
@@ -37,12 +37,12 @@ describe('admin growth', () => {
       { api_key: 'unknown', hour: '2026-03-15T10:00:00.000Z', commands: 9 },
       { api_key: 'u:u3', hour: '2026-03-15T10:00:00.000Z', commands: 0 },
     ];
-    const days = growth.daily(s, NOW, 2);
+    const days = growth.daily(s, NOW + 86400000, 2);
     assert.deepEqual(
       days.map((d) => d.active),
       [1, 1],
     );
-    assert.deepEqual(growth.reach(growth.activePeople(s.usage, s.keys), NOW), { today: 1, week: 2, month: 2 });
+    assert.deepEqual(growth.reach(growth.activePeople(s.usage, s.keys), NOW), { today: 1, week: 1, month: 1 });
   });
 
   it('takes steps and cloud time from people’s rows and commands from key rows, so nothing counts twice', () => {
@@ -51,13 +51,13 @@ describe('admin growth', () => {
       { api_key: PRINT, hour: '2026-03-15T09:00:00.000Z', agent_steps: 5, commands: 3 },
       { api_key: 'u:u1', hour: '2026-03-15T09:00:00.000Z', agent_steps: 5, cloud_seconds: 120 },
     ];
-    const [today] = growth.daily(s, NOW, 1);
+    const [today] = growth.daily(s, NOW + 86400000, 1);
     assert.equal(today.agent_steps, 5);
     assert.equal(today.cloud_seconds, 120);
     assert.equal(today.commands, 3);
   });
 
-  it('counts signups, installer downloads, new installs and revenue on their days', () => {
+  it('counts completed-day distribution and activity without mixing in financial amounts', () => {
     const s = empty();
     s.profiles = [{ created_at: '2026-03-15T01:00:00Z' }, { created_at: '2026-03-15T02:00:00Z' }];
     s.downloads = [
@@ -66,10 +66,10 @@ describe('admin growth', () => {
     ];
     s.installs = [{ first_seen: '2026-03-15T03:00:00Z' }];
     s.payments = [{ day: '2026-03-15', cents: 2000 }];
-    const [today] = growth.daily(s, NOW, 1);
+    const [today] = growth.daily(s, NOW + 86400000, 1);
     assert.deepEqual(
-      [today.signups, today.installers, today.update_checks, today.new_installs, today.revenue_cents],
-      [2, 7, 0, 1, 2000],
+      [today.signups, today.installers, today.updates, today.update_checks, today.new_installs],
+      [2, 7, 9, 0, 1],
     );
   });
 
@@ -90,6 +90,27 @@ describe('admin growth', () => {
     ];
     const t = growth.trends(growth.daily(s, NOW, 14));
     assert.deepEqual(t.day.signups, { now: 2, before: 1, change: 100 });
-    assert.equal(t.week.signups.now, 4);
+    assert.equal(t.week.signups.now, 3);
   });
+});
+
+it('compares weekly distinct account unions rather than the sum of daily active counts', () => {
+  const active = new Map([
+    ['2026-03-14', new Set(['a', 'b'])],
+    ['2026-03-13', new Set(['a'])],
+    ['2026-03-07', new Set(['a'])],
+    ['2026-03-15', new Set(['unfinished'])],
+  ]);
+  const comparison = growth.distinctComparison(active, NOW);
+  assert.deepEqual(comparison, { now: 2, before: 1, change: 100 });
+  assert.deepEqual(growth.trends(growth.daily(empty(), NOW, 30), comparison).week.active, comparison);
+});
+
+it('does not turn null or absent key owners into pseudo-accounts', () => {
+  const keys = [{ key_hash: HASH, user_id: null }, { key_hash: 'x'.repeat(64) }];
+  const usage = [
+    { api_key: PRINT, hour: '2026-03-14T00:00:00Z', commands: 1 },
+    { api_key: 'x'.repeat(16), hour: '2026-03-14T00:00:00Z', commands: 1 },
+  ];
+  assert.equal(growth.activePeople(usage, keys).size, 0);
 });

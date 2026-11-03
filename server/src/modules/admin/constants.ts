@@ -14,6 +14,20 @@ export const DAYS_SHOWN = 30;
 export const TOP_USERS = 10;
 /** Installs the overview lists, most recently seen first. */
 export const INSTALLS_SHOWN = 200;
+/** Keel's response tables stay small while their headline totals include every installation. */
+export const KEEL_ROWS_SHOWN = 50;
+/** Staff clients must explicitly opt into corrected period and financial semantics. */
+export const ADMIN_OVERVIEW_VERSION = 2;
+/** Complete populations are summarized before any administrative table is cut to this size. */
+export const ADMIN_ROWS_SHOWN = 50;
+/** Every financial page uses Stripe's supported maximum page size. */
+export const FINANCIAL_PAGE_SIZE = 100;
+/** Bounds include nested subscription-item requests within each independent metric. */
+export const FINANCIAL_MAX_REQUESTS = 20;
+/** A partial traversal never becomes an authoritative total. */
+export const FINANCIAL_MAX_OBJECTS = 2000;
+/** Each financial metric has its own abortable deadline. */
+export const FINANCIAL_DEADLINE_MS = 10_000;
 /** An install that pinged within this many days counts as active. */
 export const ACTIVE_DAYS = 7;
 /** Characters of an ISO time that make its UTC day. */

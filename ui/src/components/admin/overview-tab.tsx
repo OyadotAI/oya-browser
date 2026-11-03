@@ -1,73 +1,90 @@
-/**
- * The admin page's first tab: four headline numbers with how they moved,
- * anything that needs attention, each counter's week, and the days folded away.
- */
-import { Kpi } from './parts';
+/** Account activity, product usage and distribution use matching completed UTC periods. */
+import { Kpi, Section, Table } from './parts';
 import { Daily, Growth, Trend } from './growth-sections';
-import { dollars } from './model';
+import { FinancialCards, FinancialStatus, InvoiceDetail } from './financial-cards';
 import type { Overview } from './types';
+import type { AdminState } from './use-admin';
 
-/** Paying accounts by plan, such as "2 developer, 1 team". */
-const payingText = (o: Overview) =>
-  Object.entries(o.accounts.byPlan || {})
-    .map(([plan, n]) => `${n} ${plan}`)
-    .join(', ') || 'none';
-
-/** The four numbers that say how the business is doing. */
-function Headline({ o }: { /** The overview. */ o: Overview }) {
+/** Stock and activity cards describe their own populations rather than unrelated trends. */
+function Headline({ o, s }: { /** Core activity snapshot. */ o: Overview; /** Independent finance. */ s: AdminState }) {
   const { reach, week } = o.growth;
-  const signups = o.accounts.signups.reduce((n, d) => n + d.count, 0);
-  const r = o.revenue;
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Kpi
-        label="Accounts"
+        label="Total accounts · now"
         value={o.accounts.total.toLocaleString('en-US')}
-        trend={<Trend c={week.signups} against="signups vs last week" />}
-        sub={`${signups} signups in 30 days`}
+        sub="All registered accounts"
       />
       <Kpi
-        label="MRR"
-        value={r.enabled ? dollars(r.mrrCents) : 'off'}
-        trend={r.enabled && <Trend c={week.revenue_cents} against="paid vs last week" />}
-        sub={`Paying: ${payingText(o)}`}
-      />
-      <Kpi
-        label="Active, 7 days"
+        label="Active accounts · 7 days"
         value={reach.week}
-        trend={<Trend c={week.active} against="vs last week" />}
-        sub={`${reach.today} today · ${reach.month} in 30 days`}
+        trend={<Trend c={week.active} against="vs preceding 7 days" />}
+        sub={`${reach.month} distinct accounts in 30 completed days`}
       />
-      <Kpi label="Browsers now" value={o.fleet.total} sub={`${o.fleet.cloud} in the cloud`} />
+      <FinancialCards s={s} />
     </div>
   );
 }
 
-/** What needs a look: failed payments and an unreadable Stripe. Nothing when all is well. */
-function Attention({ o }: { /** The overview. */ o: Overview }) {
+/** Observed subscription states and installation reports are support signals, not payment proof. */
+function Attention({ o }: { /** Core activity snapshot. */ o: Overview }) {
   const notes = [
-    o.accounts.pastDue > 0 && `${o.accounts.pastDue} payment failed`,
-    o.installs.overCap > 0 && `${o.installs.overCap} self-hosted install over the free cap, unlicensed`,
-    o.revenue.error && `Stripe could not be read: ${o.revenue.error}`,
-  ].filter(Boolean) as string[];
-  if (!notes.length) return null;
-  return (
-    <ul className="flex flex-col gap-1 rounded-md border border-red/30 bg-red/5 px-3 py-2 text-xs text-red">
-      {notes.map((n) => (
-        <li key={n}>{n}</li>
+    o.accounts.pastDue > 0 && `${o.accounts.pastDue} subscriptions past due`,
+    o.installs.overCap > 0 &&
+      `${o.installs.overCap} recently reporting self-hosted installs above the free cap with no reported license ID`,
+  ].filter(Boolean);
+  return notes.length ? (
+    <ul className="space-y-1 rounded-md border border-red/30 bg-red/5 px-3 py-2 text-xs text-red">
+      {notes.map((note) => (
+        <li key={String(note)}>{note}</li>
       ))}
     </ul>
+  ) : null;
+}
+
+/** Subscription records are separated by plan and state, never presented as paid customers. */
+function Subscriptions({ o }: { /** Recorded subscription states. */ o: Overview }) {
+  return (
+    <Section title="Subscription status · now" hint="Recorded billing states">
+      {o.accounts.statuses.length ? (
+        <Table
+          head={['Plan', 'Active', 'Trialing', 'Past due']}
+          rows={o.accounts.statuses.map((row) => [row.plan, row.active, row.trialing, row.past_due])}
+        />
+      ) : (
+        <p className="text-xs text-text-dim">No subscription records.</p>
+      )}
+    </Section>
   );
 }
 
-/** The overview tab. */
-export function OverviewTab({ o }: { /** The overview. */ o: Overview }) {
+/** Finance remains useful even if the independent core activity request is unavailable. */
+export function OverviewTab({
+  o,
+  s,
+}: {
+  /** Core data may be unavailable. */ o: Overview | null;
+  /** Independent feeds. */ s: AdminState;
+}) {
   return (
     <div className="flex flex-col gap-6">
-      <Headline o={o} />
-      <Attention o={o} />
-      <Growth o={o} />
-      <Daily o={o} />
+      {o ? (
+        <Headline o={o} s={s} />
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FinancialCards s={s} />
+        </div>
+      )}
+      <FinancialStatus s={s} />
+      <InvoiceDetail s={s} />
+      {o && (
+        <>
+          <Attention o={o} />
+          <Growth o={o} />
+          <Subscriptions o={o} />
+          <Daily o={o} />
+        </>
+      )}
     </div>
   );
 }
