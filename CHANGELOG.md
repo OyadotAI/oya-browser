@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.207](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.207) · 2026-11-03
+
 ### Security
 
 - Updated vulnerable runtime and development dependencies, including Electron and Mars's vendored Rustls. Retained the existing TLS ClientHello shaping and adapted legacy build tooling to the patched minimatch implementation.
