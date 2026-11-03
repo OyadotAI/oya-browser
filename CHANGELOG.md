@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Prepared AWS Marketplace account setup with server-side buyer resolution, encrypted authentication continuation and immutable account linkage. Registration remains disabled by default and pending until authoritative AWS subscription activation is implemented.
+
 ### Fixed
 
 - Included the Keel activity migration in every hosted deployment path and added a regression guard against future migration omissions.

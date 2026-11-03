@@ -52,4 +52,10 @@ describe('proxy', () => {
     expect(config.matcher[0].source).toContain('_next/static');
     expect(config.matcher[0].missing).toEqual([{ type: 'header', key: 'next-router-prefetch' }]);
   });
+
+  it('prevents caching and referrer propagation for AWS setup', async () => {
+    const res = await proxy(new NextRequest('https://oya.example/marketplace/aws'));
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer');
+  });
 });

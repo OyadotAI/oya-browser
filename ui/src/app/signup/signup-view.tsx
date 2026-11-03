@@ -9,6 +9,7 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { AuthLoading, AuthShell } from '@/components/auth/auth-shell';
+import { MarketplaceContext } from '@/components/auth/marketplace-context';
 import { ENTERPRISE_SIGNUP, EnterpriseNudge } from '@/components/auth/enterprise-nudge';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { DEVELOPER_PITCH, Pitch, type PitchContent } from '@/components/auth/pitch';
@@ -100,6 +101,7 @@ export function SignupView({ siteKey }: ViewProps) {
         <>
           <h1 className="mb-1 font-display text-2xl font-bold text-text">Create your account</h1>
           <p className="mb-8 text-sm text-text-muted">Get started with Oya Browser in seconds</p>
+          <MarketplaceContext />
           <OAuthButtons />
           <SignupForm fields={fields} form={form} captcha={captcha} onSubmit={submit} />
           <EnterpriseNudge />

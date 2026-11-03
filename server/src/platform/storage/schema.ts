@@ -39,6 +39,16 @@ export const USAGE_FIELDS = [
 
 /** Each table by name. */
 export const TABLES: Record<string, Table> = {
+  // Immutable buyer ownership is retained even if an Oya account is deleted.
+  aws_marketplace_accounts: {
+    key: ['aws_account_id'],
+    columns: { aws_account_id: 'text', user_id: 'text', linked_at: 'time' },
+  },
+  // A registration is pending; it carries no activated subscription or paid plan.
+  aws_marketplace_registrations: {
+    key: ['license_arn'],
+    columns: { license_arn: 'text', aws_account_id: 'text', product_code: 'text', registered_at: 'time' },
+  },
   personas: {
     key: ['id'],
     columns: {

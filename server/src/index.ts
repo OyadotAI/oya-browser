@@ -78,6 +78,8 @@ import { billingWebhook, startReporting } from './modules/billing/index.ts';
 import * as license from './platform/license/index.ts';
 import { drainDownloads } from './modules/admin/index.ts';
 import { RELEASE_VERSION } from './platform/version.ts';
+import { FULFILLMENT_PATH, marketplaceCallback, marketplaceConfig } from './modules/marketplace/index.ts';
+import { consoleUrl } from './modules/slack/service.ts';
 
 // Not yet layered: reads the persona service from the composition root.
 const { personas } = container;
@@ -230,6 +232,11 @@ app.get('/mcp/:browserId', handleMcpRequest);
 app.delete('/mcp/:browserId', handleMcpRequest);
 
 // ── Next.js runtime (optional for API-only hosts) ──
+// AWS posts before Next receives a clean GET; no global URL-encoded parser is added.
+app.use(
+  FULFILLMENT_PATH,
+  marketplaceCallback(container.marketplace, () => marketplaceConfig(consoleUrl())),
+);
 const frontend = startFrontend();
 if (frontend) app.use((req, res) => frontend.handle(req, res));
 else

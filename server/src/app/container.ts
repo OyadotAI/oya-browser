@@ -38,6 +38,23 @@ import { audit } from '../platform/audit.ts';
 import * as profiles from '../modules/gateway/profiles.ts';
 import { control } from '../modules/control/service.ts';
 import { Erasure, erasureRows } from '../modules/erasure/index.ts';
+import {
+  AwsBuyerResolver,
+  MarketplaceRepository,
+  MarketplaceService,
+  marketplaceConfig,
+} from '../modules/marketplace/index.ts';
+
+/** Registration has no dependency on Stripe or paid-access admission. */
+function marketplace() {
+  const aws = new AwsBuyerResolver();
+  return new MarketplaceService({
+    config: () => marketplaceConfig(consoleUrl()),
+    resolve: (token, region) => aws.resolve(token, region),
+    repository: new MarketplaceRepository(),
+    now: () => Date.now(),
+  });
+}
 
 /** Personas in the configured storage, taking in a personas.json left from before storage drivers. */
 function personaRepository(): PersonaRepository {
@@ -112,7 +129,12 @@ export function createContainer() {
   const personas = personaService(groupTable);
   personas.startAutosave();
   setUnexpectedReporter(reportUnexpected);
-  return { personas, groups: groupService(groupTable, personas), billing: billing(), erasure: erasure(personas) };
+  return { personas, groups: groupService(groupTable, personas), ...accountServices(personas) };
+}
+
+/** Account services share composition without sharing provider-owned subscription state. */
+function accountServices(personas: PersonaService) {
+  return { billing: billing(), erasure: erasure(personas), marketplace: marketplace() };
 }
 
 /** The services the composition root provides. */

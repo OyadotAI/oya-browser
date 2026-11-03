@@ -14,6 +14,8 @@ export const Status = {
   /** The first status that is not a success, as a range check names it. */
   MULTIPLE_CHOICES: 300,
   FOUND: 302,
+  /** A completed form POST continues as a clean GET without resubmitting its token. */
+  SEE_OTHER: 303,
   PERMANENT_REDIRECT: 308,
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,

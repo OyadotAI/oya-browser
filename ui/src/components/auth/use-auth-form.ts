@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/auth-provider';
 import { pendingClaim } from '@/lib/claim';
 import { pendingConnect } from '@/lib/connect';
+import { pendingMarketplace, MARKETPLACE_PATH } from '@/lib/marketplace';
 import { stepUpPending } from '@/lib/auth/storage';
 import { stepUpUrl } from '@/lib/auth/step-up';
 
@@ -21,7 +22,13 @@ export const HOME = '/dashboard';
  * has an authenticator this session has not passed yet.
  */
 export function afterSignIn() {
-  const next = pendingClaim() ? '/claim' : pendingConnect() ? '/connect' : HOME;
+  const next = pendingClaim()
+    ? '/claim'
+    : pendingConnect()
+      ? '/connect'
+      : pendingMarketplace()
+        ? MARKETPLACE_PATH
+        : HOME;
   return stepUpPending() ? stepUpUrl(next) : next;
 }
 
