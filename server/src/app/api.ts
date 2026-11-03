@@ -22,6 +22,8 @@ import { router as browsersRoutes } from '../modules/browsers/routes.ts';
 import { personaRoutes } from '../modules/personas/routes.ts';
 import { personaGroupRoutes } from '../modules/personas/group-routes.ts';
 import { container } from './container.ts';
+import { marketplaceRoutes, marketplaceConfig } from '../modules/marketplace/index.ts';
+import { consoleUrl } from '../modules/slack/service.ts';
 import { accountRoutes } from '../modules/erasure/index.ts';
 import { router as pairingRoutes } from '../modules/pairing/routes.ts';
 import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
@@ -93,6 +95,8 @@ registry.on('browser:disconnected', ({ id }) => siteLogin.forget(id));
 
 /** Resources. Mounted without a prefix so req.path, which the role guards read, is unchanged. Auth: sign-in, account and API keys. */
 router.use(authRoutes);
+/** AWS purchase registration uses account sessions and remains distinct from paid activation. */
+router.use(marketplaceRoutes(container.marketplace, () => marketplaceConfig(consoleUrl())));
 /** Who the calling credential is signed in as, with the plan where this server has plans. */
 router.use(whoamiRoutes(async (userId) => (hosted() ? container.billing.subscriptions.plan(userId) : null)));
 /** Agent self-signup: an AI agent gets its own key, no person needed. */

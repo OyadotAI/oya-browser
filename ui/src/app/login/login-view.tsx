@@ -8,6 +8,7 @@
 
 import Link from 'next/link';
 import { AuthLoading, AuthShell } from '@/components/auth/auth-shell';
+import { MarketplaceContext } from '@/components/auth/marketplace-context';
 import { EnterpriseNudge } from '@/components/auth/enterprise-nudge';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { DEVELOPER_PITCH, Pitch } from '@/components/auth/pitch';
@@ -45,6 +46,7 @@ export function LoginView({ siteKey }: ViewProps) {
     <AuthShell glow="accent" footer={footer} pitch={<Pitch content={DEVELOPER_PITCH} />}>
       <h1 className="mb-1 font-display text-2xl font-bold text-text">Welcome back</h1>
       <p className="mb-6 text-sm text-text-muted">{SUBTITLES[fields.mode]}</p>
+      <MarketplaceContext />
       <ModeSwitch fields={fields} form={form} />
       {fields.mode === 'agent' && <AgentSetup />}
       {fields.mode === 'key' && <KeyForm fields={fields} form={form} onSubmit={submitKey} />}

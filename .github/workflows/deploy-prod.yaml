@@ -531,7 +531,7 @@ jobs:
         PGCONNECT_TIMEOUT: '10'
       run: |
         : "${PGDATABASE:?Missing database connection for billing migration}"
-        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql
+        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql --file=server/migrations/027_aws_marketplace.sql
 
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/prod
@@ -870,7 +870,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${PGDATABASE:?Missing database connection for the rollout migrations}"
-          psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql
+          psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql --file=server/migrations/027_aws_marketplace.sql
 
       - name: Roll out only the server container by immutable digest
         env:
