@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Added a staff Keel tab for recently reporting installs, current reported license IDs, measured agent-hours and active projects, with daily coverage and explicit UTC windows. Legacy reports retain unavailable measurements rather than fabricated zeroes.
+
+### Fixed
+
+- Aligned admin charts and trends to completed UTC days, corrected distinct-account comparisons and full installation totals, and separated active fixed-price MRR from currency-specific paid invoice totals. Clarified customer allowance periods, reported versus issued licenses, and the responding server’s fleet scope. Independent refreshes preserve useful snapshots and support forms while credential changes discard protected results.
+
 ## [1.0.208](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.208) · 2026-11-03
 
 ### Fixed

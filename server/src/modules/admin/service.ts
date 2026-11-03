@@ -18,64 +18,126 @@ import { SERVER_RUN } from '../browsers/connection/constants.ts';
 import * as repo from './repository.ts';
 import * as view from './overview.ts';
 import * as growth from './growth.ts';
-import { revenue } from './revenue.ts';
-import { DAYS_SHOWN, INSTALLS_SHOWN, MS_PER_DAY } from './constants.ts';
+import { adminPeriods } from './periods.ts';
+import { ADMIN_OVERVIEW_VERSION, ADMIN_ROWS_SHOWN, DAYS_SHOWN } from './constants.ts';
+
+export { keelOverview } from './keel.ts';
+
+/** Account stocks and completed-date signup counts share one captured snapshot. */
+function accountSummary(profiles, subscriptions, now: number) {
+  const period = adminPeriods(now).usage;
+  const signups = view.perDay(profiles, 'created_at', period.from, period.end);
+  return { total: profiles.length, signups, ...view.plans(subscriptions), statuses: view.planStatuses(subscriptions) };
+}
 
 /** People, signups and plans. */
 async function accounts(now: number) {
   const [profiles, subscriptions] = await Promise.all([repo.profiles(), billing.all()]);
-  const signups = view.perDay(profiles, 'created_at', view.daysAgo(now, DAYS_SHOWN));
-  return { profiles, summary: { total: profiles.length, signups, ...view.plans(subscriptions) } };
+  return { profiles, summary: accountSummary(profiles, subscriptions, now) };
 }
 
 /** This month's heaviest people by cloud hours and by agent steps, from usage rows reaching back at least that far. */
 function heaviest(now: number, profiles: Record<string, any>[], usage: Record<string, any>[]) {
-  const people = view.perPerson(usage.filter((r) => String(r.hour) >= monthStart(now)));
+  const people = view.perPerson(
+    usage.filter((r) => String(r.hour) >= monthStart(now) && String(r.hour) <= new Date(now).toISOString()),
+  );
   const emails = new Map(profiles.map((p) => [String(p.id), String(p.email)]));
   return { cloud: view.top(people, 'cloud_seconds', emails), steps: view.top(people, 'agent_steps', emails) };
 }
 
 /** Self-hosted installs and the downloads of the last days. */
-async function reach(now: number) {
-  const [installs, downloads] = await Promise.all([
-    repo.installs(INSTALLS_SHOWN),
-    repo.downloadsSince(view.daysAgo(now, DAYS_SHOWN)),
-  ]);
-  return { installs: { ...view.installSummary(installs, now, license.SELF_HOST_FREE_CAP), list: installs }, downloads };
+function reach(installs, now: number) {
+  const list = [...installs]
+    .sort((a, b) => String(b.last_seen).localeCompare(String(a.last_seen)))
+    .slice(0, ADMIN_ROWS_SHOWN);
+  return { ...view.installSummary(installs, now, license.SELF_HOST_FREE_CAP), list };
 }
 
 /** The earliest usage the overview needs: this month's start or the first day shown, whichever is sooner. */
-const usageFrom = (now: number) => [monthStart(now), view.daysAgo(now, DAYS_SHOWN)].sort()[0];
+const usageFrom = (now: number) => [monthStart(now), adminPeriods(now).usage.from].sort()[0];
 
 /** The day by day series, its trends, the people reached, and revenue as Stripe has it. */
-async function trends(now: number, rows: Pick<growth.Sources, 'profiles' | 'usage' | 'downloads'>) {
-  const since = now - DAYS_SHOWN * MS_PER_DAY;
-  const [keys, installs, money] = await Promise.all([repo.apiKeys(), repo.allInstalls(), revenue(since)]);
+async function trends(now: number, rows: growth.Sources) {
+  const keys = await repo.apiKeys();
   const active = growth.activePeople(rows.usage, keys);
-  const days = growth.daily({ ...rows, keys, installs, payments: money.payments }, now, DAYS_SHOWN, active);
-  const { payments: _, ...stripe } = money;
-  return { growth: { days, ...growth.trends(days), reach: growth.reach(active, now) }, revenue: stripe };
+  const days = growth.daily({ ...rows, keys }, now, DAYS_SHOWN, active);
+  return { days, ...growth.trends(days, growth.distinctComparison(active, now)), reach: growth.reach(active, now) };
 }
 
-/** Everything the overview shows. */
+/** Independent database reads capture the complete installation population before presentation limits. */
+function overviewSources(now: number) {
+  return Promise.all([
+    accounts(now),
+    repo.usageSince(usageFrom(now)),
+    repo.allInstalls(),
+    repo.downloadsSince(adminPeriods(now).usage.from),
+  ]);
+}
+
+/** Everything the overview shows, independent of Stripe. */
 export async function overview(now = Date.now()) {
-  const [{ profiles, summary }, usage] = await Promise.all([accounts(now), repo.usageSince(usageFrom(now))]);
-  const fleet = view.fleet([...registry.browsers.values()], SERVER_RUN);
-  const seen = await reach(now);
-  const more = await trends(now, { profiles, usage, downloads: seen.downloads });
-  return { accounts: summary, top: heaviest(now, profiles, usage), ...seen, fleet, ...more };
+  const [{ profiles, summary }, usage, installs, rawDownloads] = await overviewSources(now);
+  const periods = adminPeriods(now);
+  const downloads = rawDownloads.filter((row) => String(row.day) <= periods.usage.to);
+  const activity = await trends(now, { profiles, usage, installs, downloads, keys: [] });
+  return overviewResult({ profiles, summary, usage, installs, downloads, growth: activity }, periods, now);
 }
 
-/** One person by email: plan, usage this period and keys (never the keys themselves). */
+/** The local connection registry describes this responding server only. */
+function localFleet(now: number) {
+  return {
+    ...view.fleet([...registry.browsers.values()], SERVER_RUN),
+    scope: 'responding_server',
+    generated_at: new Date(now).toISOString(),
+  };
+}
+
+/** Customer rankings and install summaries use full source populations. */
+function activityResult(rows, now: number) {
+  return {
+    accounts: rows.summary,
+    top: heaviest(now, rows.profiles, rows.usage),
+    installs: reach(rows.installs, now),
+    downloads: rows.downloads,
+    growth: rows.growth,
+  };
+}
+
+/** Versioned scopes replace ambiguous private administrative totals. */
+function overviewResult(rows, periods, now: number) {
+  return {
+    version: ADMIN_OVERVIEW_VERSION,
+    generated_at: new Date(now).toISOString(),
+    periods,
+    ...activityResult(rows, now),
+    fleet: localFleet(now),
+  };
+}
+
+/** Existing allowance accounting is hourly, with adjustments tied to the same standing boundary. */
+async function allowance(id: string, since: string) {
+  return {
+    used: await billing.usageSince(id, since),
+    override: await overrideFor(id),
+    grants: await grantsFor(id, since),
+  };
+}
+
+/** Lookup metadata describes the measurement boundary without exposing whole keys. */
+async function customerResult(profile, subscription, standing, now: number) {
+  const keys = (await keysOf(String(profile.id))).map(keyShown);
+  const measured = { generated_at: new Date(now).toISOString(), granularity: 'hourly_buckets' };
+  const details = { keys, ...(await allowance(String(profile.id), standing.since)), ...measured };
+  return { profile, standing, subscription, ...details };
+}
+
+/** One person by email: allowance-period usage and key prefixes, never whole keys. */
 export async function lookup(email: string, now = Date.now()) {
   const profile = await repo.profileByEmail(email.trim().toLowerCase());
   if (!profile) throw notFound('Account');
-  const id = String(profile.id);
-  const subscription = await billing.find(id);
-  const standing = standingOf(id, subscription, now);
-  const keys = (await keysOf(id)).map(keyShown);
-  const adjustments = { override: await overrideFor(id), grants: await grantsFor(id, standing.since) };
-  return { profile, standing, subscription, used: await billing.usageSince(id, standing.since), keys, ...adjustments };
+  const id = String(profile.id),
+    subscription = await billing.find(id);
+  return customerResult(profile, subscription, standingOf(id, subscription, now), now);
 }
 
 /** A one-hour "Login as" token for one customer; never for another admin. Issuing it is audited. `find` is the user lookup, a seam for tests. */

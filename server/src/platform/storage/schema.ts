@@ -118,6 +118,16 @@ export const TABLES: Record<string, Table> = {
     columns: {
       ...{ install_id: 'text', day: 'text', version: 'text', os: 'text', steps: 'int', license_id: 'text' },
       received_at: 'time',
+      runtime_ms: 'int',
+      project_ids: 'json',
+    },
+  },
+  // Mutable reporting presence stays independent of the immutable daily usage snapshots.
+  keel_installs: {
+    key: ['install_id'],
+    columns: {
+      ...{ install_id: 'text', first_seen: 'time', last_seen: 'time', version: 'text', os: 'text' },
+      license_id: 'text',
     },
   },
   // Downloads and update checks, counted per UTC day, kind and platform.

@@ -14,7 +14,7 @@ export type Stripe = {
   /** Posts `params` to `path` and answers the parsed body. */
   post(path: string, params?: Record<string, unknown>): Promise<any>;
   /** Reads `path` with `query` and answers the parsed body. */
-  get(path: string, query?: Record<string, unknown>): Promise<any>;
+  get(path: string, query?: Record<string, unknown>, signal?: AbortSignal): Promise<any>;
 };
 
 /** Stripe's form encoding: nested objects and arrays as `a[b][0]=v`. */
@@ -32,24 +32,36 @@ export function formEncode(params: Record<string, unknown>, prefix = '', out = n
 export function stripeClient(key: () => string, fetchFn: typeof fetch = fetch): Stripe {
   return {
     post: (path, params = {}) => call(fetchFn, key(), path, params),
-    get: (path, query = {}) => call(fetchFn, key(), `${path}?${formEncode(query)}`, null),
+    get: (path, query = {}, signal) => call(fetchFn, key(), `${path}?${formEncode(query)}`, null, signal),
   };
 }
 
 /** The request for one call: authorized with the key and pinned to the API version. */
-const request = (key: string, params: Record<string, unknown> | null) => ({
+const request = (key: string, params: Record<string, unknown> | null, signal?: AbortSignal) => ({
   method: params ? 'POST' : 'GET',
   headers: { authorization: `Bearer ${key}`, 'stripe-version': STRIPE_VERSION },
   body: params ? formEncode(params) : undefined,
-  signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+  signal: signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(OUTBOUND_TIMEOUT_MS)])
+    : AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
 });
 
-/** One call, a POST with `params` or a GET without; Stripe's own error message comes back as a 502. */
-async function call(fetchFn: typeof fetch, key: string, path: string, params: Record<string, unknown> | null) {
-  const res = await fetchFn(`${STRIPE_API}${path}`, request(key, params));
+/** Stripe errors retain the upstream explanation without coupling request cancellation to callers. */
+async function responseBody(res: Response) {
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new HttpError(Status.BAD_GATEWAY, `Stripe: ${body?.error?.message || res.status}`);
   return body;
+}
+
+/** One call uses the caller's deadline in addition to the shared network timeout. */
+async function call(
+  fetchFn: typeof fetch,
+  key: string,
+  path: string,
+  params: Record<string, unknown> | null,
+  signal?: AbortSignal,
+) {
+  return responseBody(await fetchFn(`${STRIPE_API}${path}`, request(key, params, signal)));
 }
 
 /** The timestamp and v1 signatures of a `Stripe-Signature` header. */

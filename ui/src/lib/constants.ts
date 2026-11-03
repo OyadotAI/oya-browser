@@ -39,3 +39,5 @@ export const SOURCE_MAX_LENGTH = 80;
 
 /** Digits in a code from an authenticator app. */
 export const TOTP_CODE_LENGTH = 6;
+/** Corrected staff overview semantics require an explicit client contract. */
+export const ADMIN_OVERVIEW_VERSION = 2;

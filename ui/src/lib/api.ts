@@ -5,6 +5,7 @@
  */
 
 import { impersonation, storedRefreshToken } from './auth/storage';
+import { ADMIN_OVERVIEW_VERSION } from './constants';
 
 /** The API base: NEXT_PUBLIC_API_URL when the API is on another origin, else same-origin `/api`. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
@@ -43,7 +44,7 @@ export function authHeaders(token: string): HeadersInit {
 async function account<T = any>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(apiUrl(path), { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new AccountError(data?.error || fallback, data?.code);
+  if (!res.ok) throw new AccountError(data?.error || fallback, data?.code, res.status);
   return data;
 }
 
@@ -51,11 +52,14 @@ async function account<T = any>(path: string, fallback: string, init: RequestIni
 export class AccountError extends Error {
   /** The server's code for the refusal, or undefined. */
   code?: string;
+  /** HTTP refusal status, so an unlabelled authentication error still clears protected data. */
+  status?: number;
 
   /** Carries the server's message and code. */
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -149,7 +153,17 @@ export const billingPortal = (token: string) =>
 
 /** The admin overview: accounts, plans, heaviest users, installs, downloads and the fleet. Admins only. */
 export const adminOverview = (token: string) =>
-  account('/admin/overview', 'Could not load the overview', { headers: authHeaders(token) });
+  account(`/admin/overview?version=${ADMIN_OVERVIEW_VERSION}`, 'Could not load the overview', {
+    headers: authHeaders(token),
+  });
+
+/** Finance is independently bounded and must not block activity, customers or installation data. */
+export const adminRevenue = (token: string) =>
+  account('/admin/revenue', 'Could not load financial metrics', { headers: authHeaders(token) });
+
+/** Keel's independent staff-only usage snapshot; unrelated billing failures cannot hide it. */
+export const adminKeel = (token: string) =>
+  account('/admin/keel', 'Could not load Keel usage', { headers: authHeaders(token) });
 
 /** Every self-hosted license issued. Admins only. */
 export const adminLicenses = (token: string) =>

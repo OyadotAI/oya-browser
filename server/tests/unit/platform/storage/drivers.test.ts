@@ -72,6 +72,7 @@ for (const [kind, open] of Object.entries(DRIVERS)) {
       assert.deepEqual(await hashes({ user_id: 'u1' }), ['a', 'c']);
       assert.deepEqual(await hashes({ user_id: null }), ['b']);
       assert.deepEqual(await hashes({ created_at: { gte: '2026-02-01T00:00:00.000Z' } }), ['b', 'c']);
+      assert.deepEqual(await hashes({ created_at: { lte: '2026-03-01T00:00:00.000Z' } }), ['a', 'b']);
       assert.deepEqual(await hashes({ user_id: 'u1', key_hash: { notIn: ['a'] } }), ['c']);
       assert.deepEqual(await hashes({ user_id: 'u1', key_hash: { notIn: [] } }), ['a', 'c']);
     });
@@ -88,6 +89,13 @@ for (const [kind, open] of Object.entries(DRIVERS)) {
       assert.equal(await db.update('api_keys', { key_hash: 'b', user_id: null }, { user_id: 'u2' }), 1);
       assert.equal(await db.update('api_keys', { key_hash: 'b', user_id: null }, { user_id: 'u3' }), 0);
       assert.equal((await db.select('api_keys', { key_hash: 'b' }))[0].user_id, 'u2');
+    });
+
+    it('conditionally updates an inclusive upper bound without regressing newer metadata', async () => {
+      await db.upsert('keel_installs', [{ install_id: 'presence', last_seen: '2026-03-02', license_id: 'new' }]);
+      assert.equal(await db.update('keel_installs', { last_seen: { lte: '2026-03-01' } }, { license_id: 'old' }), 0);
+      assert.equal(await db.update('keel_installs', { last_seen: { lte: '2026-03-02' } }, { license_id: null }), 1);
+      assert.equal((await db.select('keel_installs'))[0].license_id, null);
     });
 
     it('deletes only matching rows and says how many', async () => {
