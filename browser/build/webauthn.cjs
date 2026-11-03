@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { validateBrowserProfileFile } = require('./webauthn-profile.cjs');
 /** Refuse malformed signing identities instead of generating an unusable keychain group. */
 function accessGroup(team = process.env.APPLE_TEAM_ID) {
   if (!team) return '';
@@ -9,7 +10,7 @@ function accessGroup(team = process.env.APPLE_TEAM_ID) {
   return `${team}.ai.oya.browser.webauthn`;
 }
 /** Never emit restricted entitlements without an explicitly supplied provisioning profile. */
-function configuredAccessGroup(env = process.env) {
+function configuredAccessGroup(env = process.env, validate = validateBrowserProfileFile) {
   if (!env.OYA_WEBAUTHN_PROFILE) {
     if (env.OYA_NATIVE_PASSKEYS === '1') throw new Error('Native passkeys require OYA_WEBAUTHN_PROFILE with matching Apple capabilities');
     return '';
@@ -17,6 +18,7 @@ function configuredAccessGroup(env = process.env) {
   if (!fs.statSync(env.OYA_WEBAUTHN_PROFILE).isFile()) throw new Error('OYA_WEBAUTHN_PROFILE must name a provisioning profile file');
   const group = accessGroup(env.APPLE_TEAM_ID);
   if (!group) throw new Error('A WebAuthn provisioning profile also requires APPLE_TEAM_ID');
+  if (env.OYA_NATIVE_PASSKEYS === '1') validate(env.OYA_WEBAUTHN_PROFILE, group);
   return group;
 }
 /** macOS only honours a profile-backed keychain group when the app also claims the profile's identity. */
