@@ -1,10 +1,10 @@
 # AWS Marketplace fulfillment
 
-Proposed fulfillment URL: **`https://oyabrowser.com/marketplace/aws`**.
+Fulfillment setup page: **`https://oyabrowser.com/marketplace/aws`**.
 
 **This change implements account-setup preparation, not a production-ready
-fulfillment integration. The URL has not been deployed or verified live. Do not
-submit it as a working fulfillment URL until the activation work below is done.**
+fulfillment integration. Serving this page does not activate AWS subscriptions.
+Do not submit it as a working fulfillment URL until the activation work below is done.**
 
 AWS posts `x-amzn-marketplace-token` as a form field to the seller's fulfillment
 URL. Oya immediately calls ResolveCustomer using the seller's IAM identity,

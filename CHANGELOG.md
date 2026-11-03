@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.210](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.210) · 2026-11-03
+
 ### Added
 
 - Prepared AWS Marketplace account setup with server-side buyer resolution, encrypted authentication continuation and immutable account linkage. Registration remains disabled by default and pending until authoritative AWS subscription activation is implemented.
