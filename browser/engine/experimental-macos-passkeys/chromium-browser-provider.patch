@@ -1,0 +1,2011 @@
+diff --git a/content/browser/webauth/authenticator_common_impl.cc b/content/browser/webauth/authenticator_common_impl.cc
+index 513f10895aa11934ad1dc26b5d8448133b640a1b..f3779d03499266d352bc02836dc035ac82d95976 100644
+--- a/content/browser/webauth/authenticator_common_impl.cc
++++ b/content/browser/webauth/authenticator_common_impl.cc
+@@ -890,6 +890,7 @@ struct AuthenticatorCommonImpl::RequestState {
+   // `AuthenticatorCommonImpl`.
+   RequestKey request_key;
+   std::shared_ptr<BrowserPasskeyAttempt> browser_passkey_attempt;
++  bool browser_policy_required = false;
+   ~RequestState() {
+     if (!browser_passkey_attempt)
+       return;
+@@ -1094,14 +1095,23 @@ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+           GetTransportsAllowedByRP(*ctap_get_assertion_request));
+   const RequestKey request_key = GetRequestKey();
+   auto weak_this = weak_factory_.GetWeakPtr();
+-  if (!disable_ui_ &&
++  const bool use_browser_policy =
++      !disable_ui_ &&
+       RequestSource() == AuthenticatorRequestClientDelegate::RequestSource::
+                              kWebAuthentication &&
+       req_state_->mode == AuthenticationRequestMode::kModalWebAuthn &&
+       transports.contains(device::FidoTransportProtocol::kHybrid) &&
+       req_state_->request_delegate->ShouldUseBrowserPasskeyPolicy(
+           *ctap_get_assertion_request, transports,
+-          discovery_factory()->IsTestOverride())) {
++          discovery_factory()->IsTestOverride());
++  // A retry cannot silently switch credential stores after browser admission.
++  if (req_state_->browser_policy_required && !use_browser_policy) {
++    CompleteGetAssertionRequest(
++        blink::mojom::AuthenticatorStatus::NOT_ALLOWED_ERROR);
++    return;
++  }
++  if (use_browser_policy) {
++    req_state_->browser_policy_required = true;
+     req_state_->browser_passkey_attempt =
+         std::make_shared<BrowserPasskeyAttempt>(GetRenderFrameHost(),
+                                                 transports);
+@@ -1136,10 +1146,45 @@ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+ #endif
+   SetHints(req_state_->request_delegate.get(), req_state_->hints);
+ 
+-  auto platform_discoveries =
+-      discovery_factory()->IsTestOverride()
+-          ? std::vector<std::unique_ptr<device::FidoDiscoveryBase>>()
+-          : req_state_->request_delegate->CreatePlatformDiscoveries();
++  auto native_authorized = base::BindRepeating(
++      [](base::WeakPtr<AuthenticatorCommonImpl> self, RequestKey key,
++         std::shared_ptr<BrowserPasskeyAttempt> attempt) {
++        return self && self->CheckRequestKey(key) &&
++               self->req_state_->browser_passkey_attempt == attempt &&
++               (!attempt ||
++                (attempt->policy.active() &&
++                 self->BrowserPasskeyAttemptCurrent(key, attempt->id)));
++      },
++      weak_factory_.GetWeakPtr(), request_key,
++      req_state_->browser_passkey_attempt);
++  std::vector<std::unique_ptr<device::FidoDiscoveryBase>> platform_discoveries;
++  if (req_state_->browser_passkey_attempt &&
++      !discovery_factory()->IsTestOverride()) {
++    auto attempt = req_state_->browser_passkey_attempt;
++#if BUILDFLAG(IS_MAC)
++    // Select only this request's browser provider. Never race a local Touch ID
++    // sheet or another factory-created iCloud controller against it.
++    discovery_factory()->set_mac_touch_id_info(std::nullopt);
++    discovery_factory()->set_nswindow(base::apple::WeakNSWindow());
++#endif
++    platform_discoveries =
++        req_state_->request_delegate->CreateBrowserPasskeyDiscoveries(
++            *ctap_get_assertion_request, transports, native_authorized);
++    if (!weak_this || !weak_this->CheckRequestKey(request_key) ||
++        req_state_->browser_passkey_attempt != attempt)
++      return;
++    if (platform_discoveries.size() != 1 || !platform_discoveries.front() ||
++        !transports.contains(platform_discoveries.front()->transport()) ||
++        !attempt->policy.active() ||
++        !BrowserPasskeyAttemptCurrent(request_key, attempt->id)) {
++      CompleteGetAssertionRequest(
++          blink::mojom::AuthenticatorStatus::NOT_ALLOWED_ERROR);
++      return;
++    }
++  } else if (!discovery_factory()->IsTestOverride()) {
++    platform_discoveries =
++        req_state_->request_delegate->CreatePlatformDiscoveries();
++  }
+   auto request_handler = std::make_unique<device::GetAssertionRequestHandler>(
+       discovery_factory(), std::move(platform_discoveries),
+       std::move(transports), *ctap_get_assertion_request,
+@@ -1160,7 +1205,8 @@ void AuthenticatorCommonImpl::StartGetAssertionRequest(
+             self->OnSignResponse(status, std::move(responses), authenticator);
+           },
+           weak_factory_.GetWeakPtr(), request_key,
+-          req_state_->browser_passkey_attempt));
++          req_state_->browser_passkey_attempt),
++      native_authorized);
+   auto cancel_ui_timeout_callback =
+       is_immediate_mediation
+           ? base::BindOnce(&AuthenticatorCommonImpl::CancelImmediateTimeout,
+diff --git a/content/public/browser/authenticator_request_client_delegate.cc b/content/public/browser/authenticator_request_client_delegate.cc
+index f0b5d77988640105bd2b9481f0cdca2700c3f8c8..785d6da3f9dce40b774a7377dfcae9fd2be0a4bb 100644
+--- a/content/public/browser/authenticator_request_client_delegate.cc
++++ b/content/public/browser/authenticator_request_client_delegate.cc
+@@ -60,6 +60,14 @@ AuthenticatorRequestClientDelegate::CreateBrowserPasskeyRetirementCallback(
+   return base::OnceClosure();
+ }
+ 
++std::vector<std::unique_ptr<device::FidoDiscoveryBase>>
++AuthenticatorRequestClientDelegate::CreateBrowserPasskeyDiscoveries(
++    const device::CtapGetAssertionRequest&,
++    const base::flat_set<device::FidoTransportProtocol>&,
++    base::RepeatingCallback<bool()>) {
++  return {};
++}
++
+ void AuthenticatorRequestClientDelegate::SetRelyingPartyId(const std::string&) {
+ }
+ 
+diff --git a/content/public/browser/authenticator_request_client_delegate.h b/content/public/browser/authenticator_request_client_delegate.h
+index 58001230414e5062495a752d84c81c685c8df9e3..ea807056ba54bf8e63e933f8b4c2fed363640e7f 100644
+--- a/content/public/browser/authenticator_request_client_delegate.h
++++ b/content/public/browser/authenticator_request_client_delegate.h
+@@ -176,6 +176,14 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
+   virtual base::OnceClosure CreateBrowserPasskeyRetirementCallback(
+       const std::string& attempt_id);
+ 
++  // Separate from internal-only CreatePlatformDiscoveries: a validated browser
++  // assertion may require a genuine hybrid discovery. No RP transport is added.
++  virtual std::vector<std::unique_ptr<device::FidoDiscoveryBase>>
++  CreateBrowserPasskeyDiscoveries(
++      const device::CtapGetAssertionRequest& request,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      base::RepeatingCallback<bool()> authorized);
++
+   // SetRelyingPartyId sets the RP ID for this request. This is called after
+   // |WebAuthenticationDelegate::MaybeGetRelyingPartyIdOverride| is given the
+   // opportunity to affect this value. For typical origins, the RP ID is just a
+diff --git a/device/fido/BUILD.gn b/device/fido/BUILD.gn
+index 69fd774f57e3be2290564bcd807f1c592dbe8fa3..ab0f241f02ef72ed1414b6976de77182f334c4d5 100644
+--- a/device/fido/BUILD.gn
++++ b/device/fido/BUILD.gn
+@@ -182,6 +182,8 @@ component("fido") {
+         "large_blob.h",
+         "mac/icloud_keychain.h",
+         "mac/icloud_keychain_sys.h",
++      "mac/oya_browser_controller_lease.h",
++      "mac/oya_browser_transport_policy.h",
+         "make_credential_request_handler.cc",
+         "make_credential_request_handler.h",
+         "make_credential_task.cc",
+diff --git a/device/fido/fido_discovery_base.h b/device/fido/fido_discovery_base.h
+index 09ef3a28d7a489281a1b099f7a2166179647add8..d1557876f4de00311903d1753ea1b9d75f2aa125 100644
+--- a/device/fido/fido_discovery_base.h
++++ b/device/fido/fido_discovery_base.h
+@@ -86,6 +86,11 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoDiscoveryBase {
+   // Stop discovering new devices.
+   virtual void Stop();
+ 
++  // True only for a hybrid discovery whose OS controller owns Bluetooth
++  // discovery, proximity and permission handling. It needs no browser BLE
++  // adapter manager; this never grants or widens a relying party transport.
++  virtual bool IsOsManagedHybrid() const { return false; }
++
+   Observer* observer() const { return observer_; }
+   void set_observer(Observer* observer) {
+     DCHECK(!observer_ || !observer) << "Only one observer is supported.";
+diff --git a/device/fido/fido_request_handler_base.cc b/device/fido/fido_request_handler_base.cc
+index 92809136af650c5ebcbfeca5069ee1c403917ccf..90d84cc93a53d0fab93446dce0986a828345a7d6 100644
+--- a/device/fido/fido_request_handler_base.cc
++++ b/device/fido/fido_request_handler_base.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "device/fido/fido_request_handler_base.h"
+ 
++#include <algorithm>
+ #include <string_view>
+ #include <utility>
+ 
+@@ -255,6 +256,8 @@ void FidoRequestHandlerBase::InitDiscoveries(
+     if (!available_transports.contains(discovery->transport())) {
+       continue;
+     }
++    transport_availability_info_.available_transports.insert(
++        discovery->transport());
+     discovery->set_observer(this);
+     discoveries_.emplace_back(std::move(discovery));
+   }
+@@ -278,6 +281,48 @@ void FidoRequestHandlerBase::InitDiscoveries(
+   transport_availability_callback_readiness_->num_discoveries_pending =
+       discoveries_.size();
+ 
++  transport_availability_info_.has_os_managed_hybrid =
++      HasUsableOsManagedHybridDiscovery();
++  const bool needs_browser_ble =
++      std::ranges::any_of(discoveries_, [](const auto& discovery) {
++        return discovery->transport() == FidoTransportProtocol::kHybrid &&
++               !discovery->IsOsManagedHybrid();
++      });
++  // The OS-only route must not probe the browser adapter or inspect/log its
++  // responsible-process Bluetooth metadata. Apple's UI owns that state.
++  if (needs_browser_ble)
++    StartBrowserBleDiscovery();
++
++#if BUILDFLAG(IS_MAC)
++  transport_availability_info_.platform_has_biometrics =
++      device::fido::mac::DeviceHasBiometricsAvailable();
++  FIDO_LOG(DEBUG) << "MacOS biometrics availability check done";
++  MaybeSignalTransportsEnumerated();
++#elif BUILDFLAG(IS_WIN)
++  transport_availability_callback_readiness_
++      ->platform_biometrics_check_pending = true;
++  FIDO_LOG(DEBUG) << "Checking for Windows biometrics availability";
++  device::fido::win::DeviceHasBiometricsAvailable(base::BindOnce(
++      [](base::WeakPtr<FidoRequestHandlerBase> handler,
++         bool biometrics_available) {
++        if (!handler) {
++          return;
++        }
++        handler->transport_availability_info_.platform_has_biometrics =
++            biometrics_available;
++        handler->transport_availability_callback_readiness_
++            ->platform_biometrics_check_pending = false;
++        FIDO_LOG(DEBUG) << "Windows biometric availability check done";
++        handler->MaybeSignalTransportsEnumerated();
++      },
++      GetWeakPtr()));
++#else
++  FIDO_LOG(DEBUG) << "No need to check for biometrics on this platform";
++  MaybeSignalTransportsEnumerated();
++#endif
++}
++
++void FidoRequestHandlerBase::StartBrowserBleDiscovery() {
+ #if BUILDFLAG(IS_MAC)
+   // On recent macOS a process must have listed Bluetooth metadata in its
+   // Info.plist in order to call Bluetooth APIs. Failure to do so results in
+@@ -320,34 +365,21 @@ void FidoRequestHandlerBase::InitDiscoveries(
+         base::BindOnce(&FidoRequestHandlerBase::ConstructBleAdapterPowerManager,
+                        weak_factory_.GetWeakPtr()));
+   }
++}
+ 
+-#if BUILDFLAG(IS_MAC)
+-  transport_availability_info_.platform_has_biometrics =
+-      device::fido::mac::DeviceHasBiometricsAvailable();
+-  FIDO_LOG(DEBUG) << "MacOS biometrics availability check done";
+-  MaybeSignalTransportsEnumerated();
+-#elif BUILDFLAG(IS_WIN)
+-  transport_availability_callback_readiness_
+-      ->platform_biometrics_check_pending = true;
+-  FIDO_LOG(DEBUG) << "Checking for Windows biometrics availability";
+-  device::fido::win::DeviceHasBiometricsAvailable(base::BindOnce(
+-      [](base::WeakPtr<FidoRequestHandlerBase> handler,
+-         bool biometrics_available) {
+-        if (!handler) {
+-          return;
+-        }
+-        handler->transport_availability_info_.platform_has_biometrics =
+-            biometrics_available;
+-        handler->transport_availability_callback_readiness_
+-            ->platform_biometrics_check_pending = false;
+-        FIDO_LOG(DEBUG) << "Windows biometric availability check done";
+-        handler->MaybeSignalTransportsEnumerated();
+-      },
+-      GetWeakPtr()));
+-#else
+-  FIDO_LOG(DEBUG) << "No need to check for biometrics on this platform";
+-  MaybeSignalTransportsEnumerated();
+-#endif
++bool FidoRequestHandlerBase::HasUsableHybridDiscovery() const {
++  return std::ranges::any_of(discoveries_, [this](const auto& discovery) {
++    return discovery->transport() == FidoTransportProtocol::kHybrid &&
++           !failed_hybrid_discoveries_.contains(discovery.get());
++  });
++}
++
++bool FidoRequestHandlerBase::HasUsableOsManagedHybridDiscovery() const {
++  return std::ranges::any_of(discoveries_, [this](const auto& discovery) {
++    return discovery->transport() == FidoTransportProtocol::kHybrid &&
++           discovery->IsOsManagedHybrid() &&
++           !failed_hybrid_discoveries_.contains(discovery.get());
++  });
+ }
+ 
+ FidoRequestHandlerBase::~FidoRequestHandlerBase() {
+@@ -386,13 +418,14 @@ void FidoRequestHandlerBase::OnBluetoothAdapterEnumerated(
+     BleStatus ble_status,
+     bool can_power_on,
+     bool is_peripheral_role_supported) {
+-  if (!is_present) {
++  if (!is_present && !transport_availability_info_.has_os_managed_hybrid) {
+     transport_availability_info_.available_transports.erase(
+         FidoTransportProtocol::kHybrid);
+   }
+ 
+   transport_availability_callback_readiness_->ble_information_pending = false;
+   transport_availability_info_.ble_status = ble_status;
++  transport_availability_info_.ble_status_is_known = true;
+   transport_availability_info_.can_power_on_ble_adapter = can_power_on;
+   FIDO_LOG(DEBUG) << "Bluetooth status enumerated";
+   MaybeSignalTransportsEnumerated();
+@@ -401,6 +434,7 @@ void FidoRequestHandlerBase::OnBluetoothAdapterEnumerated(
+ void FidoRequestHandlerBase::OnBluetoothAdapterStatusChanged(
+     BleStatus ble_status) {
+   transport_availability_info_.ble_status = ble_status;
++  transport_availability_info_.ble_status_is_known = true;
+ 
+   if (observer_) {
+     observer_->BluetoothAdapterStatusChanged(ble_status);
+@@ -480,11 +514,18 @@ void FidoRequestHandlerBase::DiscoveryStarted(
+   }
+ 
+   if (!success) {
+-    if (!is_platform_discovery ||
+-        (transport_availability_callback_readiness_
+-                 ->num_platform_discoveries_pending == 0 &&
+-         !transport_availability_callback_readiness_
+-              ->platform_discovery_succeeded)) {
++    if (discovery->transport() == FidoTransportProtocol::kHybrid) {
++      failed_hybrid_discoveries_.insert(discovery);
++      transport_availability_info_.has_os_managed_hybrid =
++          HasUsableOsManagedHybridDiscovery();
++      if (!HasUsableHybridDiscovery())
++        transport_availability_info_.available_transports.erase(
++            FidoTransportProtocol::kHybrid);
++    } else if (!is_platform_discovery ||
++               (transport_availability_callback_readiness_
++                        ->num_platform_discoveries_pending == 0 &&
++                !transport_availability_callback_readiness_
++                     ->platform_discovery_succeeded)) {
+       transport_availability_info_.available_transports.erase(
+           discovery->transport());
+     }
+diff --git a/device/fido/fido_request_handler_base.h b/device/fido/fido_request_handler_base.h
+index cd0cc4cf2ad4d53292db5a7355d1d47836d27e53..e9d79927451a22c5eada7595c336449e502fd510 100644
+--- a/device/fido/fido_request_handler_base.h
++++ b/device/fido/fido_request_handler_base.h
+@@ -98,6 +98,11 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+     // relying party.
+     base::flat_set<FidoTransportProtocol> available_transports;
+ 
++    // An attached OS-managed route remains independent of the browser adapter.
++    bool has_os_managed_hybrid = false;
++    // ble_status describes only browser-owned BLE and is otherwise unmeasured.
++    bool ble_status_is_known = false;
++
+     // Whether the platform authenticator has a matching credential for the
+     // request. This is only set for a GetAssertion request.
+     RecognizedCredential has_platform_authenticator_credential =
+@@ -188,7 +193,6 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+     // makeCredential requests. See also `request_is_internal_only`, which isn't
+     // specific to makeCredential requests.
+     std::optional<AuthenticatorAttachment> make_credential_attachment;
+-
+   };
+ 
+   class COMPONENT_EXPORT(DEVICE_FIDO) Observer {
+@@ -317,6 +321,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+   void OnBluetoothAdapterStatusChanged(BleStatus ble_status);
+   void PowerOnBluetoothAdapter();
+ 
++  // Requires browser BLE setup and its adapter manager. OS-managed-only hybrid
++  // callers must use their native controller, never this permission callback.
+   // Queries the OS for the status of the Bluetooth adapter. This is useful on
+   // macOS when TransportAvailabilityInfo::ble_status reports
+   // kPendingPermissionRequest, in which case the OS will display a blocking
+@@ -369,6 +375,11 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+ 
+   void Start();
+ 
++  // The complete browser-only BLE scope includes metadata checks, adapter
++  // probes and the manager. Native tests replace this boundary without making
++  // physical Bluetooth calls; OS-managed-only routes never enter it.
++  virtual void StartBrowserBleDiscovery();
++
+   AuthenticatorMap& active_authenticators() { return active_authenticators_; }
+   std::vector<std::unique_ptr<FidoDiscoveryBase>>& discoveries() {
+     return discoveries_;
+@@ -409,6 +420,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+       RecognizedCredential has_credentials);
+ 
+  private:
++  bool HasUsableHybridDiscovery() const;
++  bool HasUsableOsManagedHybridDiscovery() const;
++
+   friend class FidoRequestHandlerTest;
+ 
+   void MaybeSignalTransportsEnumerated();
+@@ -424,6 +438,9 @@ class COMPONENT_EXPORT(DEVICE_FIDO) FidoRequestHandlerBase
+ 
+   AuthenticatorMap active_authenticators_;
+   std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries_;
++  // Destroyed before discoveries_: these non-owning identities never outlive
++  // the discoveries they identify, including failure and adapter callbacks.
++  base::flat_set<raw_ptr<FidoDiscoveryBase>> failed_hybrid_discoveries_;
+   raw_ptr<Observer> observer_ = nullptr;
+   TransportAvailabilityInfo transport_availability_info_;
+   std::unique_ptr<BleAdapterManager> bluetooth_adapter_manager_;
+diff --git a/device/fido/fido_request_handler_unittest.cc b/device/fido/fido_request_handler_unittest.cc
+index 5b5bcffcb79136c2721f6c368d3680c1bd876299..093cc27414b3b47239ad103576c3446d8d0549b8 100644
+--- a/device/fido/fido_request_handler_unittest.cc
++++ b/device/fido/fido_request_handler_unittest.cc
+@@ -19,6 +19,7 @@
+ #include "base/memory/weak_ptr.h"
+ #include "base/notreached.h"
+ #include "base/numerics/safe_conversions.h"
++#include "base/task/sequenced_task_runner.h"
+ #include "base/test/task_environment.h"
+ #include "base/test/test_future.h"
+ #include "base/time/time.h"
+@@ -31,6 +32,7 @@
+ #include "device/fido/fido_request_handler_base.h"
+ #include "device/fido/fido_task.h"
+ #include "device/fido/fido_test_data.h"
++#include "device/fido/get_assertion_request_handler.h"
+ #include "device/fido/mock_fido_device.h"
+ #include "device/fido/public/fido_constants.h"
+ #include "device/fido/public/fido_transport_protocol.h"
+@@ -736,4 +738,216 @@ TEST_F(FidoRequestHandlerTest, TransportAvailabilityOfWindowsAuthenticator) {
+ }
+ #endif  // BUILDFLAG(IS_WIN)
+ 
++namespace {
++
++// Native discovery seam: reports readiness asynchronously without touching an
++// authenticator, adapter, credential store or OS authentication UI.
++class HybridProbeDiscovery : public FidoDiscoveryBase {
++ public:
++  HybridProbeDiscovery(FidoTransportProtocol role,
++                       bool os_managed,
++                       std::shared_ptr<size_t> starts,
++                       bool success = true)
++      : FidoDiscoveryBase(role),
++        os_managed_(os_managed),
++        starts_(std::move(starts)),
++        success_(success) {}
++  void Start() override {
++    ++*starts_;
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&HybridProbeDiscovery::Ready,
++                                  weak_factory_.GetWeakPtr()));
++  }
++  bool IsOsManagedHybrid() const override { return os_managed_; }
++
++ private:
++  void Ready() { observer()->DiscoveryStarted(this, success_); }
++  const bool os_managed_;
++  const std::shared_ptr<size_t> starts_;
++  const bool success_;
++  base::WeakPtrFactory<HybridProbeDiscovery> weak_factory_{this};
++};
++
++// Init from the derived constructor so virtual dispatch intercepts the entire
++// browser-only Bluetooth metadata/probe/manager scope, not merely its last
++// task.
++class HybridProbeHandler : public FidoRequestHandlerBase {
++ public:
++  HybridProbeHandler(test::FakeFidoDiscoveryFactory* factory,
++                     std::vector<std::unique_ptr<FidoDiscoveryBase>> additional,
++                     base::flat_set<FidoTransportProtocol> allowed) {
++    InitDiscoveries(factory, std::move(additional), std::move(allowed), false);
++    Start();
++  }
++  size_t browser_ble_setups = 0;
++
++ private:
++  void DispatchRequest(FidoAuthenticator*) override {}
++  void StartBrowserBleDiscovery() override { ++browser_ble_setups; }
++};
++
++}  // namespace
++
++TEST_F(FidoRequestHandlerTest,
++       OsHybridRestoresFactoryEmptyRouteWithoutBrowserBle) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, true, starts));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kHybrid});
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_TRUE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_TRUE(info.has_os_managed_hybrid);
++  EXPECT_FALSE(info.ble_status_is_known);
++  EXPECT_EQ(handler.browser_ble_setups, 0u);
++  EXPECT_EQ(*starts, 1u);
++}
++
++TEST_F(FidoRequestHandlerTest, DisallowedAdditionalHybridCannotRestoreOrStart) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, true, starts));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kInternal});
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_FALSE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_FALSE(info.has_os_managed_hybrid);
++  EXPECT_EQ(handler.browser_ble_setups, 0u);
++  EXPECT_EQ(*starts, 0u);
++}
++
++TEST_F(FidoRequestHandlerTest,
++       MixedHybridPreservesOsRouteWithoutBrowserAdapter) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  for (bool os_managed : {true, false})
++    discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++        FidoTransportProtocol::kHybrid, os_managed, starts));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kHybrid});
++  handler.OnBluetoothAdapterEnumerated(
++      false, FidoRequestHandlerBase::BleStatus::kOff, false, false);
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_TRUE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_TRUE(info.has_os_managed_hybrid);
++  EXPECT_TRUE(info.ble_status_is_known);
++  EXPECT_EQ(handler.browser_ble_setups, 1u);
++  EXPECT_EQ(*starts, 2u);
++}
++
++TEST_F(FidoRequestHandlerTest, BrowserHybridStillRequiresBrowserAdapter) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, false, starts));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kHybrid});
++  handler.OnBluetoothAdapterEnumerated(
++      false, FidoRequestHandlerBase::BleStatus::kOff, false, false);
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_FALSE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_FALSE(info.has_os_managed_hybrid);
++  EXPECT_TRUE(info.ble_status_is_known);
++  EXPECT_EQ(handler.browser_ble_setups, 1u);
++}
++
++TEST_F(FidoRequestHandlerTest,
++       InternalAdditionalDiscoveryNeverSetsUpBrowserBle) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kInternal, false, starts));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kInternal});
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_TRUE(
++      info.available_transports.contains(FidoTransportProtocol::kInternal));
++  EXPECT_FALSE(info.has_os_managed_hybrid);
++  EXPECT_FALSE(info.ble_status_is_known);
++  EXPECT_EQ(handler.browser_ble_setups, 0u);
++  EXPECT_EQ(*starts, 1u);
++}
++
++TEST_F(FidoRequestHandlerTest, FailedBrowserHybridCannotEraseLiveOsRoute) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, true, starts));
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, false, starts, false));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kHybrid});
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_TRUE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_TRUE(info.has_os_managed_hybrid);
++  EXPECT_EQ(handler.browser_ble_setups, 1u);
++}
++
++TEST_F(FidoRequestHandlerTest, FailedOsHybridDoesNotClaimLiveOsRoute) {
++  auto starts = std::make_shared<size_t>(0);
++  std::vector<std::unique_ptr<FidoDiscoveryBase>> discoveries;
++  discoveries.push_back(std::make_unique<HybridProbeDiscovery>(
++      FidoTransportProtocol::kHybrid, true, starts, false));
++  TestObserver observer;
++  HybridProbeHandler handler(&fake_discovery_factory_, std::move(discoveries),
++                             {FidoTransportProtocol::kHybrid});
++  handler.SetObserver(&observer);
++  auto info = observer.WaitForTransportAvailabilityInfo();
++  EXPECT_FALSE(
++      info.available_transports.contains(FidoTransportProtocol::kHybrid));
++  EXPECT_FALSE(info.has_os_managed_hybrid);
++  EXPECT_EQ(handler.browser_ble_setups, 0u);
++}
++
++// The discovery's automatic dispatch must honor the same revocation guard as
++// explicit embedder dispatch. The mock permits GetInfo only, never
++// GetAssertion.
++TEST_F(FidoRequestHandlerTest,
++       RevokedAutomaticAssertionDispatchNeverCallsDevice) {
++  ForgeNextHidDiscovery();
++  size_t authorization_checks = 0;
++  bool completed = false;
++  GetAssertionRequestHandler handler(
++      &fake_discovery_factory_, {},
++      {FidoTransportProtocol::kUsbHumanInterfaceDevice},
++      CtapGetAssertionRequest("rp.id", "{}"), CtapGetAssertionOptions(), false,
++      base::BindOnce(
++          [](bool* completed, GetAssertionStatus,
++             std::optional<std::vector<AuthenticatorGetAssertionResponse>>,
++             FidoAuthenticator*) { *completed = true; },
++          &completed),
++      base::BindRepeating(
++          [](size_t* checks) {
++            ++*checks;
++            return false;
++          },
++          &authorization_checks));
++  auto device = MockFidoDevice::MakeCtapWithGetInfoExpectation();
++  discovery()->AddDevice(std::move(device));
++  discovery()->WaitForCallToStartAndSimulateSuccess();
++  task_environment_.RunUntilIdle();
++  EXPECT_EQ(authorization_checks, 1u);
++  EXPECT_FALSE(completed);
++  discovery_ = nullptr;
++}
++
+ }  // namespace device
+diff --git a/device/fido/get_assertion_request_handler.cc b/device/fido/get_assertion_request_handler.cc
+index 56653859b9c297d6dbe1a03c4df2355f6f147d6c..581130f563eda4ebeb0ea6542ca21d13c905fbc1 100644
+--- a/device/fido/get_assertion_request_handler.cc
++++ b/device/fido/get_assertion_request_handler.cc
+@@ -298,14 +298,16 @@ GetAssertionRequestHandler::GetAssertionRequestHandler(
+     CtapGetAssertionRequest request,
+     CtapGetAssertionOptions options,
+     bool allow_skipping_pin_touch,
+-    CompletionCallback completion_callback)
++    CompletionCallback completion_callback,
++    base::RepeatingCallback<bool()> authorization_guard)
+     : FidoRequestHandlerBase(fido_discovery_factory,
+                              std::move(additional_discoveries),
+                              supported_transports),
+       completion_callback_(std::move(completion_callback)),
+       request_(std::move(request)),
+       options_(std::move(options)),
+-      allow_skipping_pin_touch_(allow_skipping_pin_touch) {
++      allow_skipping_pin_touch_(allow_skipping_pin_touch),
++      authorization_guard_(std::move(authorization_guard)) {
+   transport_availability_info().request_type = FidoRequestType::kGetAssertion;
+   transport_availability_info().user_verification_requirement =
+       request_.user_verification;
+@@ -369,6 +371,8 @@ void GetAssertionRequestHandler::OnBluetoothAdapterEnumerated(
+ void GetAssertionRequestHandler::DispatchRequest(
+     FidoAuthenticator* authenticator) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(my_sequence_checker_);
++  if (authorization_guard_ && !authorization_guard_.Run())
++    return;
+   if (state_ != State::kWaitingForTouch) {
+     FIDO_LOG(DEBUG) << "Not dispatching request to "
+                     << authenticator->GetDisplayName()
+diff --git a/device/fido/get_assertion_request_handler.h b/device/fido/get_assertion_request_handler.h
+index 680fa167dc7fa3a87817f33b39b05a665f0fff36..eae856b6924f7ca019bf5481d430707a4a775d85 100644
+--- a/device/fido/get_assertion_request_handler.h
++++ b/device/fido/get_assertion_request_handler.h
+@@ -53,7 +53,8 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
+       CtapGetAssertionRequest request_parameter,
+       CtapGetAssertionOptions request_options,
+       bool allow_skipping_pin_touch,
+-      CompletionCallback completion_callback);
++      CompletionCallback completion_callback,
++      base::RepeatingCallback<bool()> authorization_guard = {});
+ 
+   GetAssertionRequestHandler(const GetAssertionRequestHandler&) = delete;
+   GetAssertionRequestHandler& operator=(const GetAssertionRequestHandler&) =
+@@ -130,6 +131,10 @@ class COMPONENT_EXPORT(DEVICE_FIDO) GetAssertionRequestHandler
+   // protected authenticator.
+   bool allow_skipping_pin_touch_;
+ 
++  // The embedder's native-only guard may deny queued automatic dispatch after
++  // revocation. It must never run JS or destroy the handler from inside Run().
++  base::RepeatingCallback<bool()> authorization_guard_;
++
+   // selected_authenticator_for_pin_uv_auth_token_ points to the authenticator
+   // that was tapped by the user while requesting a pinUvAuthToken from
+   // connected authenticators. The object is owned by the underlying discovery
+diff --git a/device/fido/mac/icloud_keychain.h b/device/fido/mac/icloud_keychain.h
+index 546f8ee942047fda18bac06d47e203b795a61a2c..c33673ca727420514f1f9d67ac6692b4fb98532c 100644
+--- a/device/fido/mac/icloud_keychain.h
++++ b/device/fido/mac/icloud_keychain.h
+@@ -12,13 +12,16 @@
+ 
+ #include "base/apple/owned_objc.h"
+ #include "base/component_export.h"
++#include "base/functional/callback.h"
+ #include "build/build_config.h"
++#include "device/fido/public/fido_transport_protocol.h"
+ 
+ static_assert(BUILDFLAG(IS_MAC));
+ 
+ namespace device {
+ 
+ class FidoDiscoveryBase;
++class CtapGetAssertionRequest;
+ 
+ namespace fido::icloud_keychain {
+ 
+@@ -33,6 +36,16 @@ COMPONENT_EXPORT(DEVICE_FIDO)
+ std::unique_ptr<FidoDiscoveryBase> NewDiscovery(
+     base::apple::WeakNSWindow ns_window);
+ 
++// The isolated get-only browser discovery preserves the RP-intersected role.
++// A hybrid-only discovery and its authenticator both report hybrid transport.
++// Returns null for unsupported roles or an unavailable native browser provider.
++COMPONENT_EXPORT(DEVICE_FIDO)
++std::unique_ptr<FidoDiscoveryBase> NewBrowserDiscovery(
++    base::apple::WeakNSWindow ns_window,
++    FidoTransportProtocol discovery_role,
++    const CtapGetAssertionRequest& original_request,
++    base::RepeatingCallback<bool()> authorized);
++
+ // Returns true if the user has granted passkey enumeration permission, false if
+ // they have denied it, and `nullopt` if the user hasn't made a choice.
+ COMPONENT_EXPORT(DEVICE_FIDO)
+diff --git a/device/fido/mac/icloud_keychain.mm b/device/fido/mac/icloud_keychain.mm
+index c28b84e025e7941e8fde6b47b2071faf92107c62..26a2b175d7e2686e506c33cdbb4730b46a398089 100644
+--- a/device/fido/mac/icloud_keychain.mm
++++ b/device/fido/mac/icloud_keychain.mm
+@@ -37,6 +37,8 @@
+ #include "device/fido/fido_discovery_base.h"
+ #include "device/fido/large_blob.h"
+ #include "device/fido/mac/icloud_keychain_sys.h"
++#include "device/fido/mac/oya_browser_controller_lease.h"
++#include "device/fido/mac/oya_browser_transport_policy.h"
+ #include "device/fido/public/features.h"
+ #include "device/fido/public/fido_transport_protocol.h"
+ #include "device/fido/public/fido_types.h"
+@@ -85,6 +87,25 @@ AuthenticatorSupportedOptions AuthenticatorOptions() {
+   return options;
+ }
+ 
++using BrowserPolicy = oya::webauthn::BrowserTransportPolicy;
++using BrowserTransport = oya::webauthn::BrowserTransport;
++
++std::shared_ptr<const BrowserPolicy> SnapshotBrowserPolicy(
++    const CtapGetAssertionRequest& request,
++    FidoTransportProtocol role) {
++  std::vector<oya::webauthn::BrowserCredentialRule> rules;
++  for (const auto& credential : request.allow_list) {
++    rules.push_back(
++        {credential.id,
++         credential.transports.empty() ||
++             credential.transports.contains(FidoTransportProtocol::kInternal),
++         credential.transports.empty() ||
++             credential.transports.contains(FidoTransportProtocol::kHybrid)});
++  }
++  return std::make_shared<BrowserPolicy>(
++      role == FidoTransportProtocol::kInternal, true, std::move(rules));
++}
++
+ // This enum is used in a histogram. Never change assigned values and only add
+ // new entries at the end.
+ enum class PasskeyPermissionMetric {
+@@ -133,7 +154,21 @@ constexpr char kMetricName[] = "WebAuthentication.MacOS.PasskeyPermission";
+ 
+ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+  public:
+-  explicit Authenticator(NSWindow* window) : window_(window) {}
++  explicit Authenticator(
++      NSWindow* window,
++      std::optional<FidoTransportProtocol> browser_role = std::nullopt,
++      base::RepeatingCallback<bool()> authorized = {},
++      std::shared_ptr<const BrowserPolicy> original_policy = {})
++      : window_(browser_role ? nil : window),
++        browser_window_(window),
++        browser_role_(browser_role),
++        browser_options_(AuthenticatorOptions()),
++        browser_authorized_(std::move(authorized)),
++        browser_original_policy_(std::move(original_policy)) {
++    if (browser_role == FidoTransportProtocol::kHybrid)
++      browser_options_.is_platform_device =
++          AuthenticatorSupportedOptions::PlatformDevice::kNo;
++  }
+   Authenticator(const Authenticator&) = delete;
+   Authenticator& operator=(const Authenticator&) = delete;
+ 
+@@ -146,6 +181,11 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+   void MakeCredential(CtapMakeCredentialRequest request,
+                       MakeCredentialOptions options,
+                       MakeCredentialCallback callback) override {
++    if (browser_role_) {
++      std::move(callback).Run(MakeCredentialStatus::kUserConsentDenied,
++                              std::nullopt);
++      return;
++    }
+     scoped_refptr<SystemInterface> sys_interface = GetSystemInterface();
+     if (!SupportsLargeBlob()) {
+       options.large_blob_support = LargeBlobSupport::kNotRequested;
+@@ -202,6 +242,11 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+   void GetAssertion(CtapGetAssertionRequest request,
+                     CtapGetAssertionOptions options,
+                     GetAssertionCallback callback) override {
++    if (browser_role_) {
++      GetBrowserAssertion(std::move(request), std::move(options),
++                          std::move(callback));
++      return;
++    }
+     scoped_refptr<SystemInterface> sys_interface = GetSystemInterface();
+ 
+     // Authentication is not required for this operation, but it's a moment
+@@ -224,8 +269,8 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+       case SystemInterface::kAuthAuthorized:
+         auto continuation = base::BindOnce(
+             &Authenticator::OnGetAssertionComplete, weak_factory_.GetWeakPtr(),
+-            options.large_blob_read, options.large_blob_write.has_value(),
+-            std::move(callback));
++            std::nullopt, options.large_blob_read,
++            options.large_blob_write.has_value(), std::move(callback));
+         sys_interface->GetAssertion(window_, std::move(request),
+                                     GetLargeBlobAssertionInputs(options),
+                                     std::move(continuation));
+@@ -248,8 +293,8 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+ 
+     auto continuation = base::BindOnce(
+         &Authenticator::OnGetAssertionComplete, weak_factory_.GetWeakPtr(),
+-        options.large_blob_read, options.large_blob_write.has_value(),
+-        std::move(callback));
++        std::nullopt, options.large_blob_read,
++        options.large_blob_write.has_value(), std::move(callback));
+     sys_interface->GetAssertion(window_, std::move(request),
+                                 GetLargeBlobAssertionInputs(options),
+                                 std::move(continuation));
+@@ -259,6 +304,11 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+       const CtapGetAssertionRequest& request,
+       const CtapGetAssertionOptions& options,
+       GetPlatformCredentialInfoForRequestCallback callback) override {
++    if (browser_role_) {
++      std::move(callback).Run(
++          {}, FidoRequestHandlerBase::RecognizedCredential::kUnknown);
++      return;
++    }
+     scoped_refptr<SystemInterface> sys_interface = GetSystemInterface();
+     switch (sys_interface->GetAuthState()) {
+       case SystemInterface::kAuthNotAuthorized:
+@@ -320,6 +370,14 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+   }
+ 
+   void Cancel() override {
++    if (browser_role_) {
++      if (browser_request_token_)
++        browser_request_.Revoke(*browser_request_token_);
++      auto cancel = std::move(browser_cancel_);
++      if (cancel)
++        std::move(cancel).Run();
++      return;
++    }
+     cancelled_ = true;
+     GetSystemInterface()->Cancel();
+     // If a request was outstanding, `OnMakeCredentialComplete` or
+@@ -330,16 +388,20 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+     return AuthenticatorType::kICloudKeychain;
+   }
+ 
+-  std::string GetId() const override { return "iCloudKeychain"; }
++  std::string GetId() const override {
++    return browser_role_ ? "oyaBrowserPasskeys" : "iCloudKeychain";
++  }
+ 
+   const AuthenticatorSupportedOptions& Options() const override {
++    if (browser_role_)
++      return browser_options_;
+     static const base::NoDestructor<AuthenticatorSupportedOptions> options(
+         AuthenticatorOptions());
+     return *options;
+   }
+ 
+   std::optional<FidoTransportProtocol> AuthenticatorTransport() const override {
+-    return FidoTransportProtocol::kInternal;
++    return browser_role_.value_or(FidoTransportProtocol::kInternal);
+   }
+ 
+   void GetTouch(base::OnceClosure callback) override { NOTREACHED(); }
+@@ -349,6 +411,89 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+   }
+ 
+  private:
++  // The logical request lease is separate from the SystemInterface's OS owner.
++  // A synchronous terminal callback cannot overwrite a newer cancellation
++  // handle.
++  void GetBrowserAssertion(CtapGetAssertionRequest request,
++                           CtapGetAssertionOptions options,
++                           GetAssertionCallback callback) {
++    auto policy = browser_original_policy_;
++    if (!policy) {
++      std::move(callback).Run(GetAssertionStatus::kUserConsentDenied, {});
++      return;
++    }
++    const auto role = policy->DiscoveryTransport();
++    const auto token = browser_request_.Acquire();
++    if (!role || !token || !browser_window_ || !browser_authorized_ ||
++        !browser_authorized_.Run()) {
++      if (token)
++        browser_request_.Complete(*token);
++      std::move(callback).Run(GetAssertionStatus::kUserConsentDenied, {});
++      return;
++    }
++    browser_request_token_ = token;
++    auto weak_this = weak_factory_.GetWeakPtr();
++    auto continuation = base::BindOnce(
++        &Authenticator::OnBrowserAssertionComplete, weak_this, *token,
++        std::move(policy), options.large_blob_read,
++        options.large_blob_write.has_value(), std::move(callback));
++    auto cancel = GetSystemInterface()->GetBrowserAssertion(
++        browser_window_, std::move(request), *browser_role_,
++        GetLargeBlobAssertionInputs(options), browser_authorized_,
++        std::move(continuation));
++    if (!weak_this || !weak_this->browser_request_.AllowsResult(*token)) {
++      if (cancel)
++        std::move(cancel).Run();
++      return;
++    }
++    browser_cancel_ = std::move(cancel);
++  }
++
++  void OnBrowserAssertionComplete(uint64_t token,
++                                  std::shared_ptr<const BrowserPolicy> policy,
++                                  bool read,
++                                  bool write,
++                                  GetAssertionCallback callback,
++                                  ASAuthorization* authorization,
++                                  NSError* error) {
++    if (!browser_request_.IsCurrent(token))
++      return;
++    const bool live = browser_request_.AllowsResult(token);
++    browser_request_.Complete(token);
++    browser_request_token_.reset();
++    browser_cancel_.Reset();
++    if (!live || error ||
++        ![authorization.credential
++            isKindOfClass:[ASAuthorizationPlatformPublicKeyCredentialAssertion
++                              class]]) {
++      std::move(callback).Run(GetAssertionStatus::kUserConsentDenied, {});
++      return;
++    }
++    if (@available(macOS 13.5, *)) {
++      auto* credential = (ASAuthorizationPlatformPublicKeyCredentialAssertion*)
++                             authorization.credential;
++      std::optional<BrowserTransport> actual;
++      if (credential.attachment ==
++          ASAuthorizationPublicKeyCredentialAttachmentPlatform)
++        actual = BrowserTransport::kInternal;
++      if (credential.attachment ==
++          ASAuthorizationPublicKeyCredentialAttachmentCrossPlatform)
++        actual = BrowserTransport::kHybrid;
++      auto id = NSDataToSpan(credential.credentialID);
++      if (actual &&
++          policy->AllowsResult(std::span<const uint8_t>(id.data(), id.size()),
++                               *actual)) {
++        const auto transport = *actual == BrowserTransport::kInternal
++                                   ? FidoTransportProtocol::kInternal
++                                   : FidoTransportProtocol::kHybrid;
++        OnGetAssertionComplete(transport, read, write, std::move(callback),
++                               authorization, nil);
++        return;
++      }
++    }
++    std::move(callback).Run(GetAssertionStatus::kUserConsentDenied, {});
++  }
++
+   void OnMakeCredentialComplete(MakeCredentialCallback callback,
+                                 bool large_blob_requested,
+                                 ASAuthorization* authorization,
+@@ -468,11 +613,13 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+                             std::move(response));
+   }
+ 
+-  void OnGetAssertionComplete(bool large_blob_read_requested,
+-                              bool large_blob_write_requested,
+-                              GetAssertionCallback callback,
+-                              ASAuthorization* authorization,
+-                              NSError* error) {
++  void OnGetAssertionComplete(
++      std::optional<FidoTransportProtocol> browser_transport,
++      bool large_blob_read_requested,
++      bool large_blob_write_requested,
++      GetAssertionCallback callback,
++      ASAuthorization* authorization,
++      NSError* error) {
+     if (cancelled_) {
+       cancelled_ = false;
+       std::move(callback).Run(GetAssertionStatus::kAuthenticatorResponseInvalid,
+@@ -523,11 +670,11 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+       return;
+     }
+ 
+-    // The hybrid flow can be offered in the macOS UI, so this may be
+-    // incorrect, but we've no way of knowing. It's not clear that we can
+-    // do much about this with the macOS API at the time of writing, short of
+-    // replacing the system UI completely.
+-    constexpr auto transport_used = FidoTransportProtocol::kInternal;
++    // Stock behavior is unchanged; the explicit browser route supplies only a
++    // verified attachment whose credential ID passed its original native
++    // policy.
++    const auto transport_used =
++        browser_transport.value_or(FidoTransportProtocol::kInternal);
+ 
+     AuthenticatorGetAssertionResponse response(
+         std::move(*authenticator_data),
+@@ -580,6 +727,14 @@ class API_AVAILABLE(macos(13.3)) Authenticator : public FidoAuthenticator {
+   }
+ 
+   NSWindow* __strong window_;
++  NSWindow* __weak browser_window_;
++  const std::optional<FidoTransportProtocol> browser_role_;
++  AuthenticatorSupportedOptions browser_options_;
++  const base::RepeatingCallback<bool()> browser_authorized_;
++  const std::shared_ptr<const BrowserPolicy> browser_original_policy_;
++  oya::webauthn::ControllerLease browser_request_;
++  std::optional<uint64_t> browser_request_token_;
++  base::OnceClosure browser_cancel_;
+   bool cancelled_ = false;
+   base::WeakPtrFactory<Authenticator> weak_factory_{this};
+ };
+@@ -612,6 +767,47 @@ class API_AVAILABLE(macos(13.3)) Discovery : public FidoDiscoveryBase {
+   base::WeakPtrFactory<Discovery> weak_factory_{this};
+ };
+ 
++class API_AVAILABLE(macos(13.3)) BrowserDiscovery final
++    : public FidoDiscoveryBase {
++ public:
++  BrowserDiscovery(base::apple::WeakNSWindow window,
++                   FidoTransportProtocol role,
++                   base::RepeatingCallback<bool()> authorized,
++                   std::shared_ptr<const BrowserPolicy> original_policy)
++      : FidoDiscoveryBase(role),
++        window_(window.Get()),
++        role_(role),
++        authorized_(std::move(authorized)),
++        original_policy_(std::move(original_policy)) {}
++  bool IsOsManagedHybrid() const override {
++    return role_ == FidoTransportProtocol::kHybrid;
++  }
++  void Start() override {
++    if (!observer())
++      return;
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&BrowserDiscovery::AddAuthenticator,
++                                  weak_factory_.GetWeakPtr()));
++  }
++
++ private:
++  void AddAuthenticator() {
++    if (!window_ || !authorized_ || !authorized_.Run()) {
++      observer()->DiscoveryStarted(this, false, {});
++      return;
++    }
++    authenticator_ = std::make_unique<Authenticator>(
++        window_, role_, authorized_, original_policy_);
++    observer()->DiscoveryStarted(this, true, {authenticator_.get()});
++  }
++  NSWindow* __weak window_;
++  const FidoTransportProtocol role_;
++  const base::RepeatingCallback<bool()> authorized_;
++  const std::shared_ptr<const BrowserPolicy> original_policy_;
++  std::unique_ptr<Authenticator> authenticator_;
++  base::WeakPtrFactory<BrowserDiscovery> weak_factory_{this};
++};
++
+ }  // namespace
+ 
+ bool IsSupported() {
+@@ -635,6 +831,25 @@ std::unique_ptr<FidoDiscoveryBase> NewDiscovery(
+   NOTREACHED();
+ }
+ 
++std::unique_ptr<FidoDiscoveryBase> NewBrowserDiscovery(
++    base::apple::WeakNSWindow window,
++    FidoTransportProtocol role,
++    const CtapGetAssertionRequest& original_request,
++    base::RepeatingCallback<bool()> authorized) {
++  if (!authorized)
++    return nullptr;
++  if (role != FidoTransportProtocol::kInternal &&
++      role != FidoTransportProtocol::kHybrid)
++    return nullptr;
++  if (@available(macOS 13.5, *)) {
++    if (IsSupported())
++      return std::make_unique<BrowserDiscovery>(
++          window, role, std::move(authorized),
++          SnapshotBrowserPolicy(original_request, role));
++  }
++  return nullptr;
++}
++
+ std::optional<bool> HasPermission() {
+   if (@available(macOS 13.5, *)) {
+     switch (GetSystemInterface()->GetAuthState()) {
+diff --git a/device/fido/mac/icloud_keychain_sys.h b/device/fido/mac/icloud_keychain_sys.h
+index 33e7ea97e23562746952b31d49b0c9f848d99c80..d1b06722f585bfe5862dfacea353efab65fe65f9 100644
+--- a/device/fido/mac/icloud_keychain_sys.h
++++ b/device/fido/mac/icloud_keychain_sys.h
+@@ -11,7 +11,7 @@
+ #import <Foundation/Foundation.h>
+ 
+ #include "base/component_export.h"
+-#include "base/functional/callback_forward.h"
++#include "base/functional/callback.h"
+ #include "base/memory/ref_counted.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "device/fido/ctap_get_assertion_request.h"
+@@ -81,6 +81,17 @@ class COMPONENT_EXPORT(DEVICE_FIDO) API_AVAILABLE(macos(13.3)) SystemInterface
+       LargeBlobAssertionInputs large_blob_inputs,
+       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) = 0;
+ 
++  // The experimental browser route returns cancellation bound to this exact
++  // controller operation. Busy rejection returns no authority over another
++  // controller. The global Cancel() method must not cancel this operation.
++  virtual base::OnceClosure GetBrowserAssertion(
++      NSWindow* window,
++      CtapGetAssertionRequest request,
++      FidoTransportProtocol discovery_role,
++      LargeBlobAssertionInputs large_blob_inputs,
++      base::RepeatingCallback<bool()> authorized,
++      base::OnceCallback<void(ASAuthorization*, NSError*)> callback);
++
+   virtual void Cancel() = 0;
+ 
+  protected:
+@@ -88,6 +99,19 @@ class COMPONENT_EXPORT(DEVICE_FIDO) API_AVAILABLE(macos(13.3)) SystemInterface
+   virtual ~SystemInterface();
+ };
+ 
++// Native tests may exercise ownership with real value requests while replacing
++// every controller perform/cancel action. Both hooks are required; there is no
++// OS-UI fallback in a test instance, and a nil test window is permitted.
++struct BrowserAssertionTestHooks {
++  base::RepeatingCallback<void(ASAuthorizationController*)> perform;
++  base::RepeatingCallback<void(ASAuthorizationController*)> cancel;
++};
++
++COMPONENT_EXPORT(DEVICE_FIDO)
++API_AVAILABLE(macos(13.3))
++scoped_refptr<SystemInterface> NewNativeSystemInterfaceForTesting(
++    BrowserAssertionTestHooks hooks);
++
+ // GetSystemInterface returns the current implementation of `SystemInterface`.
+ COMPONENT_EXPORT(DEVICE_FIDO)
+ API_AVAILABLE(macos(13.3)) scoped_refptr<SystemInterface> GetSystemInterface();
+diff --git a/device/fido/mac/icloud_keychain_sys.mm b/device/fido/mac/icloud_keychain_sys.mm
+index a56ffda8f1b37b29b02011e71f81304f5c54e9ea..5a85003bd421b6e90e354bf2f3634c4850180de5 100644
+--- a/device/fido/mac/icloud_keychain_sys.mm
++++ b/device/fido/mac/icloud_keychain_sys.mm
+@@ -6,15 +6,22 @@
+ 
+ #import <AuthenticationServices/AuthenticationServices.h>
+ 
++#include <algorithm>
++
++#include "base/functional/bind.h"
+ #include "base/functional/callback.h"
+ #include "base/memory/scoped_refptr.h"
++#include "base/memory/weak_ptr.h"
+ #include "base/no_destructor.h"
++#include "base/sequence_checker.h"
+ #include "base/strings/sys_string_conversions.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "components/device_event_log/device_event_log.h"
+ #include "device/fido/large_blob.h"
+ #include "device/fido/mac/icloud_keychain_internals.h"
++#include "device/fido/mac/oya_browser_controller_lease.h"
+ #include "device/fido/public/features.h"
++#include "device/fido/public/fido_transport_protocol.h"
+ 
+ namespace {
+ 
+@@ -116,6 +123,49 @@ API_AVAILABLE(macos(13.3))
+ }
+ @end
+ 
++// The experimental route does not retain a closed source window while a
++// cancelled OS operation remains quarantined waiting for its terminal callback.
++API_AVAILABLE(macos(13.3))
++@interface OyaBrowserPresentationDelegate
++    : NSObject <ASAuthorizationControllerPresentationContextProviding>
++@property(nonatomic, weak) NSWindow* window;
++@end
++@implementation OyaBrowserPresentationDelegate
++- (ASPresentationAnchor)presentationAnchorForAuthorizationController:
++    (ASAuthorizationController*)controller {
++  return self.window;
++}
++@end
++
++// An operation-specific terminal callback is consumed once. Its native owner
++// snapshots old storage before external code can reenter and start a new owner.
++API_AVAILABLE(macos(13.3))
++@interface OyaBrowserAssertionDelegate
++    : NSObject <ASAuthorizationControllerDelegate>
++- (void)setCallback:
++    (base::OnceCallback<void(ASAuthorization*, NSError*)>)callback;
++@end
++@implementation OyaBrowserAssertionDelegate {
++  base::OnceCallback<void(ASAuthorization*, NSError*)> callback_;
++}
++- (void)setCallback:
++    (base::OnceCallback<void(ASAuthorization*, NSError*)>)callback {
++  callback_ = std::move(callback);
++}
++- (void)authorizationController:(ASAuthorizationController*)controller
++    didCompleteWithAuthorization:(ASAuthorization*)authorization {
++  auto callback = std::move(callback_);
++  if (callback)
++    std::move(callback).Run(authorization, nil);
++}
++- (void)authorizationController:(ASAuthorizationController*)controller
++           didCompleteWithError:(NSError*)error {
++  auto callback = std::move(callback_);
++  if (callback)
++    std::move(callback).Run(nil, error);
++}
++@end
++
+ // ICloudKeychainCreateController overrides `_requestContextWithRequests` from
+ // `ASAuthorizationController` so that various extra parameters, which browsers
+ // need to set, can be specified.
+@@ -236,7 +286,10 @@ bool ProcessHasEntitlement() {
+           task.get(),
+           CFSTR("com.apple.developer.web-browser.public-key-credential"),
+           nullptr));
+-  return !!entitlement_value_cftype;
++  return entitlement_value_cftype &&
++         CFGetTypeID(entitlement_value_cftype.get()) == CFBooleanGetTypeID() &&
++         CFBooleanGetValue(
++             static_cast<CFBooleanRef>(entitlement_value_cftype.get()));
+ }
+ 
+ API_AVAILABLE(macos(13.3))
+@@ -260,9 +313,222 @@ ASAuthorizationPublicKeyCredentialUserVerificationPreference Convert(
+   }
+ }
+ 
++API_AVAILABLE(macos(13.3))
++ASAuthorizationPlatformPublicKeyCredentialAssertionRequest*
++BuildAssertionRequest(
++    const CtapGetAssertionRequest& request,
++    const SystemInterface::LargeBlobAssertionInputs& large_blob_inputs,
++    bool allow_hybrid,
++    bool allow_internal = true) {
++  ASAuthorizationPlatformPublicKeyCredentialProvider* provider =
++      [[ASAuthorizationPlatformPublicKeyCredentialProvider alloc]
++          initWithRelyingPartyIdentifier:base::SysUTF8ToNSString(
++                                             request.rp_id)];
++
++  NSData* challenge = ToNSData(request.client_data_hash);
++  ASAuthorizationPlatformPublicKeyCredentialAssertionRequest* get_request =
++      [provider createCredentialAssertionRequestWithChallenge:challenge];
++  NSMutableArray* allowedCredentials = [[NSMutableArray alloc] init];
++  for (const auto& cred : request.allow_list) {
++    if (allow_hybrid && !cred.transports.empty() &&
++        !(allow_internal &&
++          cred.transports.contains(FidoTransportProtocol::kInternal)) &&
++        !cred.transports.contains(FidoTransportProtocol::kHybrid))
++      continue;
++    // All credentials are assumed to be platform credentials because we don't
++    // wish to trigger macOS's handling of security keys.
++    [allowedCredentials
++        addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor alloc]
++                      initWithCredentialID:ToNSData(cred.id)]];
++  }
++  get_request.allowedCredentials = allowedCredentials;
++  [get_request setShouldShowHybridTransport:allow_hybrid];
++  get_request.userVerificationPreference = Convert(request.user_verification);
++  if (@available(macOS 15.0, *)) {
++    if (!request.prf_inputs.empty()) {
++      ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*
++          default_values = nil;
++      if (!request.prf_inputs[0].credential_id) {
++        default_values = ToInputValues(request.prf_inputs[0]);
++      }
++      get_request.prf =
++          [[ASAuthorizationPublicKeyCredentialPRFAssertionInput alloc]
++                   initWithInputValues:default_values
++              perCredentialInputValues:ToPerCredValues(request.prf_inputs)];
++    }
++  }
++  if (@available(macOS 14.0, *)) {
++    if (large_blob_inputs.read) {
++      auto* large_blob_input = [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput
++          alloc]
++          initWithOperation:
++              ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationRead];
++      get_request.largeBlob = large_blob_input;
++    } else if (large_blob_inputs.write) {
++      auto* large_blob_input = [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput
++          alloc]
++          initWithOperation:
++              ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationWrite];
++      large_blob_input.dataToWrite = ToNSData(*large_blob_inputs.write);
++      get_request.largeBlob = large_blob_input;
++    }
++  }
++  return get_request;
++}
++
++// Raw framework errors and credential contents are never added to app policy
++// events.
++NSError* BrowserAssertionError(
++    ASAuthorizationError code = ASAuthorizationErrorFailed) {
++  return [NSError errorWithDomain:ASAuthorizationErrorDomain
++                             code:code
++                         userInfo:nil];
++}
++
++bool HasHybridCredential(const CtapGetAssertionRequest& request) {
++  return request.allow_list.empty() ||
++         std::ranges::any_of(request.allow_list, [](const auto& credential) {
++           return credential.transports.empty() ||
++                  credential.transports.contains(
++                      FidoTransportProtocol::kHybrid);
++         });
++}
++
++// Owns the experimental controller independently of request and delegate
++// lifetimes. The single quarantined operation survives caller cancellation.
++class API_AVAILABLE(macos(13.3)) BrowserAssertionSystem
++    : public base::RefCounted<BrowserAssertionSystem> {
++ public:
++  explicit BrowserAssertionSystem(
++      std::optional<BrowserAssertionTestHooks> hooks = std::nullopt)
++      : test_hooks_(std::move(hooks)) {}
++
++  base::OnceClosure Start(
++      NSWindow* window,
++      CtapGetAssertionRequest request,
++      FidoTransportProtocol discovery_role,
++      SystemInterface::LargeBlobAssertionInputs large_blob_inputs,
++      base::RepeatingCallback<bool()> authorized,
++      base::OnceCallback<void(ASAuthorization*, NSError*)> callback) {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    scoped_refptr<BrowserAssertionSystem> keep_alive(this);
++    if (!authorized || !authorized.Run() ||
++        (!test_hooks_ && (!window || !ProcessHasEntitlement())) ||
++        (discovery_role != FidoTransportProtocol::kInternal &&
++         discovery_role != FidoTransportProtocol::kHybrid) ||
++        !HasHybridCredential(request) || browser_operation_) {
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    const auto token = browser_owner_.Acquire();
++    if (!token) {
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    auto* value_request = BuildAssertionRequest(
++        request, large_blob_inputs, true,
++        discovery_role == FidoTransportProtocol::kInternal);
++    if (!value_request) {
++      browser_owner_.Complete(*token);
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    auto operation = std::make_unique<BrowserOperation>();
++    operation->controller = [[ICloudKeychainGetController alloc]
++        initWithAuthorizationRequests:@[ value_request ]];
++    if (!operation->controller) {
++      browser_owner_.Complete(*token);
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    if (!authorized.Run()) {
++      browser_owner_.Complete(*token);
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    [operation->controller setRequest:std::move(request)];
++    operation->delegate = [[OyaBrowserAssertionDelegate alloc] init];
++    [operation->delegate
++        setCallback:base::BindOnce(&BrowserAssertionSystem::BrowserTerminal,
++                                   base::RetainedRef(this), *token,
++                                   std::move(callback))];
++    operation->presentation = [[OyaBrowserPresentationDelegate alloc] init];
++    operation->presentation.window = window;
++    operation->controller.delegate = operation->delegate;
++    operation->controller.presentationContextProvider = operation->presentation;
++    auto cancel =
++        base::BindOnce(&BrowserAssertionSystem::CancelBrowserOperation,
++                       weak_factory_.GetWeakPtr(), *token);
++    browser_operation_ = std::move(operation);
++    if (test_hooks_)
++      test_hooks_->perform.Run(browser_operation_->controller);
++    else
++      [browser_operation_->controller performRequests];
++    // A synchronous terminal callback may already have retired this token.
++    return cancel;
++  }
++
++  bool busy() const {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    return browser_owner_.busy();
++  }
++
++ private:
++  friend class base::RefCounted<BrowserAssertionSystem>;
++  ~BrowserAssertionSystem() = default;
++  // Cancellation does not release the slot, even if the request has timed out.
++  void CancelBrowserOperation(uint64_t token) {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    if (!browser_owner_.Revoke(token) || !browser_operation_)
++      return;
++    if (test_hooks_)
++      test_hooks_->cancel.Run(browser_operation_->controller);
++    else
++      [browser_operation_->controller cancel];
++  }
++
++  void BrowserTerminal(
++      uint64_t token,
++      base::OnceCallback<void(ASAuthorization*, NSError*)> callback,
++      ASAuthorization* authorization,
++      NSError* error) {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    if (!browser_owner_.IsCurrent(token) || !browser_operation_)
++      return;
++    const bool deliver = browser_owner_.AllowsResult(token);
++    auto terminal_operation = std::move(browser_operation_);
++    browser_owner_.Complete(token);
++    // The old operation's strong references stay on this stack across callback
++    // reentrancy. Never consult or clear new operation storage after Run().
++    if (deliver)
++      std::move(callback).Run(authorization, error);
++    else
++      std::move(callback).Run(
++          nil, BrowserAssertionError(ASAuthorizationErrorCanceled));
++  }
++
++  // Exactly one native operation owns all of its Objective-C storage.
++  struct BrowserOperation {
++    ICloudKeychainGetController* __strong controller = nil;
++    OyaBrowserAssertionDelegate* __strong delegate = nil;
++    OyaBrowserPresentationDelegate* __strong presentation = nil;
++  };
++  const std::optional<BrowserAssertionTestHooks> test_hooks_;
++  oya::webauthn::ControllerLease browser_owner_;
++  std::unique_ptr<BrowserOperation> browser_operation_;
++
++  SEQUENCE_CHECKER(sequence_checker_);
++  base::WeakPtrFactory<BrowserAssertionSystem> weak_factory_{this};
++};
++
+ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
+     : public SystemInterface {
+  public:
++  explicit NativeSystemInterface(
++      std::optional<BrowserAssertionTestHooks> hooks = std::nullopt)
++      : browser_(
++            base::MakeRefCounted<BrowserAssertionSystem>(std::move(hooks))) {}
++
+   bool IsAvailable() const override {
+     static bool available = ProcessHasEntitlement();
+     return available;
+@@ -303,6 +569,10 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
+       CtapMakeCredentialRequest request,
+       MakeCredentialOptions options,
+       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override {
++    if (browser_->busy()) {
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return;
++    }
+     DCHECK(!create_controller_);
+     DCHECK(!get_controller_);
+     DCHECK(!delegate_);
+@@ -383,59 +653,17 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
+       CtapGetAssertionRequest request,
+       LargeBlobAssertionInputs large_blob_inputs,
+       base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override {
++    if (browser_->busy()) {
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return;
++    }
+     DCHECK(!create_controller_);
+     DCHECK(!get_controller_);
+     DCHECK(!delegate_);
+     DCHECK(!presentation_delegate_);
+ 
+-    ASAuthorizationPlatformPublicKeyCredentialProvider* provider =
+-        [[ASAuthorizationPlatformPublicKeyCredentialProvider alloc]
+-            initWithRelyingPartyIdentifier:base::SysUTF8ToNSString(
+-                                               request.rp_id)];
+-
+-    NSData* challenge = ToNSData(request.client_data_hash);
+-    ASAuthorizationPlatformPublicKeyCredentialAssertionRequest* get_request =
+-        [provider createCredentialAssertionRequestWithChallenge:challenge];
+-    NSMutableArray* allowedCredentials = [[NSMutableArray alloc] init];
+-    for (const auto& cred : request.allow_list) {
+-      // All credentials are assumed to be platform credentials because we don't
+-      // wish to trigger macOS's handling of security keys.
+-      [allowedCredentials
+-          addObject:[[ASAuthorizationPlatformPublicKeyCredentialDescriptor
+-                        alloc] initWithCredentialID:ToNSData(cred.id)]];
+-    }
+-    get_request.allowedCredentials = allowedCredentials;
+-    [get_request setShouldShowHybridTransport:false];
+-    get_request.userVerificationPreference = Convert(request.user_verification);
+-    if (@available(macOS 15.0, *)) {
+-      if (!request.prf_inputs.empty()) {
+-        ASAuthorizationPublicKeyCredentialPRFAssertionInputValues*
+-            default_values = nil;
+-        if (!request.prf_inputs[0].credential_id) {
+-          default_values = ToInputValues(request.prf_inputs[0]);
+-        }
+-        get_request.prf =
+-            [[ASAuthorizationPublicKeyCredentialPRFAssertionInput alloc]
+-                     initWithInputValues:default_values
+-                perCredentialInputValues:ToPerCredValues(request.prf_inputs)];
+-      }
+-    }
+-    if (@available(macOS 14.0, *)) {
+-      if (large_blob_inputs.read) {
+-        auto* large_blob_input =
+-            [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput alloc]
+-                initWithOperation:
+-                    ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationRead];
+-        get_request.largeBlob = large_blob_input;
+-      } else if (large_blob_inputs.write) {
+-        auto* large_blob_input =
+-            [[ASAuthorizationPublicKeyCredentialLargeBlobAssertionInput alloc]
+-                initWithOperation:
+-                    ASAuthorizationPublicKeyCredentialLargeBlobAssertionOperationWrite];
+-        large_blob_input.dataToWrite = ToNSData(*large_blob_inputs.write);
+-        get_request.largeBlob = large_blob_input;
+-      }
+-    }
++    auto* get_request =
++        BuildAssertionRequest(request, large_blob_inputs, false);
+     get_controller_ = [[ICloudKeychainGetController alloc]
+         initWithAuthorizationRequests:@[ get_request ]];
+     [get_controller_ setRequest:std::move(request)];
+@@ -451,7 +679,25 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
+     [get_controller_ performRequests];
+   }
+ 
++  base::OnceClosure GetBrowserAssertion(
++      NSWindow* window,
++      CtapGetAssertionRequest request,
++      FidoTransportProtocol discovery_role,
++      SystemInterface::LargeBlobAssertionInputs large_blob_inputs,
++      base::RepeatingCallback<bool()> authorized,
++      base::OnceCallback<void(ASAuthorization*, NSError*)> callback) override {
++    if (create_controller_ || get_controller_) {
++      std::move(callback).Run(nil, BrowserAssertionError());
++      return base::OnceClosure();
++    }
++    return browser_->Start(window, std::move(request), discovery_role,
++                           std::move(large_blob_inputs), std::move(authorized),
++                           std::move(callback));
++  }
++
+   void Cancel() override {
++    if (browser_->busy())
++      return;
+     // Sending `cancel` will cause the controller to resolve the delegate with
+     // an error. That will end up calling `Cleanup` to drop these references.
+     if (create_controller_) {
+@@ -472,6 +718,7 @@ class API_AVAILABLE(macos(13.3)) NativeSystemInterface
+     presentation_delegate_ = nullptr;
+   }
+ 
++  scoped_refptr<BrowserAssertionSystem> browser_;
+   ICloudKeychainCreateController* __strong create_controller_;
+   ICloudKeychainGetController* __strong get_controller_;
+   ICloudKeychainDelegate* __strong delegate_;
+@@ -493,8 +740,26 @@ scoped_refptr<SystemInterface>& GetTestInterface() {
+ 
+ }  // namespace
+ 
++scoped_refptr<SystemInterface> NewNativeSystemInterfaceForTesting(
++    BrowserAssertionTestHooks hooks) {
++  if (hooks.perform.is_null() || hooks.cancel.is_null())
++    return nullptr;
++  return base::MakeRefCounted<NativeSystemInterface>(std::move(hooks));
++}
++
+ SystemInterface::~SystemInterface() = default;
+ 
++base::OnceClosure SystemInterface::GetBrowserAssertion(
++    NSWindow*,
++    CtapGetAssertionRequest,
++    FidoTransportProtocol,
++    LargeBlobAssertionInputs,
++    base::RepeatingCallback<bool()>,
++    base::OnceCallback<void(ASAuthorization*, NSError*)> callback) {
++  std::move(callback).Run(nil, BrowserAssertionError());
++  return base::OnceClosure();
++}
++
+ API_AVAILABLE(macos(13.3))
+ scoped_refptr<SystemInterface> GetSystemInterface() {
+   scoped_refptr<SystemInterface>& test_interface = GetTestInterface();
+diff --git a/device/fido/mac/icloud_keychain_unittest.mm b/device/fido/mac/icloud_keychain_unittest.mm
+index 12fb0ef7d3dc5d977d819b2078d9f85a4fdea143..1f68eb9a57cfd0688f6b6d75d4b56cff9e51fbf4 100644
+--- a/device/fido/mac/icloud_keychain_unittest.mm
++++ b/device/fido/mac/icloud_keychain_unittest.mm
+@@ -14,6 +14,7 @@
+ 
+ #include "base/check.h"
+ #include "base/check_op.h"
++#include "base/functional/bind.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "base/metrics/histogram_base.h"
+@@ -931,6 +932,204 @@ TEST_F(iCloudKeychainTest, FetchCredentialMetadataNoPermission) {
+   }
+ }
+ 
++// Exercise the real native SystemInterface ownership path while intercepting
++// every perform/cancel action. No OS authentication UI is opened by these
++// tests.
++struct BrowserControllerTestState {
++  NSMutableArray<ASAuthorizationController*>* __strong controllers =
++      [[NSMutableArray alloc] init];
++  std::vector<NSInteger> results;
++  size_t cancellations = 0;
++  bool synchronous_terminal = false;
++};
++
++void FinishBrowserController(ASAuthorizationController* controller) {
++  auto delegate = controller.delegate;
++  [delegate
++      authorizationController:controller
++         didCompleteWithError:[NSError
++                                  errorWithDomain:ASAuthorizationErrorDomain
++                                             code:ASAuthorizationErrorFailed
++                                         userInfo:nil]];
++}
++
++class API_AVAILABLE(macos(13.3)) BrowserControllerHarness {
++ public:
++  BrowserControllerHarness() {
++    BrowserAssertionTestHooks hooks;
++    hooks.perform = base::BindRepeating(
++        [](std::shared_ptr<BrowserControllerTestState> state,
++           ASAuthorizationController* controller) {
++          [state->controllers addObject:controller];
++          if (state->synchronous_terminal) {
++            state->synchronous_terminal = false;
++            FinishBrowserController(controller);
++          }
++        },
++        state);
++    hooks.cancel = base::BindRepeating(
++        [](std::shared_ptr<BrowserControllerTestState> state,
++           ASAuthorizationController*) { ++state->cancellations; },
++        state);
++    system = NewNativeSystemInterfaceForTesting(std::move(hooks));
++  }
++  ~BrowserControllerHarness() {
++    for (ASAuthorizationController* controller in state->controllers)
++      FinishBrowserController(controller);
++  }
++  base::OnceClosure Start(
++      CtapGetAssertionRequest request = CtapGetAssertionRequest("rp.id", "{}"),
++      base::RepeatingCallback<bool()> authorized = base::BindRepeating([] {
++        return true;
++      })) {
++    return system->GetBrowserAssertion(
++        nil, std::move(request), FidoTransportProtocol::kInternal, {},
++        std::move(authorized),
++        base::BindOnce(
++            [](std::shared_ptr<BrowserControllerTestState> state,
++               ASAuthorization*, NSError* error) {
++              state->results.push_back(error ? error.code : 0);
++            },
++            state));
++  }
++  std::shared_ptr<BrowserControllerTestState> state =
++      std::make_shared<BrowserControllerTestState>();
++  scoped_refptr<SystemInterface> system;
++};
++
++TEST(OyaBrowserController, CancelKeepsOwnerUntilActualTerminalCallback) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    auto cancel = harness.Start();
++    ASSERT_FALSE(cancel.is_null());
++    ASSERT_EQ(harness.state->controllers.count, 1u);
++    harness.system->Cancel();
++    EXPECT_EQ(harness.state->cancellations, 0u);
++    std::move(cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 1u);
++    auto rejected = harness.Start();
++    EXPECT_TRUE(rejected.is_null());
++    EXPECT_EQ(harness.state->controllers.count, 1u);
++    FinishBrowserController(harness.state->controllers[0]);
++    ASSERT_EQ(harness.state->results.size(), 2u);
++    EXPECT_EQ(harness.state->results.back(), ASAuthorizationErrorCanceled);
++    auto next = harness.Start();
++    EXPECT_FALSE(next.is_null());
++    EXPECT_EQ(harness.state->controllers.count, 2u);
++  }
++}
++
++TEST(OyaBrowserController,
++     OldCancellationAndDuplicateTerminalCannotAffectNewOwner) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    auto old_cancel = harness.Start();
++    auto old_controller = harness.state->controllers[0];
++    auto old_delegate = old_controller.delegate;
++    FinishBrowserController(old_controller);
++    auto current_cancel = harness.Start();
++    std::move(old_cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 0u);
++    [old_delegate
++        authorizationController:old_controller
++           didCompleteWithError:[NSError
++                                    errorWithDomain:ASAuthorizationErrorDomain
++                                               code:ASAuthorizationErrorFailed
++                                           userInfo:nil]];
++    EXPECT_EQ(harness.state->results.size(), 1u);
++    EXPECT_TRUE(harness.Start().is_null());
++    std::move(current_cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 1u);
++  }
++}
++
++TEST(OyaBrowserController,
++     SynchronousTerminalBeforeReturningCancelCannotBorrowNextOwner) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    harness.state->synchronous_terminal = true;
++    auto completed_cancel = harness.Start();
++    ASSERT_EQ(harness.state->results.size(), 1u);
++    auto current_cancel = harness.Start();
++    std::move(completed_cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 0u);
++    EXPECT_TRUE(harness.Start().is_null());
++    std::move(current_cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 1u);
++  }
++}
++
++TEST(OyaBrowserController, MissingTestActionCannotFallBackToOSUI) {
++  if (@available(macOS 13.5, *)) {
++    BrowserAssertionTestHooks hooks;
++    EXPECT_FALSE(NewNativeSystemInterfaceForTesting(hooks));
++    hooks.perform = base::BindRepeating([](ASAuthorizationController*) {});
++    EXPECT_FALSE(NewNativeSystemInterfaceForTesting(std::move(hooks)));
++  }
++}
++
++TEST(OyaBrowserController, NonHybridRequestNeverConstructsController) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    CtapGetAssertionRequest request("rp.id", "{}");
++    request.allow_list.emplace_back(CredentialType::kPublicKey,
++                                    std::vector<uint8_t>{1});
++    request.allow_list.back().transports.insert(
++        FidoTransportProtocol::kUsbHumanInterfaceDevice);
++    EXPECT_TRUE(harness.Start(std::move(request)).is_null());
++    EXPECT_EQ(harness.state->controllers.count, 0u);
++    EXPECT_EQ(harness.state->results.size(), 1u);
++  }
++}
++
++TEST(OyaBrowserController, CallerMayDisappearBeforeNativeTerminalCleanup) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    auto cancel = harness.Start();
++    harness.system.reset();
++    std::move(cancel).Run();
++    EXPECT_EQ(harness.state->cancellations, 1u);
++    FinishBrowserController(harness.state->controllers[0]);
++    ASSERT_EQ(harness.state->results.size(), 1u);
++    EXPECT_EQ(harness.state->results[0], ASAuthorizationErrorCanceled);
++  }
++}
++
++TEST(OyaBrowserController,
++     RevokedAfterPreparationNeverPerformsAndReleasesOwner) {
++  if (@available(macOS 13.5, *)) {
++    BrowserControllerHarness harness;
++    size_t checks = 0;
++    auto canceled = harness.Start(
++        CtapGetAssertionRequest("rp.id", "{}"),
++        base::BindRepeating([](size_t* checks) { return ++*checks == 1; },
++                            &checks));
++    EXPECT_TRUE(canceled.is_null());
++    EXPECT_EQ(checks, 2u);
++    EXPECT_EQ(harness.state->controllers.count, 0u);
++    EXPECT_EQ(harness.state->results.size(), 1u);
++    EXPECT_FALSE(harness.Start().is_null());
++    EXPECT_EQ(harness.state->controllers.count, 1u);
++  }
++}
++
++TEST_F(iCloudKeychainTest,
++       BrowserDiscoveryReportsOnlyActualHybridRoleAsOsManaged) {
++  if (@available(macOS 13.5, *)) {
++    CtapGetAssertionRequest request("rp.id", "{}");
++    for (auto role :
++         {FidoTransportProtocol::kInternal, FidoTransportProtocol::kHybrid}) {
++      auto discovery =
++          NewBrowserDiscovery(base::apple::WeakNSWindow(), role, request,
++                              base::BindRepeating([] { return true; }));
++      ASSERT_TRUE(discovery);
++      EXPECT_EQ(discovery->transport(), role);
++      EXPECT_EQ(discovery->IsOsManagedHybrid(),
++                role == FidoTransportProtocol::kHybrid);
++    }
++  }
++}
++
+ }  // namespace
+ 
+ }  // namespace device::fido::icloud_keychain
+diff --git a/device/fido/mac/oya_browser_controller_lease.h b/device/fido/mac/oya_browser_controller_lease.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..be3df86fe0b66c2cfa98e11449bb61ba2d3a4787
+--- /dev/null
++++ b/device/fido/mac/oya_browser_controller_lease.h
+@@ -0,0 +1,75 @@
++/** Keep one native authentication controller quarantined until its exact
++ * terminal callback. */
++#ifndef OYA_BROWSER_CONTROLLER_LEASE_H_
++#define OYA_BROWSER_CONTROLLER_LEASE_H_
++
++#include <cstdint>
++#include <limits>
++#include <optional>
++
++namespace oya::webauthn {
++
++/** Cancellation revokes results immediately but never pretends the OS
++ * controller has ended. */
++class ControllerLease {
++ public:
++  /** A test can seed exhaustion; production starts at zero and never reuses a
++   * token. */
++  explicit ControllerLease(std::uint64_t initial_sequence = 0)
++      : sequence_(initial_sequence) {}
++  ControllerLease(const ControllerLease&) = delete;
++  ControllerLease& operator=(const ControllerLease&) = delete;
++
++  /** Busy or exhausted owners refuse another controller without replacing
++   * current storage. */
++  std::optional<std::uint64_t> Acquire() {
++    if (active_ || sequence_ == std::numeric_limits<std::uint64_t>::max())
++      return std::nullopt;
++    active_ = ++sequence_;
++    revoked_ = false;
++    return active_;
++  }
++
++  /** Only the original operation may send cancellation, and only once. */
++  bool Revoke(std::uint64_t token) {
++    if (!IsCurrent(token) || revoked_)
++      return false;
++    revoked_ = true;
++    return true;
++  }
++
++  /** An old controller's late terminal callback cannot clear a new controller's
++   * slot. */
++  bool Complete(std::uint64_t token) {
++    if (!IsCurrent(token))
++      return false;
++    active_.reset();
++    revoked_ = false;
++    return true;
++  }
++
++  /** Identity remains current during cancellation quarantine. */
++  bool IsCurrent(std::uint64_t token) const {
++    return active_ && *active_ == token;
++  }
++
++  /** A success racing cancellation is unusable even before terminal cleanup
++   * runs. */
++  bool AllowsResult(std::uint64_t token) const {
++    return IsCurrent(token) && !revoked_;
++  }
++
++  /** Lack of an OS terminal acknowledgment keeps capacity at exactly one. */
++  bool busy() const { return active_.has_value(); }
++
++ private:
++  /** Tokens never wrap or transfer across operations. */
++  std::uint64_t sequence_;
++  /** The only operation whose native controller storage may be touched. */
++  std::optional<std::uint64_t> active_;
++  /** Main/request timeout does not release OS ownership. */
++  bool revoked_ = false;
++};
++
++}  // namespace oya::webauthn
++#endif  // OYA_BROWSER_CONTROLLER_LEASE_H_
+diff --git a/device/fido/mac/oya_browser_transport_policy.h b/device/fido/mac/oya_browser_transport_policy.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..cc4dfc75ac81c36b2c1cf9a2336059cf11d0d92a
+--- /dev/null
++++ b/device/fido/mac/oya_browser_transport_policy.h
+@@ -0,0 +1,104 @@
++/** Preserve original per-credential transport restrictions across the Apple
++ * browser authentication flow. */
++#ifndef OYA_BROWSER_TRANSPORT_POLICY_H_
++#define OYA_BROWSER_TRANSPORT_POLICY_H_
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <optional>
++#include <span>
++#include <utility>
++#include <vector>
++
++namespace oya::webauthn {
++
++/** Only verified Apple platform or nearby-phone attachments can produce a
++ * result. */
++enum class BrowserTransport { kInternal, kHybrid };
++
++/** Native-only original descriptor; no credential identifier is sent to
++ * JavaScript policy events. */
++struct BrowserCredentialRule {
++  /** Exact credential bytes supplied by the relying party. */
++  std::vector<std::uint8_t> credential_id;
++  /** Unspecified descriptor transports permit both of these native methods. */
++  bool internal_allowed = false;
++  /** A different credential's hybrid permission cannot authorize this ID. */
++  bool hybrid_allowed = false;
++};
++
++/** An immutable native snapshot combines RP-intersected global transport policy
++ * and individual ID rules. */
++class BrowserTransportPolicy {
++ public:
++  /** The caller derives global permissions from the original validated
++   * transport intersection. */
++  BrowserTransportPolicy(bool internal_allowed,
++                         bool hybrid_allowed,
++                         std::vector<BrowserCredentialRule> rules)
++      : internal_allowed_(internal_allowed),
++        hybrid_allowed_(hybrid_allowed),
++        rules_(std::move(rules)) {}
++
++  /** Hybrid-only requests use a genuine hybrid discovery rather than injecting
++   * internal transport. */
++  std::optional<BrowserTransport> DiscoveryTransport() const {
++    if (!hybrid_allowed_ || !HasHybridCredential())
++      return std::nullopt;
++    return internal_allowed_ ? BrowserTransport::kInternal
++                             : BrowserTransport::kHybrid;
++  }
++
++  /** Unsupported IDs are omitted from the OS request without widening any
++   * original descriptor. */
++  bool IncludeCredential(std::size_t index) const {
++    return index < rules_.size() &&
++           ((internal_allowed_ && rules_[index].internal_allowed) ||
++            (hybrid_allowed_ && rules_[index].hybrid_allowed));
++  }
++
++  /** An actual returned ID and attachment must satisfy the same original
++   * credential's restrictions. */
++  bool AllowsResult(std::span<const std::uint8_t> credential_id,
++                    BrowserTransport actual) const {
++    if (credential_id.empty() || !GlobalAllows(actual))
++      return false;
++    if (rules_.empty())
++      return true;
++    return std::ranges::any_of(rules_, [&](const auto& rule) {
++      return std::ranges::equal(rule.credential_id, credential_id) &&
++             ((actual == BrowserTransport::kInternal &&
++               rule.internal_allowed) ||
++              (actual == BrowserTransport::kHybrid && rule.hybrid_allowed));
++    });
++  }
++
++ private:
++  /** An empty allow-list permits discovery; a nonempty one needs its own
++   * hybrid-eligible entry. */
++  bool HasHybridCredential() const {
++    return rules_.empty() || std::ranges::any_of(rules_, [](const auto& rule) {
++             return rule.hybrid_allowed;
++           });
++  }
++
++  /** Unknown native attachments fail closed rather than being treated as a
++   * phone. */
++  bool GlobalAllows(BrowserTransport actual) const {
++    return (actual == BrowserTransport::kInternal && internal_allowed_) ||
++           (actual == BrowserTransport::kHybrid && hybrid_allowed_);
++  }
++
++  /** Actual RP-intersected internal permission, not inferred from another
++   * allowed ID. */
++  const bool internal_allowed_;
++  /** Actual RP-intersected hybrid permission. */
++  const bool hybrid_allowed_;
++  /** Immutable descriptor snapshot belongs only to this native assertion
++   * attempt. */
++  const std::vector<BrowserCredentialRule> rules_;
++};
++
++}  // namespace oya::webauthn
++#endif  // OYA_BROWSER_TRANSPORT_POLICY_H_

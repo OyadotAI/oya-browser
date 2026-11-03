@@ -1,0 +1,411 @@
+diff --git a/filenames.gni b/filenames.gni
+index 77ab8b459ceeb581f62726c348b078805a7d83d4..ef76931aed860a7a0cc971f3f4472c5ab0d7aedb 100644
+--- a/filenames.gni
++++ b/filenames.gni
+@@ -632,6 +632,7 @@ filenames = {
+     "shell/browser/web_view_manager.h",
+     "shell/browser/webauthn/electron_authenticator_request_client_delegate.cc",
+     "shell/browser/webauthn/electron_authenticator_request_client_delegate.h",
++    "shell/browser/webauthn/oya_browser_passkey_delegate.cc",
+     "shell/browser/webauthn/electron_authenticator_request_delegate.cc",
+     "shell/browser/webauthn/electron_authenticator_request_delegate.h",
+     "shell/browser/window_list.cc",
+diff --git a/shell/browser/api/electron_api_app.cc b/shell/browser/api/electron_api_app.cc
+index 614e073ea6ca7034d47d854ad9c011ef6ce5ff8a..76f77696ec05b9af04aa0b4ecf049a8d1b2e50a3 100644
+--- a/shell/browser/api/electron_api_app.cc
++++ b/shell/browser/api/electron_api_app.cc
+@@ -46,6 +46,7 @@
+ #include "content/public/common/content_switches.h"
+ #include "crypto/crypto_buildflags.h"
+ #include "electron/mas.h"
++#include "gin/data_object_builder.h"
+ #include "media/audio/audio_manager.h"
+ #include "net/dns/public/dns_over_https_config.h"
+ #include "net/dns/public/dns_over_https_server_config.h"
+@@ -1737,6 +1738,16 @@ bool App::IsInApplicationsFolder() {
+   return ElectronBundleMover::IsCurrentAppInApplicationsFolder();
+ }
+ 
++v8::Local<v8::Object> App::GetOyaBrowserPasskeyCapabilities(
++    v8::Isolate* isolate) {
++  return gin::DataObjectBuilder(isolate)
++      .Set("protocolVersion",
++           ElectronWebAuthenticationDelegate::kOyaBrowserPasskeyProtocolVersion)
++      .Set("enabled",
++           ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled())
++      .Build();
++}
++
+ void App::ConfigureWebAuthn(gin_helper::ErrorThrower thrower,
+                             gin::Arguments* args) {
+   gin_helper::Dictionary options;
+@@ -2121,6 +2132,8 @@ gin::ObjectTemplateBuilder App::GetObjectTemplateBuilder(v8::Isolate* isolate) {
+       .SetMethod("isInApplicationsFolder", &App::IsInApplicationsFolder)
+       .SetMethod("setActivationPolicy", &App::SetActivationPolicy)
+       .SetMethod("configureWebAuthn", &App::ConfigureWebAuthn)
++      .SetMethod("getOyaBrowserPasskeyCapabilities",
++                 &App::GetOyaBrowserPasskeyCapabilities)
+       .SetMethod("startAppShimServer", &App::StartAppShimServer)
+       .SetMethod("stopAppShimServer", &App::StopAppShimServer)
+ #endif
+diff --git a/shell/browser/api/electron_api_app.h b/shell/browser/api/electron_api_app.h
+index 7080a48d37c452bc5818567712a5dabf8d364ffa..8d053e12b197c04584dc09c0fd01bfb5ca876eb9 100644
+--- a/shell/browser/api/electron_api_app.h
++++ b/shell/browser/api/electron_api_app.h
+@@ -257,6 +257,8 @@ class App final : public gin::Wrappable<App>,
+   void StopAppShimServer();
+   void ConfigureWebAuthn(gin_helper::ErrorThrower thrower,
+                          gin::Arguments* args);
++  // Reports only native protocol readiness, never credential or account data.
++  v8::Local<v8::Object> GetOyaBrowserPasskeyCapabilities(v8::Isolate* isolate);
+   bool MoveToApplicationsFolder(gin_helper::ErrorThrower, gin::Arguments* args);
+   bool IsInApplicationsFolder();
+   v8::Local<v8::Value> GetDockAPI(v8::Isolate* isolate);
+diff --git a/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc b/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
+index 4f92bbbcebe87c6940f875d22acb025eb2e24e08..c8e5b70fa7313e5a9f026eaec237d6fb30dfd286 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
++++ b/shell/browser/webauthn/electron_authenticator_request_client_delegate.cc
+@@ -230,6 +230,10 @@ void ElectronAuthenticatorRequestClientDelegate::SelectAccount(
+                                       .Set("frame", rfh)
+                                       .Build();
+ 
++  if (!browser_attempt_id_.empty())
++    gin_helper::Dictionary(isolate, details)
++        .Set("requestId", browser_attempt_id_);
++
+   v8::Local<v8::Object> session_wrapper;
+   if (!session->Get()->GetWrapper(isolate).ToLocal(&session_wrapper)) {
+     CancelPendingAccountSelection();
+diff --git a/shell/browser/webauthn/electron_authenticator_request_client_delegate.h b/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
+index c709ecbfbc627473075b9f630b48488f0adb21b2..51d0b26e1f85e62dfc322a22150d81a8bdd3926a 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
++++ b/shell/browser/webauthn/electron_authenticator_request_client_delegate.h
+@@ -50,6 +50,25 @@ class ElectronAuthenticatorRequestClientDelegate
+ #endif
+ 
+   // content::AuthenticatorRequestClientDelegate:
++  bool ShouldUseBrowserPasskeyPolicy(
++      const device::CtapGetAssertionRequest& request,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      bool is_virtual) const override;
++  bool AuthorizeBrowserPasskeys(
++      const std::string& attempt_id,
++      bool completing,
++      const url::Origin& origin,
++      const std::string& rp_id,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      base::RepeatingCallback<void(bool)> decide,
++      base::RepeatingClosure cancel_lifetime) override;
++  base::OnceClosure CreateBrowserPasskeyRetirementCallback(
++      const std::string& attempt_id) override;
++  std::vector<std::unique_ptr<device::FidoDiscoveryBase>>
++  CreateBrowserPasskeyDiscoveries(
++      const device::CtapGetAssertionRequest& request,
++      const base::flat_set<device::FidoTransportProtocol>& transports,
++      base::RepeatingCallback<bool()> authorized) override;
+   void SetRelyingPartyId(const std::string& rp_id) override;
+   void StartObserving(device::FidoRequestHandlerBase* request_handler) override;
+   void StopObserving(device::FidoRequestHandlerBase* request_handler) override;
+@@ -96,6 +115,8 @@ class ElectronAuthenticatorRequestClientDelegate
+ 
+   const content::GlobalRenderFrameHostId render_frame_host_id_;
+   std::string relying_party_id_;
++  // Account events may only borrow the current gated native attempt.
++  std::string browser_attempt_id_;
+   base::OnceClosure cancel_callback_;
+   device::FidoRequestHandlerBase::RequestCallback request_callback_;
+ 
+diff --git a/shell/browser/webauthn/electron_authenticator_request_delegate.cc b/shell/browser/webauthn/electron_authenticator_request_delegate.cc
+index 1e704d5c19b043d141122dce26e7d713c3eec036..017ab03fc524c8cc61420aa445c6b517a411afda 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_delegate.cc
++++ b/shell/browser/webauthn/electron_authenticator_request_delegate.cc
+@@ -8,11 +8,13 @@
+ #include <utility>
+ 
+ #include "base/base64.h"
++#include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/no_destructor.h"
+ #include "components/prefs/pref_service.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "device/fido/mac/credential_metadata.h"
++#include "device/fido/mac/icloud_keychain.h"
+ #include "shell/browser/electron_browser_context.h"
+ #include "shell/browser/webauthn/electron_platform_passkeys_authenticator.h"
+ #include "shell/common/electron_constants.h"
+@@ -66,6 +68,13 @@ bool ElectronWebAuthenticationDelegate::IsPlatformPasskeysEnabled() {
+   return platform_passkeys_enabled();
+ }
+ 
++bool ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled() {
++  return base::CommandLine::ForCurrentProcess()->HasSwitch(
++             "oya-native-passkeys") &&
++         !IsPlatformPasskeysEnabled() &&
++         device::fido::icloud_keychain::IsSupported();
++}
++
+ std::optional<content::WebAuthenticationDelegate::TouchIdAuthenticatorConfig>
+ ElectronWebAuthenticationDelegate::GetTouchIdAuthenticatorConfig(
+     content::BrowserContext* browser_context) {
+@@ -101,8 +110,9 @@ void ElectronWebAuthenticationDelegate::
+   // When platform passkeys are enabled and available, report `true` so that
+   // isUserVerifyingPlatformAuthenticatorAvailable() reflects the passkey
+   // authenticator, not just Touch ID. Otherwise defer to the default (nullopt).
+-  if (IsPlatformPasskeysEnabled() &&
+-      ElectronPlatformPasskeysAuthenticator::IsAvailable()) {
++  if (IsOyaBrowserPasskeysEnabled() ||
++      (IsPlatformPasskeysEnabled() &&
++       ElectronPlatformPasskeysAuthenticator::IsAvailable())) {
+     std::move(callback).Run(true);
+     return;
+   }
+diff --git a/shell/browser/webauthn/electron_authenticator_request_delegate.h b/shell/browser/webauthn/electron_authenticator_request_delegate.h
+index 608b1f8069ac1c4a1652060b761c3ef9cb56e824..6183ca9d85010210f24612268f0c028595343723 100644
+--- a/shell/browser/webauthn/electron_authenticator_request_delegate.h
++++ b/shell/browser/webauthn/electron_authenticator_request_delegate.h
+@@ -32,6 +32,12 @@ class ElectronWebAuthenticationDelegate
+   static bool IsTouchIdConfigured();
+   static void SetPlatformPasskeysEnabled(bool enabled);
+   static bool IsPlatformPasskeysEnabled();
++
++  // The browser-provider experiment is separate from app-associated domains.
++  // It requires the explicit isolated-test switch and a genuine process
++  // entitlement.
++  static bool IsOyaBrowserPasskeysEnabled();
++  static constexpr int kOyaBrowserPasskeyProtocolVersion = 1;
+ #endif
+ 
+   // content::WebAuthenticationDelegate
+diff --git a/shell/browser/webauthn/oya_browser_passkey_delegate.cc b/shell/browser/webauthn/oya_browser_passkey_delegate.cc
+new file mode 100644
+index 0000000000000000000000000000000000000000..4a5720cee9015f4c9bc0c956b26bb51c40d4f014
+--- /dev/null
++++ b/shell/browser/webauthn/oya_browser_passkey_delegate.cc
+@@ -0,0 +1,227 @@
++/** Keep experimental browser-passkey policy in main, with native request
++ * identity and no credential payload. */
++#include "shell/browser/webauthn/electron_authenticator_request_client_delegate.h"
++
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/containers/fixed_flat_map.h"
++#include "base/functional/bind.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "device/fido/ctap_get_assertion_request.h"
++#include "gin/arguments.h"
++#include "gin/data_object_builder.h"
++#include "shell/browser/api/electron_api_session.h"
++#include "shell/common/gin_converters/callback_converter.h"
++#include "shell/common/gin_converters/frame_converter.h"
++#include "shell/common/gin_helper/event.h"
++#include "shell/common/gin_helper/event_emitter_caller.h"
++#include "url/origin.h"
++#include "v8/include/cppgc/persistent.h"
++#include "v8/include/v8-exception.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "device/fido/mac/icloud_keychain.h"
++#include "shell/browser/webauthn/electron_authenticator_request_delegate.h"
++#endif
++
++namespace electron {
++namespace {
++
++#if BUILDFLAG(IS_MAC)
++constexpr int kDecisionArgumentCount = 1;
++constexpr auto kTransportNames =
++    base::MakeFixedFlatMap<device::FidoTransportProtocol, std::string_view>({
++        {device::FidoTransportProtocol::kUsbHumanInterfaceDevice, "usb"},
++        {device::FidoTransportProtocol::kNearFieldCommunication, "nfc"},
++        {device::FidoTransportProtocol::kBluetoothLowEnergy, "ble"},
++        {device::FidoTransportProtocol::kInternal, "internal"},
++        {device::FidoTransportProtocol::kHybrid, "hybrid"},
++    });
++
++bool NativeSource(content::RenderFrameHost* frame) {
++  auto* contents =
++      frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
++  return frame && frame->IsActive() && !frame->GetParent() && contents &&
++         frame->GetLastCommittedOrigin().scheme() == "https" &&
++         static_cast<bool>(contents->GetTopLevelNativeWindow());
++}
++
++std::optional<std::vector<std::string>> TransportNames(
++    const base::flat_set<device::FidoTransportProtocol>& transports) {
++  std::vector<std::string> names;
++  for (auto transport : transports) {
++    const auto found = kTransportNames.find(transport);
++    if (found == kTransportNames.end())
++      return std::nullopt;
++    names.emplace_back(found->second);
++  }
++  return names;
++}
++
++void RecordDecision(base::RepeatingCallback<void(bool)> record,
++                    gin::Arguments* args) {
++  v8::Local<v8::Value> value;
++  const bool valid = args->Length() == kDecisionArgumentCount &&
++                     args->GetNext(&value) && value->IsBoolean();
++  record.Run(valid && value.As<v8::Boolean>()->Value());
++}
++
++using WeakSession = cppgc::WeakPersistent<gin::WeakCell<api::Session>>;
++
++void RetireMainLease(const WeakSession& session,
++                     const std::string& attempt_id) {
++  auto* isolate = v8::Isolate::TryGetCurrent();
++  if (!isolate || isolate->GetCurrentContext().IsEmpty() || !session ||
++      !session->Get())
++    return;
++  v8::HandleScope scope(isolate);
++  v8::Local<v8::Object> wrapper;
++  if (!session->Get()->GetWrapper(isolate).ToLocal(&wrapper))
++    return;
++  auto details = gin::DataObjectBuilder(isolate)
++                     .Set("requestId", attempt_id)
++                     .Set("outcome", "retired")
++                     .Build();
++  auto event = gin_helper::internal::Event::New(isolate)
++                   ->GetWrapper(isolate)
++                   .ToLocalChecked();
++  gin_helper::EmitEvent(isolate, wrapper, "oya-webauthn-ended", event, details);
++}
++
++#endif  // BUILDFLAG(IS_MAC)
++}  // namespace
++
++bool ElectronAuthenticatorRequestClientDelegate::ShouldUseBrowserPasskeyPolicy(
++    const device::CtapGetAssertionRequest& request,
++    const base::flat_set<device::FidoTransportProtocol>& transports,
++    bool is_virtual) const {
++#if BUILDFLAG(IS_MAC)
++  auto* frame = content::RenderFrameHost::FromID(render_frame_host_id_);
++  if (is_virtual ||
++      !ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled() ||
++      !NativeSource(frame) ||
++      !transports.contains(device::FidoTransportProtocol::kHybrid))
++    return false;
++  return content::WebContents::FromRenderFrameHost(frame)->GetVisibility() ==
++         content::Visibility::VISIBLE;
++#else
++  return false;
++#endif
++}
++
++bool ElectronAuthenticatorRequestClientDelegate::AuthorizeBrowserPasskeys(
++    const std::string& attempt_id,
++    bool completing,
++    const url::Origin& origin,
++    const std::string& rp_id,
++    const base::flat_set<device::FidoTransportProtocol>& transports,
++    base::RepeatingCallback<void(bool)> decide,
++    base::RepeatingClosure cancel_lifetime) {
++#if BUILDFLAG(IS_MAC)
++  auto* frame = content::RenderFrameHost::FromID(render_frame_host_id_);
++  if (!ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled() ||
++      !NativeSource(frame) ||
++      !origin.IsSameOriginWith(frame->GetLastCommittedOrigin()) ||
++      (completing && browser_attempt_id_ != attempt_id))
++    return false;
++  const auto names = TransportNames(transports);
++  auto* session = api::Session::FromBrowserContext(frame->GetBrowserContext());
++  auto* isolate = v8::Isolate::TryGetCurrent();
++  if (!names || !session || !session->Get() || !isolate ||
++      isolate->GetCurrentContext().IsEmpty())
++    return false;
++  browser_attempt_id_ = attempt_id;
++  const std::string original_origin = origin.Serialize();
++  v8::HandleScope scope(isolate);
++  v8::Local<v8::Object> wrapper;
++  if (!session->Get()->GetWrapper(isolate).ToLocal(&wrapper))
++    return false;
++  auto details = gin::DataObjectBuilder(isolate)
++                     .Set("requestId", attempt_id)
++                     .Set("phase", completing ? "complete" : "start")
++                     .Set("frame", frame)
++                     .Set("relyingPartyId", rp_id)
++                     .Set("origin", original_origin)
++                     .Set("kind", "get")
++                     .Set("presentation", "modal")
++                     .Set("transports", *names)
++                     .Build();
++  auto event = gin_helper::internal::Event::New(isolate)
++                   ->GetWrapper(isolate)
++                   .ToLocalChecked();
++  auto weak_this = weak_factory_.GetWeakPtr();
++  v8::TryCatch exception(isolate);
++  // Every call must reach native PolicyState, including a duplicate whose
++  // JavaScript caller catches errors. The ordinary gin callback converter is
++  // one-shot and would hide that duplicate after accepting the first allow.
++  // This GC-owned translator retains only the bounded native attempt callback,
++  // never this delegate, a credential response or a source window.
++  auto decision = gin_helper::CreateFunctionFromTranslator(
++      isolate, base::BindRepeating(&RecordDecision, std::move(decide)),
++      /*one_time=*/false);
++  auto emitted =
++      gin_helper::EmitEvent(isolate, wrapper, "oya-webauthn-request", event,
++                            details, decision, std::move(cancel_lifetime));
++  bool listener = false;
++  if (exception.HasCaught() || isolate->IsExecutionTerminating() ||
++      !weak_this || !gin::ConvertFromV8(isolate, emitted, &listener) ||
++      !listener)
++    return false;
++  auto* current =
++      content::RenderFrameHost::FromID(weak_this->render_frame_host_id_);
++  return weak_this->browser_attempt_id_ == attempt_id &&
++         NativeSource(current) &&
++         current->GetLastCommittedOrigin().Serialize() == original_origin &&
++         ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled();
++#else
++  return false;
++#endif
++}
++
++base::OnceClosure ElectronAuthenticatorRequestClientDelegate::
++    CreateBrowserPasskeyRetirementCallback(const std::string& attempt_id) {
++#if BUILDFLAG(IS_MAC)
++  auto* frame = content::RenderFrameHost::FromID(render_frame_host_id_);
++  auto* session =
++      frame ? api::Session::FromBrowserContext(frame->GetBrowserContext())
++            : nullptr;
++  if (!session || !session->Get())
++    return base::OnceClosure();
++  return base::BindOnce(&RetireMainLease, WeakSession(session), attempt_id);
++#else
++  return base::OnceClosure();
++#endif
++}
++
++std::vector<std::unique_ptr<device::FidoDiscoveryBase>>
++ElectronAuthenticatorRequestClientDelegate::CreateBrowserPasskeyDiscoveries(
++    const device::CtapGetAssertionRequest& request,
++    const base::flat_set<device::FidoTransportProtocol>& transports,
++    base::RepeatingCallback<bool()> authorized) {
++  std::vector<std::unique_ptr<device::FidoDiscoveryBase>> discoveries;
++#if BUILDFLAG(IS_MAC)
++  auto* frame = content::RenderFrameHost::FromID(render_frame_host_id_);
++  if (!NativeSource(frame) || !authorized || !authorized.Run() ||
++      !ElectronWebAuthenticationDelegate::IsOyaBrowserPasskeysEnabled() ||
++      !transports.contains(device::FidoTransportProtocol::kHybrid))
++    return discoveries;
++  const auto role =
++      transports.contains(device::FidoTransportProtocol::kInternal)
++          ? device::FidoTransportProtocol::kInternal
++          : device::FidoTransportProtocol::kHybrid;
++  auto discovery = device::fido::icloud_keychain::NewBrowserDiscovery(
++      content::WebContents::FromRenderFrameHost(frame)
++          ->GetTopLevelNativeWindow(),
++      role, request, std::move(authorized));
++  if (discovery)
++    discoveries.push_back(std::move(discovery));
++#endif
++  return discoveries;
++}
++
++}  // namespace electron

@@ -20,7 +20,7 @@ import type { PageOutput, RecordedStep, RecordingResult, RecordingTab } from './
 
 /** The services the recorder uses; its channels reach it back through `recorder`. */
 type Deps = Pick<AppServices, 'tabs' | 'workspace' | 'isolatedWorld' | 'analyzerScript' | 'recorder'> &
-  Partial<Pick<AppServices, 'translation'>>;
+  Partial<Pick<AppServices, 'translation' | 'passkeys'>>;
 
 /** Who started a recording: 'desktop' (the panel) or 'remote' (the server). */
 export type RecordingOrigin = 'desktop' | 'remote';
@@ -208,7 +208,7 @@ export class Recorder {
     this.starter.rememberPausedPages();
     this.emitRecording();
     // The person has the tabs back: pages in another language are offered again.
-    void this.deps.translation?.sync().catch(() => console.warn('[translation] original page restoration required'));
+    syncStoppedFeatures(this.deps);
   }
 
   /** Stops refreshing the shell's step list. */
@@ -233,4 +233,10 @@ export class Recorder {
     const { recording, recordingOrigin: origin } = this;
     return { recording, origin, steps: [...this.recordedSteps], secrets: [...this.recordedSecrets] };
   }
+}
+
+/** Stopped state is published before browser-owned consent and language offers are reconsidered. */
+function syncStoppedFeatures(deps: Deps): void {
+  deps.passkeys?.sync();
+  void deps.translation?.sync().catch(() => console.warn('[translation] original page restoration required'));
 }
