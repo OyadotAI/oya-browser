@@ -141,6 +141,7 @@ and downloaded Oya profiles were rechecked on November 2, 2026: neither contains
 status is unknown. A valid Developer ID certificate alone is insufficient.
 Do not add the entitlement to an unmatched profile or bypass macOS validation.
 
-The maintainer authorized commit, push and release when the work is complete.
-Until these gates pass, keep the PR draft and do not publish this source as a
-working passkey release or replace the installed app.
+The maintainer explicitly authorized merging and releasing this default-off
+source checkpoint. Production packaging does not enable it. The native and
+physical gates above remain required before enabling the experiment or claiming
+a working phone-passkey fix; a normal app release does not satisfy those gates.
