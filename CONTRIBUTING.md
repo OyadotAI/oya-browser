@@ -111,19 +111,37 @@ and deploys. The macOS job signs and notarizes from five repository secrets:
 Until they are set, `make release-local-mac` builds and notarizes the macOS app on your own Mac,
 as releases used to.
 
-Windows releases require a trusted code-signing identity. Configure repository secrets
-`WINDOWS_CERTIFICATE_P12` (the certificate and private key as base64 PFX/P12) and
-`WINDOWS_CERTIFICATE_PASSWORD`, plus repository variable `WINDOWS_SIGNER_SUBJECT` containing
-the certificate's exact Subject distinguished name. Do not invent a publisher name or use a
-self-signed certificate for distribution. Hardware-backed identities require configuring the
-corresponding supported signing provider before enabling that release path.
+Windows releases use Microsoft Artifact Signing Public Trust through GitHub OIDC. A paid
+eligible Azure subscription, validated legal publisher identity and active Public Trust
+certificate profile are required; a pending validation or test certificate cannot ship.
+Microsoft retains the private signing key. Configure the protected `windows-signing` GitHub
+environment with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SIGNING_ENDPOINT`,
+`AZURE_SIGNING_ACCOUNT_NAME`, `AZURE_SIGNING_PROFILE_NAME`, `WINDOWS_PUBLISHER_NAME` (approved
+publisher CN) and `WINDOWS_SIGNER_SUBJECT` (the certificate's exact Subject distinguished name).
+Do not invent publisher metadata. The Windows build explicitly loads
+`browser/build/windows-signing.cjs`; normal macOS packaging retains its existing configuration.
 
-The Windows job refuses missing signing inputs, requires SHA-256 timestamped signing and checks
+Give the dedicated user-assigned managed identity only the **Artifact Signing Certificate
+Profile Signer** role at the exact profile resource. Its federated credential accepts issuer
+`https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange` and the exact
+subject `repo:OyadotAI/oya-browser:environment:windows-signing`. CI needs no subscription-wide
+Contributor role or certificate password. The environment permits only `main` for preflight
+and `v*` tags for releases, requires the authorized maintainer as reviewer and disables admin
+bypass. Before approving one specific pending signing deployment, review its immutable SHA,
+workflow/configuration and applicable successful CI; release tags must resolve to that SHA on
+main. Existing release authorization can cover that concrete review and approval. Never approve
+arbitrary pending runs or install an automatic approval workflow.
+
+The Windows job refuses missing signing inputs and tags outside main, requires SHA-256 timestamped signing and checks
 the installer, packaged executable and a disposable installed executable against the expected
 identity before upload. It also probes SQLite support inside the packaged Windows executable.
 Run `browser/build/verify-windows-signatures.ps1` on Windows to repeat
 signature checks. Missing credentials now block Windows releases instead of publishing unsigned
-downloads. The previously published v1.0.210 installer had no embedded Authenticode certificate
+downloads. The manual **Windows signing preflight** first checks configuration/ref refusal,
+signature guards and owned PE compilation on Windows without credentials on the selected ref; its protected main-only job
+then authenticates, signs a harmless executable and verifies signer and timestamp without
+publishing release assets. Successful Azure login alone does not prove signing readiness.
+The previously published v1.0.210 installer had no embedded Authenticode certificate
 table; it was inspected without execution during the onboarding investigation.
 
 Signing does not guarantee a warning-free first download: [Microsoft SmartScreen also evaluates

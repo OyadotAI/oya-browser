@@ -40,17 +40,33 @@ jobs:
 
   build-windows:
     name: Build Windows installer
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: ci
+    environment: windows-signing
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
       contents: write
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      AZURE_SIGNING_PROFILE_NAME: ${{ vars.AZURE_SIGNING_PROFILE_NAME }}
+      WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+      WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - uses: actions/setup-node@v7
       with:
         node-version: 24
+
+    - name: Verify release commit belongs to main
+      run: node browser/build/verify-release-ref.cjs
 
     - name: Install browser dependencies
       run: cd browser && npm ci
@@ -59,29 +75,13 @@ jobs:
       shell: pwsh
       run: ./browser/build/test-windows-signatures.ps1
 
-    - name: Require Windows signing credentials
-      shell: pwsh
-      env:
-        WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
-        WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
-      run: |
-        foreach ($name in @('WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'WINDOWS_SIGNER_SUBJECT')) {
-          if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-            throw "Missing $name. Configure Windows signing as documented in CONTRIBUTING.md."
-          }
-        }
+    - uses: ./.github/actions/windows-signing
 
     - name: Build NSIS installer
-      env:
-        WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
-        WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      run: cd browser && npm run dist:win -- --x64
+      run: cd browser && npm run dist:win -- --x64 --config build/windows-signing.cjs
 
     - name: Verify packaged and installed Windows signatures
       shell: pwsh
-      env:
-        WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
       run: |
         $version = (Get-Content browser/package.json | ConvertFrom-Json).version
         $installer = (Resolve-Path "browser/dist/Oya.Browser-$version-x64.exe").Path
