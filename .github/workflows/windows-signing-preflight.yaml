@@ -1,4 +1,4 @@
-# Check inherited release signing configuration without publishing assets or exposing credentials.
+# Prove protected Azure federation and timestamped Windows signing without publishing assets.
 name: Windows signing preflight
 on:
   workflow_dispatch:
@@ -8,21 +8,51 @@ concurrency:
   group: windows-signing-preflight
   cancel-in-progress: true
 jobs:
-  signing-configuration:
+  native-checks:
+    # Unsigned, credential-free checks also run on a selected preparation ref.
     runs-on: windows-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
-      - name: Check signing configuration availability
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test signing configuration and release refusal paths
+        run: node --test browser/tests/unit/build/windows-signing.test.cjs browser/tests/unit/build/verify-release-ref.test.cjs
+      - name: Test Windows signature refusal paths
         shell: pwsh
-        env:
-          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
-        run: |
-          $missing = @()
-          foreach ($name in @('WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'WINDOWS_SIGNER_SUBJECT')) {
-            $configured = -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))
-            Write-Output "$name configured=$configured"
-            if (-not $configured) { $missing += $name }
-          }
-          if ($missing.Count -gt 0) { throw "Missing Windows signing configuration: $($missing -join ', ')" }
+        run: ./browser/build/test-windows-signatures.ps1
+      - name: Compile the owned unsigned signing probe
+        shell: pwsh
+        run: ./browser/build/test-windows-signing-probe.ps1
+  signing-configuration:
+    if: github.ref == 'refs/heads/main'
+    needs: native-checks
+    environment: windows-signing
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      AZURE_SIGNING_PROFILE_NAME: ${{ vars.AZURE_SIGNING_PROFILE_NAME }}
+      WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+      WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test Windows signature refusal paths
+        shell: pwsh
+        run: ./browser/build/test-windows-signatures.ps1
+      - uses: ./.github/actions/windows-signing
+      - name: Sign and verify an owned executable
+        shell: pwsh
+        run: ./browser/build/preflight-windows-signing.ps1

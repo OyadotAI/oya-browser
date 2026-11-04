@@ -623,6 +623,18 @@ per-browser endpoint to make the target unambiguous.
   motion. It offers a native takeover confirmation, deduplicated while open and
   rate-limited for pointer motion. Blocked input is never replayed after takeover.
 
+## Windows release signing
+
+`build/windows-signing.cjs` merges the existing package build with Microsoft Artifact Signing
+options after validating the protected environment's identity, endpoint and publisher metadata.
+It removes competing local-certificate options while preserving required signing and update
+signature verification. The OIDC identity has only the exact Public Trust profile's signer role;
+its GitHub environment requires review of the concrete run and permits only main/preflight and
+version-tag/release refs. `build/verify-release-ref.cjs` binds the release to current main before
+authentication. The manual preflight compiles and signs an owned harmless PE, verifies its exact
+subject and timestamp and never publishes an artifact. Paid subscription and publisher validation
+are external prerequisites; missing configuration never enables unsigned distribution.
+
 ## Tests
 
 | Command                                                       | Runs                                                                                          |
