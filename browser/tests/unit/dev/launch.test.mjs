@@ -14,7 +14,10 @@ function run({ platform = 'darwin', event = 'exit', args = [], imported = false 
     import cp from 'node:child_process';
     import fs from 'node:fs';
     import { EventEmitter } from 'node:events';
-    import { syncBuiltinESMExports } from 'node:module';
+    import { createRequire, syncBuiltinESMExports } from 'node:module';
+    const require = createRequire(${JSON.stringify(launcher.href)});
+    require.cache[require.resolve('electron')] = {exports:'/synthetic/Electron.app/Contents/MacOS/Electron'};
+    require.cache[require.resolve('electron/package.json')] = {exports:{version:'synthetic-runtime'}};
     Object.defineProperty(process, 'platform', {value:${JSON.stringify(platform)}});
     fs.existsSync = () => true;
     fs.mkdtempSync = () => '/synthetic private logs';
@@ -97,7 +100,7 @@ for (const platform of ['linux', 'win32']) {
     const result = run({ platform, args: ['--dev', 'argument with spaces'] });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.records.length, 1);
-    assert.notEqual(result.records[0].command, '/usr/bin/open');
+    assert.equal(result.records[0].command, '/synthetic/Electron.app/Contents/MacOS/Electron');
     assert.deepEqual(result.records[0].args, [directory, '--dev', 'argument with spaces']);
   });
 }
