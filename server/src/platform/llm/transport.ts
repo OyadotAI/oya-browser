@@ -72,8 +72,8 @@ export function unanswered(err: any) {
 export const baseOf = (baseUrl: string) => baseUrl.replace(/\/+$/, '');
 
 /** POSTs JSON with the shared timeout; a 30x is refused, since it could lead into an internal address. */
-export async function postJson(url: string, headers: Record<string, string>, body: unknown) {
-  const init = { method: 'POST', redirect: 'error' as const, signal: AbortSignal.timeout(LLM_TIMEOUT_MS) };
+export async function postJson(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal) {
+  const init = postInit(signal);
   const res = await fetch(url, { ...init, headers, body: JSON.stringify(body) }).catch((err) => {
     throw unanswered(err);
   });
@@ -81,6 +81,15 @@ export async function postJson(url: string, headers: Record<string, string>, bod
   return res.json();
 }
 
+/** Caller cancellation can only shorten the normal provider deadline. */
+function postInit(signal?: AbortSignal) {
+  const deadline = AbortSignal.timeout(LLM_TIMEOUT_MS);
+  return {
+    method: 'POST',
+    redirect: 'error' as const,
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+  };
+}
 /** Whether a failure is worth another attempt: no answer, or a status in LLM_RETRY_STATUS. */
 export const retryable = (err: unknown) =>
   err instanceof LlmError && (err.status === null || RETRY_STATUS.includes(err.status));

@@ -85,7 +85,7 @@ export function AccountChooser({ vm }: ViewProps<SetupViewModel>) {
   const { accounts } = useViewModel(vm);
   return (
     <div className="welcome-view" data-view="accounts">
-      <h2>Welcome back</h2>
+      <h2 tabIndex={-1}>Welcome back</h2>
       <p className="sub">Choose an account to pick up where you left off.</p>
       <ul className="chooser" aria-label="Accounts on this browser">
         {accounts.map((account, index) => (

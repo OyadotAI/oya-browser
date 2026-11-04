@@ -8,7 +8,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { windowsExecutable } from './windows-executable.ts';
 import { firefoxSource, type FirefoxSource } from './firefox.ts';
 import { safariSource, type SafariSource } from './safari.ts';
 
@@ -185,7 +184,7 @@ function winSource(id: string): Source | null {
   const local = process.env.LOCALAPPDATA || '';
   const spec = Object.values(WIN_BROWSERS).find((b) => winId(b) === id);
   if (!spec || !local || !fs.existsSync(path.join(local, spec.data))) return null;
-  return describeSource(id, spec.name, windowsExecutable(spec.exe), path.join(local, spec.data));
+  return describeSource(id, spec.name, '', path.join(local, spec.data));
 }
 
 /** The registry key holding the user's chosen https handler. */

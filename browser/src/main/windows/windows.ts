@@ -203,6 +203,7 @@ export class BrowserWindows {
   }
   /** Closing one shell tears down only its tabs, shield and layout timers, not the shared session. */
   private closed(scope: AppServices): void {
+    if (!scope.shell.browsingMode) this.root.onboarding?.reset?.();
     disposeWindow(scope);
     this.scopes.splice(this.scopes.indexOf(scope), 1);
     const normal = publicScopes(this.scopes);

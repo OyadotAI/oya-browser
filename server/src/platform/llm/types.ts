@@ -19,6 +19,10 @@ export type ModelTransport = (body: unknown) => Promise<RelayedAnswer>;
 
 /** One chat request, as chatCompletion takes it. */
 export type ChatRequest = {
+  /** Optional caller cancellation shortens the ordinary provider timeout. */
+  signal?: AbortSignal;
+  /** A one-shot diagnostic can cap output without changing ordinary agent defaults. */
+  maxTokens?: number;
   /** Provider base URL; it picks the provider (see index.ts). */
   baseUrl: string;
   /** Provider API key. */

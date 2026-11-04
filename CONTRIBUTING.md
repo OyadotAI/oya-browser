@@ -111,6 +111,29 @@ and deploys. The macOS job signs and notarizes from five repository secrets:
 Until they are set, `make release-local-mac` builds and notarizes the macOS app on your own Mac,
 as releases used to.
 
+Windows releases require a trusted code-signing identity. Configure repository secrets
+`WINDOWS_CERTIFICATE_P12` (the certificate and private key as base64 PFX/P12) and
+`WINDOWS_CERTIFICATE_PASSWORD`, plus repository variable `WINDOWS_SIGNER_SUBJECT` containing
+the certificate's exact Subject distinguished name. Do not invent a publisher name or use a
+self-signed certificate for distribution. Hardware-backed identities require configuring the
+corresponding supported signing provider before enabling that release path.
+
+The Windows job refuses missing signing inputs, requires SHA-256 timestamped signing and checks
+the installer, packaged executable and a disposable installed executable against the expected
+identity before upload. It also probes SQLite support inside the packaged Windows executable.
+Run `browser/build/verify-windows-signatures.ps1` on Windows to repeat
+signature checks. Missing credentials now block Windows releases instead of publishing unsigned
+downloads. The previously published v1.0.210 installer had no embedded Authenticode certificate
+table; it was inspected without execution during the onboarding investigation.
+
+Signing does not guarantee a warning-free first download: [Microsoft SmartScreen also evaluates
+reputation](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/).
+Record a clean Windows installation/launch check for each release. Windows Chrome/Edge imports
+transfer selected bookmarks and history locally; app-bound signed-in sessions remain unavailable
+and require direct sign-in in Oya. Claude subscription onboarding configures unmodified Claude
+Code with Oya's MCP tools; users give their tasks in Claude Code. Its setup token remains in
+Claude Code's environment, and does not configure Oya's built-in Ask panel.
+
 Desktop apps (macOS, Windows) ship stock Electron from npm. Native-only capabilities
 (agent dialogs, cross-process frames, drag, the external Runtime methods) return an
 unsupported-capability error there. Only the Linux cloud runtime uses the patched

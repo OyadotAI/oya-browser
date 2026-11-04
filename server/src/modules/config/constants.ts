@@ -12,6 +12,12 @@ export const FILE_MODE = 0o600;
 
 /** Longest value one setting holds; longer is a paste gone wrong, not a model name or a key. */
 export const CONFIG_VALUE_MAX_CHARS = 4096;
+/** Provider setup sends one tool-free request rather than starting an agent run. */
+export const MODEL_TEST_TIMEOUT_MS = 20_000;
+/** Bound even a thinking provider's diagnostic response. */
+export const MODEL_TEST_MAX_TOKENS = 1024;
+/** Only explicit API-key providers are tested, never a deployment or subscription credential. */
+export const MODEL_TEST_PROVIDERS = new Set(['gemini', 'anthropic', 'openrouter']);
 
 /** Where OpenRouter lists its models. Set OYA_OPENROUTER_MODELS_URL to '' to use only the built-in list (offline hosts, tests). */
 export const OPENROUTER_MODELS_URL = process.env.OYA_OPENROUTER_MODELS_URL ?? 'https://openrouter.ai/api/v1/models';

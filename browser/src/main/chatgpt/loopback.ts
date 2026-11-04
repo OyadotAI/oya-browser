@@ -13,7 +13,7 @@ export interface Callback {
   redirectUri: string;
   /** The returned query, once the browser comes back. */
   done: Promise<Record<string, string>>;
-  /** Stops listening. */
+  /** Stops listening and rejects a still-pending sign-in so cancellation settles callers. */
   close(): void;
 }
 
@@ -27,14 +27,21 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse, settle: (q:
 
 /** Starts listening; `ttlMs` bounds how long the sign-in may take. */
 export function awaitCallback(ttlMs = C.LOGIN_TTL_MS): Promise<Callback> {
-  let settle: (q: Record<string, string>) => void = () => {};
-  let fail: (e: Error) => void = () => {};
-  const done = new Promise<Record<string, string>>((resolve, reject) => ((settle = resolve), (fail = reject)));
+  const { promise: done, resolve: settle, reject: fail } = Promise.withResolvers<Record<string, string>>();
   const server = http.createServer((req, res) => answer(req, res, settle));
   const timer = setTimeout(() => fail(Error('Sign-in took too long. Try again.')), ttlMs);
-  const close = () => (clearTimeout(timer), server.close());
-  void done.then(close, close);
-  return listening(server, done, close);
+  const cleanup = () => (clearTimeout(timer), server.close());
+  const close = () => (fail(Error('Sign-in cancelled.')), cleanup());
+  void done.then(cleanup, cleanup);
+  return cleanupFailedListen(listening(server, done, close), close);
+}
+
+/** A bind failure releases the deadline as well as the server handle. */
+function cleanupFailedListen(pending: Promise<Callback>, close: () => void): Promise<Callback> {
+  return pending.catch((error) => {
+    close();
+    throw error;
+  });
 }
 
 /** Resolves once the server listens, with the address it listens on. */

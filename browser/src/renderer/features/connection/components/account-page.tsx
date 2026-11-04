@@ -18,6 +18,7 @@ import { accountCard } from '../view-models/account-view-model.ts';
 import { Button, StatusLine } from '../../../ui/index.ts';
 import './account-page.css';
 import './settings-layout.css';
+import { SettingsSetupGuide } from './setup-guide.tsx';
 
 /** The server and browser id with their Copy buttons, and Connection settings…; folded until asked for. */
 function Advanced({ dialog, reconnect }: Pick<AccountModels, 'dialog' | 'reconnect'>) {
@@ -95,6 +96,7 @@ function General({
   return (
     <>
       <div className="settings-preferences">{preferences}</div>
+      {m.setup && <SettingsSetupGuide openConsole={() => m.setup?.onboarding.openConsole()} />}
       <SettingsSection id="browser-label" label="Browser">
         <DefaultBrowserRow vm={m.imports} />
         <PersonaRow vm={m.profile} />

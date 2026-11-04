@@ -29,7 +29,9 @@ export const gemini: LlmProvider = {
   name: 'gemini',
   handles: isNative,
   send: async (request) =>
-    fromGemini(await postJson(endpointFor(request), { 'Content-Type': 'application/json' }, toGemini(request))),
+    fromGemini(
+      await postJson(endpointFor(request), { 'Content-Type': 'application/json' }, toGemini(request), request.signal),
+    ),
 };
 
 /**
@@ -42,13 +44,14 @@ const callId = (name, index) => `${name}:${index}`;
 const callName = (id) => String(id).split(':')[0];
 
 /** What toGemini reads from a request: the messages, and the tools when there are any. */
-type GeminiInput = Pick<ChatRequest, 'tools'> & Partial<Pick<ChatRequest, 'messages'>>;
+type GeminiInput = Pick<ChatRequest, 'tools'> & Partial<Pick<ChatRequest, 'messages' | 'maxTokens'>>;
 
 /** An OpenAI chat request as a Gemini generateContent body: system prompts become systemInstruction, tool results are grouped per turn. */
-export function toGemini({ messages = [], tools }: GeminiInput) {
+export function toGemini({ messages = [], tools, maxTokens }: GeminiInput) {
   const contents = [];
   for (const message of messages) addTurn(contents, message);
-  return { contents, ...systemInstruction(messages), ...functionDeclarations(tools) };
+  const limit = maxTokens ? { generationConfig: { maxOutputTokens: maxTokens } } : {};
+  return { contents, ...systemInstruction(messages), ...functionDeclarations(tools), ...limit };
 }
 
 /** Append one non-system message to the Gemini turns. */

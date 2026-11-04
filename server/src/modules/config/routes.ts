@@ -12,6 +12,10 @@ import * as chatgpt from './chatgpt.ts';
 import { getKey, operatorOnly } from '../../app/http.ts';
 import { registry } from '../browsers/registry.ts';
 import { LLM_FIELDS } from './fields.ts';
+import { enforce } from '../../platform/limits.ts';
+import { HttpError } from '../../platform/errors.ts';
+import { MODEL_TEST_PROVIDERS } from './constants.ts';
+import { testModel } from './model-test.ts';
 
 /** Config routes, mounted on the API router. */
 export const router = Router({ caseSensitive: true });
@@ -31,6 +35,36 @@ const auditUpdate = (req, actorKey, meta) =>
 router.get('/config', authMiddleware, (req, res) => {
   res.json(keyConfig.get(getKey(req)));
 });
+
+/** POST /config/model-test sends one fixed request using only the caller's saved provider key. */
+router.post('/config/model-test', authMiddleware, enforce('chat'), async (req, res) => {
+  res.json(await modelTestRequest(req, res));
+});
+/** Reject unknown diagnostic fields instead of turning the endpoint into a general model proxy. */
+function modelTestProvider(body): string {
+  if (!body || Object.keys(body).join(',') !== 'provider' || !MODEL_TEST_PROVIDERS.has(body.provider))
+    throw new HttpError(Status.BAD_REQUEST, 'Choose a supported provider.', { code: 'invalid_request' });
+  return body.provider;
+}
+/** Caller disconnect aborts the underlying provider request, not just its response wait. */
+async function modelTestRequest(req, res) {
+  const abort = new AbortController();
+  const closed = modelTestClose(res, abort);
+  try {
+    return await testModel(getKey(req), modelTestProvider(req.body), abort.signal);
+  } finally {
+    res.removeListener('close', closed);
+  }
+}
+
+/** A completed HTTP response does not cancel an already finished diagnostic. */
+function modelTestClose(res, abort: AbortController): () => void {
+  const closed = () => {
+    if (!res.writableEnded) abort.abort();
+  };
+  res.once('close', closed);
+  return closed;
+}
 
 /**
  * POST /config, updates the calling key's settings. Administrator credentials

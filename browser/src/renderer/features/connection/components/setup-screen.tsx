@@ -1,103 +1,72 @@
-/**
- * The full-page welcome and sign-in screen (index.html's .setup-screen): what
- * the browser is for, and the panel that switches between start, waiting and
- * manual. The panel's views are in setup-views.tsx.
- */
+/** First run offers three starting points before exposing connection details. */
 import { useEffect, useRef } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
 import { Button, Orb } from '../../../ui/index.ts';
-import './setup-screen.css';
-import type { SetupView, SetupViewModel } from '../view-models/setup-view-model.ts';
-import type { ViewProps } from '../model/models.ts';
+import type { SetupViewModel } from '../view-models/setup-view-model.ts';
+import type { AgentsViewModel } from '../view-models/agents-view-model.ts';
+import type { ImportViewModel } from '../view-models/import-view-model.ts';
 import { ManualView, WaitingView } from './setup-views.tsx';
 import { AccountChooser } from './account-chooser.tsx';
-import { ChecklistView } from './checklist-view.tsx';
-import type { ChecklistViewModel } from '../view-models/checklist-view-model.ts';
+import { SetupFlow } from './setup-flow.tsx';
+import './setup-screen.css';
 
-/** The welcome screen's view-models. */
-interface SetupScreenProps extends ViewProps<SetupViewModel> {
-  /** The first-run checklist. */
-  checklist: ChecklistViewModel;
+/** Existing models share account recovery and explicit setup actions with Settings. */
+interface Props {
+  /** Manual form and account recovery. */
+  vm: SetupViewModel;
+  /** Local agent configuration. */
+  agents: AgentsViewModel;
+  /** Optional local library import. */
+  imports: ImportViewModel;
 }
 
-/** Focuses the first field (or else button) of the view shown, as the view changes. */
-function useFocusView(view: SetupView) {
+/** Focus follows intentional navigation instead of jumping into a secret field. */
+function useSetupFocus(key: string, path: string | null) {
   const panel = useRef<HTMLElement>(null);
+  const previousPath = useRef<string | null>(null);
   useEffect(() => {
-    const shown = panel.current?.querySelector(`.welcome-view[data-view="${view}"]`);
-    (shown?.querySelector('input') ?? shown?.querySelector('button'))?.focus();
-  }, [view]);
+    if (path) previousPath.current = path;
+    const choice =
+      key.endsWith(':choices') && previousPath.current
+        ? panel.current?.querySelector<HTMLElement>(`[data-path="${previousPath.current}"]`)
+        : null;
+    (choice ?? panel.current?.querySelector<HTMLElement>('h1, h2'))?.focus();
+  }, [key, path]);
   return panel;
 }
 
-/** The left side: what Oya Browser is for, in three steps. */
-function WelcomeStage() {
-  return (
-    <section className="welcome-stage" aria-labelledby="welcome-title">
-      <Orb size="lg" className="brand-mark" />
-      <div className="eyebrow">Oya Browser</div>
-      <h1 id="welcome-title">
-        Sign in once.
-        <br />
-        <em>Oya</em> takes it from&nbsp;here.
-      </h1>
-      <p className="welcome-lede">
-        A real browser that is yours. Give Oya a task and it works with your logins. Take the wheel back any time.
-      </p>
-      <ol className="welcome-steps">
-        <li>
-          <span className="welcome-num">01</span>
-          <strong>Sign in</strong>
-          <span>Link this browser to your Oya workspace.</span>
-        </li>
-        <li>
-          <span className="welcome-num">02</span>
-          <strong>Log in to your sites</strong>
-          <span>Here, as usual. Agents reuse those sessions.</span>
-        </li>
-        <li>
-          <span className="welcome-num">03</span>
-          <strong>Hand it to Oya</strong>
-          <span>Type a task on the start page, or drive it from code, MCP and Playwright.</span>
-        </li>
-      </ol>
-    </section>
-  );
-}
-
-/** The welcome screen. */
-export function SetupScreen({ vm, checklist }: SetupScreenProps) {
+/** The panel remains scrollable at the native minimum window size. */
+export function SetupScreen({ vm, agents, imports }: Props) {
   const s = useViewModel(vm);
-  const panel = useFocusView(s.view);
+  const flow = useViewModel(vm.onboarding);
+  const technical = useViewModel(vm.onboarding.technical);
+  const panel = useSetupFocus(`${s.view}:${flow.page}:${technical.view}`, flow.path);
   return (
-    <div className="setup-screen" data-view={s.view}>
-      {/* The window moves by this strip (src/main/shell/window.ts hides the title bar). */}
-      <div className="window-drag" aria-hidden="true"></div>
-      <WelcomeStage />
-      <section className="setup-card welcome-panel" aria-label="Connect this browser" ref={panel}>
-        <AccountChooser vm={vm} />
-        <ChecklistView
-          vm={checklist}
-          onSignIn={() => void vm.signIn()}
-          onManual={() => vm.show('manual')}
-          onSkip={() => vm.skip()}
-        />
-        <WaitingView vm={vm} />
-        <ManualView vm={vm} />
-        <div role="alert" className="setup-error" id="setup-error">
-          {s.error}
+    <main className="setup-screen" data-view={s.view} data-page={flow.page}>
+      <div className="window-drag" aria-hidden="true" />
+      <section className="setup-card welcome-panel" aria-label="Set up Oya Browser" ref={panel}>
+        <div className="setup-brand">
+          <Orb size="lg" className="brand-mark" />
+          <p className="eyebrow">Oya Browser</p>
         </div>
-        {s.view === 'manual' && (
-          <Button type="button" variant="secondary" onClick={() => void vm.makeDefaultBrowser()}>
-            Make Oya Browser default…
-          </Button>
+        {s.view === 'accounts' ? (
+          <AccountChooser vm={vm} />
+        ) : s.view === 'manual' ? (
+          <ManualView vm={vm} />
+        ) : s.view === 'waiting' ? (
+          <WaitingView vm={vm} />
+        ) : (
+          <SetupFlow vm={vm} agents={agents} imports={imports} />
         )}
-        {s.view !== 'checklist' && s.view !== 'waiting' && (
-          <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
-            Just browse for now
-          </Button>
+        {s.error && (
+          <p role="alert" className="setup-error">
+            {s.error}
+          </p>
         )}
+        <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
+          Just browse for now
+        </Button>
       </section>
-    </div>
+    </main>
   );
 }

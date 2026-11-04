@@ -18,9 +18,12 @@ import type { PaletteViewModel } from '../view-models/palette-view-model.ts';
 import { CommandPalette } from './command-palette.tsx';
 import { ShortcutGuide } from './shortcut-guide.tsx';
 import { AccountPage } from './account-page.tsx';
+import type { SetupViewModel } from '../view-models/setup-view-model.ts';
 
 /** The ViewModels of the account page. */
 export interface AccountModels {
+  /** The guide can reopen inside Settings without resetting connection. */
+  setup?: SetupViewModel;
   /** The dialog itself: open, page, server, browser id, Advanced, Copy. */
   dialog: ShellDialogViewModel;
   /** The account card and its actions. */

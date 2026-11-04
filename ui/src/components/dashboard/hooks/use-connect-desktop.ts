@@ -5,23 +5,52 @@
  */
 import { useEffect } from 'react';
 import { useDesktopSignIn } from './use-desktop-sign-in';
+import { desktopReturnFrom, validDesktopReturn, type DesktopReturn } from '../desktop-return';
 
 /** Where the pending request is kept; localStorage survives an email-confirmation tab. */
 const PENDING = 'oya.connectDesktop';
 
 /** Remembers a `?connect=desktop` visit; call it before any redirect to /login. */
 export function rememberDesktopConnect(): void {
-  if (new URLSearchParams(window.location.search).get('connect') !== 'desktop') return;
-  window.localStorage.setItem(PENDING, '1');
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('connect') !== 'desktop') return;
+  const request = desktopReturnFrom(params);
+  if (request) window.localStorage.setItem(PENDING, JSON.stringify(request));
+  else if (!params.has('callback') && !params.has('state')) window.localStorage.setItem(PENDING, '1');
+  else window.localStorage.removeItem(PENDING);
+  clearReturnQuery(params);
+}
+
+/** Remove temporary return data before auth redirects or unrelated page requests. */
+function clearReturnQuery(params: URLSearchParams): void {
+  for (const name of ['connect', 'callback', 'state']) params.delete(name);
+  window.history.replaceState(
+    null,
+    '',
+    `${window.location.pathname}${params.size ? `?${params}` : ''}${window.location.hash}`,
+  );
+}
+
+/** Old dashboards used a flag; new requests expire instead of replaying across later logins. */
+function pendingReturn(raw: string): DesktopReturn | undefined | null {
+  if (raw === '1') return undefined;
+  try {
+    const value = JSON.parse(raw);
+    return validDesktopReturn(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Once `apiKey` is known, answers a remembered request with the pairing link, once. */
 export function useConnectDesktop(apiKey: string): void {
   const { open } = useDesktopSignIn(apiKey);
   useEffect(() => {
-    if (!apiKey || !window.localStorage.getItem(PENDING)) return;
+    const raw = window.localStorage.getItem(PENDING);
+    if (!apiKey || !raw) return;
     window.localStorage.removeItem(PENDING);
-    void open();
+    const request = pendingReturn(raw);
+    if (request !== null) void open(undefined, request);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- open is rebuilt each render; the key is the trigger
   }, [apiKey]);
 }

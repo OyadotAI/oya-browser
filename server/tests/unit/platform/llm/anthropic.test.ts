@@ -71,3 +71,22 @@ describe('anthropic', () => {
     );
   });
 });
+
+describe('bounded Anthropic diagnostics', () => {
+  afterEach(() => mock.restoreAll());
+  it('uses the explicit output cap without the ordinary adaptive-thinking settings', async () => {
+    const fetch = answer(REPLY);
+    await anthropic.send({ ...STEP, maxTokens: 73, tools: undefined });
+    const body = JSON.parse((fetch.mock.calls[0].arguments as any[])[1].body);
+    assert.equal(body.max_tokens, 73);
+    assert.equal(body.thinking, undefined);
+    assert.equal(body.tools, undefined);
+  });
+  it('an already cancelled diagnostic never reaches the provider', async () => {
+    const fetch = answer(REPLY),
+      abort = new AbortController();
+    abort.abort();
+    await assert.rejects(anthropic.send({ ...STEP, signal: abort.signal, maxTokens: 73 }));
+    assert.equal(fetch.mock.callCount(), 0);
+  });
+});

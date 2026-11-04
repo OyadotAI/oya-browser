@@ -7,6 +7,12 @@ import type { AppServices } from '../app/services.ts';
 /** What the calls read: the server address and key, and the socket's browser id. */
 type Deps = Pick<AppServices, 'config' | 'socket'>;
 
+/** Optional cancellation retains an independently configured request deadline. */
+function requestSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
+  const deadline = timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined;
+  return signal && deadline ? AbortSignal.any([signal, deadline]) : signal || deadline;
+}
+
 /** A server answer's body, as far as an error goes. */
 interface ErrorBody {
   /** The server's own reason. */
@@ -77,12 +83,26 @@ export class ServerApi {
    * a queue (a recording save) cannot hold everything behind it.
    */
   async send(method: string, route: string, payload?: unknown, timeoutMs?: number): Promise<unknown> {
+    return this.request(method, route, payload, requestSignal(undefined, timeoutMs));
+  }
+
+  /** Provider setup can abort its project write after a path or workspace change. */
+  postCancelable(route: string, payload: unknown, signal: AbortSignal): Promise<unknown> {
+    return this.request('POST', route, payload, signal);
+  }
+  /** Setup catalog reads share the mutation's cancellation and workspace snapshot. */
+  getCancelable(route: string, signal: AbortSignal): Promise<unknown> {
+    return this.request('GET', route, undefined, signal);
+  }
+
+  /** Credentials and destination are snapshotted together before the network await. */
+  private async request(method: string, route: string, payload: unknown, signal?: AbortSignal): Promise<unknown> {
     const config = this.deps.config.values;
     const res = await fetch(`${serverHttpBase(config.serverUrl)}/api/${route}`, {
       method,
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
       ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
-      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      signal,
     });
     return readApiAnswer(res);
   }

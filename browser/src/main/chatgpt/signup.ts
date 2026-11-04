@@ -7,6 +7,7 @@
 import { createHash } from 'node:crypto';
 import { serverHttpBase, readApiAnswer } from '../connection/server-api.ts';
 import * as C from './constants.ts';
+import { boundedSignal } from './oauth.ts';
 
 /** What the server's puzzle looks like. */
 interface Challenge {
@@ -39,9 +40,9 @@ export function solve({ challenge, difficulty }: Challenge): string {
 }
 
 /** POSTs `body` as JSON to the server's `route`; its answer, or the refusal (a 429 named for what it means). */
-async function post(base: string, route: string, body: object, fetchImpl: typeof fetch) {
+async function post(base: string, route: string, body: object, fetchImpl: typeof fetch, signal?: AbortSignal) {
   const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
-  return readApiAnswer(await fetchImpl(`${base}/api/${route}`, init)).catch((err) => {
+  return readApiAnswer(await fetchImpl(`${base}/api/${route}`, { ...init, signal })).catch((err) => {
     throw err?.status === C.HTTP_TOO_MANY ? Error(C.TOO_MANY_SIGNUPS) : err;
   });
 }
@@ -55,10 +56,24 @@ interface SignupAnswer {
 }
 
 /** Signs up for a key on the server at `serverUrl` (its ws address), for `email`. */
-export async function signUp(serverUrl: string, email: string, fetchImpl: typeof fetch = fetch): Promise<SignedUp> {
+export async function signUp(
+  serverUrl: string,
+  email: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<SignedUp> {
   const base = serverHttpBase(serverUrl);
-  const puzzle = (await readApiAnswer(await fetchImpl(`${base}/api/auth/agent/challenge`))) as Challenge;
+  const bounded = boundedSignal(signal);
+  return signUpAt(base, email, fetchImpl, bounded);
+}
+
+/** Challenge and signup share one cancellation/deadline and destination. */
+async function signUpAt(base: string, email: string, fetchImpl: typeof fetch, bounded: AbortSignal): Promise<SignedUp> {
+  const puzzle = (await readApiAnswer(
+    await fetchImpl(`${base}/api/auth/agent/challenge`, { signal: bounded }),
+  )) as Challenge;
+  bounded.throwIfAborted();
   const body = { email, challenge: puzzle.challenge, nonce: solve(puzzle) };
-  const answer = (await post(base, 'auth/agent/signup', body, fetchImpl)) as SignupAnswer;
+  const answer = (await post(base, 'auth/agent/signup', body, fetchImpl, bounded)) as SignupAnswer;
   return { apiKey: answer.api_key, claimUrl: answer.claim_url };
 }

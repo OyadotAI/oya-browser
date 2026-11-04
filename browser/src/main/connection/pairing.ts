@@ -114,7 +114,7 @@ function importBox(imported: boolean): Pick<MessageBoxOptions, 'checkboxLabel' |
     checkboxLabel: imported
       ? 'Import my logins from my usual browser again'
       : 'Also import my logins from my usual browser',
-    checkboxChecked: !imported,
+    checkboxChecked: false,
   };
 }
 

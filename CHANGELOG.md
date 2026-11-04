@@ -6,6 +6,17 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Added equal Technical setup choices for Oya sign-in, local agents and model API keys. Local-agent status now matches this browser, launch actions keep a practical GitHub test prompt ready, and Gemini, Claude API and OpenRouter keys receive a bounded provider test.
+- Simplified desktop setup into illustrated Technical, Non-technical and AI expert choices, with short instructions, confirmed connection progress, Claude Code subscription guidance and a visual control-plane walkthrough. Import and default-browser choices no longer interrupt first use.
+- Required timestamped Windows signing and verified installer/application signatures before release upload. Windows releases now fail when signing credentials are missing.
+
+### Fixed
+
+- Added local Chrome/Edge bookmarks and history import with explicit profile selection, partial-result reporting and no external SQLite dependency. Protected Windows signed-in sessions still require signing in directly in Oya.
+- Corrected Windows local-agent executable discovery and VS Code configuration paths while keeping credentials out of shell commands.
+
 ## [1.0.210](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.210) · 2026-11-03
 
 ### Added

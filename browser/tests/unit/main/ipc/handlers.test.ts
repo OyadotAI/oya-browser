@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { ModelSettings } from '../../../../src/main/connection/model-settings.ts';
 import { shellHandlers } from '../../../../src/main/ipc/index.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
 import { incognitoSession } from '../../support/incognito.ts';
@@ -14,9 +15,9 @@ import { incognitoSession } from '../../support/incognito.ts';
 describe('IPC handlers', () => {
   let ctx: any, call: any;
   beforeEach(() => {
-    ctx = mainCtx();
+    ctx = mainCtx({ modelSettings: ModelSettings });
     const handlers: any = shellHandlers(ctx);
-    call = (channel, ...args) => handlers[channel]({}, ...args);
+    call = (channel, ...args) => handlers[channel]({ sender: ctx.shell.window.webContents }, ...args);
   });
 
   it('reports browsing mode in the status, so a late renderer leaves the setup screen', async () => {
@@ -484,6 +485,10 @@ describe('IPC handlers', () => {
       status.catalog.map((p) => p.id),
       ['anthropic', 'openai', 'gemini'],
     );
+    assert.deepEqual(await call('model-status', true), {
+      signedIn: true,
+      error: 'This server needs an update to support model setup.',
+    });
     fetch.mock.restore();
     const fromHost = fakeServer({ ...SERVER, llm_provider: '' });
     assert.equal((await call('model-status')).provider, 'openai');
@@ -604,7 +609,7 @@ describe('IPC handlers', () => {
 describe('workspace channel', () => {
   let ctx: any, call: any;
   beforeEach(() => {
-    ctx = mainCtx();
+    ctx = mainCtx({ modelSettings: ModelSettings });
     const handlers: any = shellHandlers(ctx);
     call = (...args) => handlers.workspace({}, ...args);
     ctx.channel = (name, ...args) => handlers[name]({}, ...args);

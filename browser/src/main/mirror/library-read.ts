@@ -27,6 +27,12 @@ export interface ImportedLibrary {
   history: LibraryEntry[];
 }
 
+/** A partial import distinguishes absent content from an unreadable part of the profile. */
+export interface LibraryReadResult extends ImportedLibrary {
+  /** Safe part-specific failures without local paths or private content. */
+  warnings: string[];
+}
+
 /** A node of Chromium's Bookmarks file: a folder with children, or a URL. */
 interface ChromiumNode {
   /** 'url' or 'folder'. */
@@ -106,6 +112,43 @@ function chromiumLibrary(profileDir: string): ImportedLibrary {
     history: tolerant(() => query(file('History'), CHROMIUM_HISTORY).map(entryOf(webkitMs))),
   };
 }
+
+/** Reads one part without allowing file symlinks to escape the selected profile. */
+function libraryPart(file: string, label: string, read: () => LibraryEntry[], warnings: string[]): LibraryEntry[] {
+  try {
+    requireSourceFile(file);
+    return read();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    warnings.push(`${label} could not be read. Check this profile’s file permissions and try again.`);
+    return [];
+  }
+}
+
+/** Offline reads refuse links and directories instead of following them outside the selected profile. */
+function requireSourceFile(file: string): void {
+  const info = fs.lstatSync(file);
+  if (info.isSymbolicLink() || !info.isFile()) throw Error('Unsupported source file');
+}
+
+/** Chromium's readable library is independent of its encrypted cookies and executable. */
+export function readLibraryDetailed(userDataDir: string, profile: string): LibraryReadResult {
+  const folder = path.join(userDataDir, profile);
+  const [bookmarksFile, historyFile] = ['Bookmarks', 'History'].map((name) => path.join(folder, name));
+  const warnings: string[] = [];
+  const bookmarks = libraryPart(bookmarksFile, 'Bookmarks', () => readChromiumBookmarks(bookmarksFile), warnings);
+  const history = libraryPart(historyFile, 'History', () => readChromiumHistory(historyFile), warnings);
+  return { bookmarks, history, warnings };
+}
+
+/** Flatten the selected profile's saved folders without exposing unreadable file details. */
+function readChromiumBookmarks(file: string): LibraryEntry[] {
+  return Object.values(JSON.parse(fs.readFileSync(file, 'utf8')).roots ?? {}).flatMap((node) =>
+    chromiumBookmarks(node as ChromiumNode),
+  );
+}
+/** Recent visits use the same bound and timestamp conversion as existing imports. */
+const readChromiumHistory = (file: string): LibraryEntry[] => query(file, CHROMIUM_HISTORY).map(entryOf(webkitMs));
 
 /** A node of Safari's Bookmarks.plist: a list with children, or a leaf with an address. */
 interface SafariNode {

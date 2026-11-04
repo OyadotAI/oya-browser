@@ -44,7 +44,7 @@ function setup(query: (state: string, nonce: string) => Record<string, string>, 
     listen: listen as never,
     store: store as never,
   });
-  return { auth, fetch, values, saved: () => saved, opened: () => opened };
+  return { auth, fetch, values, electron, saved: () => saved, opened: () => opened };
 }
 
 it('exchanges the code under the issued client and keeps the credential sealed', async () => {
@@ -66,6 +66,41 @@ it('exchanges the code under the issued client and keeps the credential sealed',
   const form = new URLSearchParams(String((fetch.mock.calls[0].arguments as any[])[1].body));
   assert.equal(form.get('client_id'), 'oaiapp_x');
   assert.equal(saved().client_id, 'oaiapp_x');
+});
+
+it('canceling during a token exchange prevents a late credential write', async () => {
+  let nonce = '';
+  const { auth, fetch, saved } = setup((state, n) => ((nonce = n), { state, code: 'c', client_id: 'oaiapp_x' }));
+  const answer = Promise.withResolvers<Response>();
+  fetch.mock.mockImplementation(() => answer.promise);
+  const pending = auth.signIn();
+  await new Promise((resolve) => setImmediate(resolve));
+  auth.cancelSignIn();
+  answer.resolve(
+    new Response(JSON.stringify({ access_token: 'a', refresh_token: 'r', scope: PLAN, id_token: idToken({ nonce }) })),
+  );
+  await assert.rejects(pending);
+  assert.equal(saved(), null);
+});
+it('canceling a stalled browser opener settles sign-in and permits a fresh attempt', async () => {
+  let nonce = '';
+  const { auth, electron, fetch, saved } = setup(
+    (state, n) => ((nonce = n), { state, code: 'c', client_id: 'oaiapp_x' }),
+  );
+  fetch.mock.mockImplementation(
+    async () =>
+      new Response(
+        JSON.stringify({ access_token: 'a', refresh_token: 'r', scope: PLAN, id_token: idToken({ nonce }) }),
+      ),
+  );
+  const opener = mock.method(electron.shell, 'openExternal', () => new Promise<void>(() => {}));
+  const first = auth.signIn();
+  await new Promise((resolve) => setImmediate(resolve));
+  auth.cancelSignIn();
+  await assert.rejects(first);
+  assert.equal(saved(), null);
+  opener.mock.restore();
+  assert.equal((await auth.signIn()).connected, true);
 });
 
 it('refuses a first sign-in that came back without an issued client, and a cancelled one, storing nothing', async () => {

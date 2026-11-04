@@ -8,16 +8,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { agentCommand, runAgent, vscodeConfig } from './agent-platform.ts';
 import { MCP_SERVER_NAME } from './constants.ts';
 import { PRIVATE_FILE_MODE } from '../app/constants.ts';
+import { matchesEndpoint, codexEndpoint } from './config-match.ts';
 
 /** Spaces JSON configs are indented with, as the agents write them. */
 const JSON_INDENT = 2;
-
-/** Runs a program, its output ignored. */
-const run = promisify(execFile);
 
 /** Where Oya's port is and the token it wants. */
 export interface Endpoint {
@@ -34,7 +31,7 @@ interface AgentTarget {
   /** Whether it is on this computer. */
   installed(): boolean;
   /** Whether its config lists Oya. */
-  connected(): boolean;
+  connected(endpoint?: Endpoint): boolean;
   /** Adds Oya to its config. */
   connect(endpoint: Endpoint): Promise<void>;
   /** Removes Oya from its config. */
@@ -53,25 +50,6 @@ export interface AgentStatus {
 
 /** A path under the home folder. */
 const home = (...parts: string[]) => path.join(os.homedir(), ...parts);
-
-/** Folders a CLI installed per user or by Homebrew lives in; an app opened from Finder has none of them on PATH. */
-const binDirs = () => [
-  ...[home('.local/bin'), home('.claude/local'), home('.npm-global/bin')],
-  ...['/opt/homebrew/bin', '/usr/local/bin'],
-];
-
-/** The full path of CLI `name`, or null. */
-const binary = (name: string): string | null =>
-  binDirs()
-    .map((dir) => path.join(dir, name))
-    .find((file) => fs.existsSync(file)) ?? null;
-
-/** Runs CLI `name` with the bin folders on PATH, so a Node-based CLI finds node. */
-function cli(name: string, args: string[]): Promise<unknown> {
-  const file = binary(name);
-  if (!file) return Promise.reject(new Error(`${name} is not installed`));
-  return run(file, args, { env: { ...process.env, PATH: [...binDirs(), process.env.PATH].join(':') } });
-}
 
 /** A JSON file's contents, {} when absent; a file that is not plain JSON is refused rather than overwritten. */
 function readJson(file: string): Record<string, Record<string, unknown>> {
@@ -104,12 +82,17 @@ function jsonAgent(name: string, file: () => string, key: string, entry: (e: End
   return {
     name,
     installed: () => fs.existsSync(path.dirname(file())),
-    connected: () => Object.hasOwn(readJsonQuietly(file())[key] ?? {}, MCP_SERVER_NAME),
+    connected: (endpoint) => jsonConfigured(file(), key, endpoint),
     connect: async (e) => writeJsonEntry(file(), key, entry(e)),
     disconnect: async () => writeJsonEntry(file(), key, null),
   };
 }
 
+/** Named legacy entries and instance-matched entries share the same safe JSON read. */
+function jsonConfigured(file: string, key: string, endpoint?: Endpoint): boolean {
+  const servers = readJsonQuietly(file)[key] ?? {};
+  return endpoint ? matchesEndpoint(servers[MCP_SERVER_NAME], endpoint) : Object.hasOwn(servers, MCP_SERVER_NAME);
+}
 /** A JSON file's contents, {} when it cannot be read. */
 function readJsonQuietly(file: string): Record<string, Record<string, unknown>> {
   try {
@@ -144,15 +127,18 @@ export function allowInClaude(allow: boolean): void {
 /** Claude Code: its own CLI adds and removes the server, at user scope so every project sees it; Oya's tools are allowed with it. */
 const CLAUDE_CODE: AgentTarget = {
   name: 'Claude Code',
-  installed: () => binary('claude') !== null,
-  connected: () => Object.hasOwn(readJsonQuietly(home('.claude.json')).mcpServers ?? {}, MCP_SERVER_NAME),
+  installed: () => agentCommand('claude') !== null,
+  connected: (endpoint) =>
+    endpoint
+      ? matchesEndpoint(readJsonQuietly(home('.claude.json')).mcpServers?.[MCP_SERVER_NAME], endpoint)
+      : Object.hasOwn(readJsonQuietly(home('.claude.json')).mcpServers ?? {}, MCP_SERVER_NAME),
   connect: async (e) => {
-    await cli('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'user']).catch(() => {});
-    await cli('claude', claudeAdd(e));
+    await runAgent('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'user']).catch(() => {});
+    await runAgent('claude', claudeAdd(e));
     allowInClaude(true);
   },
   disconnect: async () => {
-    await cli('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'user']);
+    await runAgent('claude', ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'user']);
     allowInClaude(false);
   },
 };
@@ -172,14 +158,17 @@ const codexSection = (e: Endpoint) =>
 /** Codex: its CLI cannot set a header, so Oya's section is appended after its CLI removes any older one. */
 const CODEX: AgentTarget = {
   name: 'Codex',
-  installed: () => binary('codex') !== null || fs.existsSync(home('.codex')),
-  connected: () =>
-    fs.existsSync(codexConfig()) && fs.readFileSync(codexConfig(), 'utf8').includes(`[mcp_servers.${MCP_SERVER_NAME}]`),
+  installed: () => agentCommand('codex') !== null || fs.existsSync(home('.codex')),
+  connected: (endpoint) =>
+    fs.existsSync(codexConfig()) &&
+    (endpoint
+      ? matchesEndpoint(codexEndpoint(fs.readFileSync(codexConfig(), 'utf8')), endpoint)
+      : fs.readFileSync(codexConfig(), 'utf8').includes(`[mcp_servers.${MCP_SERVER_NAME}]`)),
   connect: async (e) => {
     if (CODEX.connected()) await CODEX.disconnect();
     writePrivate(codexConfig(), codexSection(e), true);
   },
-  disconnect: async () => void (await cli('codex', ['mcp', 'remove', MCP_SERVER_NAME])),
+  disconnect: async () => void (await runAgent('codex', ['mcp', 'remove', MCP_SERVER_NAME])),
 };
 
 /** Cursor's entry for Oya's port. */
@@ -193,7 +182,7 @@ export const AGENTS: Readonly<Record<string, AgentTarget>> = {
   'claude-code': CLAUDE_CODE,
   codex: CODEX,
   cursor: jsonAgent('Cursor', () => home('.cursor', 'mcp.json'), 'mcpServers', cursorEntry),
-  vscode: jsonAgent('VS Code', () => home('Library/Application Support/Code/User/mcp.json'), 'servers', vscodeEntry),
+  vscode: jsonAgent('VS Code', () => vscodeConfig(), 'servers', vscodeEntry),
 };
 
 /** The installed agents, and whether each lists Oya. */

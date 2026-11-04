@@ -135,7 +135,7 @@ export class Mirror {
 
   /** The browsers on this machine an import can read, the default one first. */
   sources(): ListedSource[] {
-    return installedSources();
+    return installedSources().filter((source) => process.platform !== 'win32' || source.id === 'firefox');
   }
 
   /** Imports `sourceId` (the default browser when omitted) from scratch; the device stays fixed server-side. */

@@ -13,6 +13,7 @@ import { awaitCallback, type Callback } from './loopback.ts';
 import * as O from './oauth.ts';
 import * as C from './constants.ts';
 import { openOutside } from './outside.ts';
+import { awaitCancelable } from './cancellation.ts';
 
 /** The services sign-in uses. */
 type Deps = Pick<AppServices, 'config' | 'electron'>;
@@ -38,6 +39,14 @@ export interface ChatgptAccount {
 /** What a sign-in that came back for another request or another client says. */
 const MISMATCH = 'ChatGPT sign-in did not match. Try again.';
 
+/** Cancellation owns both token exchange and the temporary callback listener. */
+interface PendingLogin {
+  /** Fences credential writes after the person changes paths. */
+  abort: AbortController;
+  /** Releases the callback port when it has finished opening. */
+  callback?: Callback;
+}
+
 /** What a sign-in OpenAI's page refused shows; OpenAI's own code goes to the log, for support. */
 function cancelled(code: string): Error {
   console.warn('[chatgpt] sign-in refused:', code);
@@ -56,6 +65,8 @@ export class ChatgptAuth {
   private readonly store: SealedJson<O.Credential>;
   /** The refresh in flight, so concurrent callers share one. */
   private refreshing: Promise<O.Credential> | null = null;
+  /** The one pending sign-in, canceled before a different setup path can use its result. */
+  private login: PendingLogin | null = null;
 
   /** Signs in through `deps`; `seams` stand in for the network and disk in tests. */
   constructor(deps: Deps, seams: AuthSeams = {}) {
@@ -68,35 +79,58 @@ export class ChatgptAuth {
 
   /** Signs in: OpenAI's page in the person's usual browser (never Oya itself), then the code exchanged and sealed. Answers the account. */
   async signIn(): Promise<ChatgptAccount> {
-    const callback = await this.listen();
+    if (this.login) throw Error('ChatGPT sign-in is already open. Finish or cancel it first.');
+    const login = (this.login = { abort: new AbortController() } as PendingLogin);
     try {
-      const credential = await this.through(callback);
-      this.store.save(credential);
-      return { connected: true, email: credential.email || '' };
+      return await this.loginThrough(login);
     } finally {
-      callback.close();
+      login.callback?.close();
+      if (this.login === login) this.login = null;
     }
   }
 
+  /** Releases the loopback port and fences token writes after cancellation. */
+  cancelSignIn(): void {
+    this.login?.abort.abort();
+    this.login?.callback?.close();
+  }
+
+  /** Keeps credentials only while this exact attempt is still authorized. */
+  private async loginThrough(login: NonNullable<ChatgptAuth['login']>): Promise<ChatgptAccount> {
+    const callback = (login.callback = await this.listen());
+    login.abort.signal.throwIfAborted();
+    const credential = await this.through(callback, login.abort.signal);
+    login.abort.signal.throwIfAborted();
+    this.store.save(credential);
+    return { connected: true, email: credential.email || '' };
+  }
+
   /** Opens the sign-in for `callback`'s address and waits for its credential. */
-  private async through(callback: Callback): Promise<O.Credential> {
+  private async through(callback: Callback, signal: AbortSignal): Promise<O.Credential> {
     // OpenAI's sign-in wants one host id per install and the client it issued reused: registering
     // afresh after a refused exchange is refused again, so a failed sign-in could never recover.
     const login = O.newLogin(callback.redirectUri, this.saved('chatgptClientId'));
-    await openOutside(this.deps, O.authorizeUrl(login, this.hostId()));
-    return this.complete(login, await callback.done);
+    await awaitCancelable(openOutside(this.deps, O.authorizeUrl(login, this.hostId())), O.boundedSignal(signal));
+    return this.complete(login, await callback.done, signal);
   }
 
   /** Checks what came back, keeps the issued client before exchanging the code, never under the registration client. */
-  private async complete(login: O.Login, query: Record<string, string>): Promise<O.Credential> {
+  private async complete(login: O.Login, query: Record<string, string>, signal: AbortSignal): Promise<O.Credential> {
+    signal.throwIfAborted();
+    const clientId = this.checkedClient(login, query);
+    this.keep({ chatgptClientId: clientId });
+    const tokens = await O.exchangeCode(login, clientId, query.code || '', this.fetch, signal);
+    return O.credentialFrom(tokens, clientId, login.nonce);
+  }
+
+  /** Reject callbacks for another login before retaining the issued client. */
+  private checkedClient(login: O.Login, query: Record<string, string>): string {
     if (query.state !== login.state) throw Error(MISMATCH);
     if (query.error) throw cancelled(query.error);
     const clientId = query.client_id || login.clientId;
     if (clientId === C.DYNAMIC_CLIENT) throw Error('ChatGPT did not finish the sign-in. Try again.');
     if (login.clientId !== C.DYNAMIC_CLIENT && clientId !== login.clientId) throw Error(MISMATCH);
-    this.keep({ chatgptClientId: clientId });
-    const tokens = await O.exchangeCode(login, clientId, query.code || '', this.fetch);
-    return O.credentialFrom(tokens, clientId, login.nonce);
+    return clientId;
   }
 
   /** A live access token, refreshed when it is close to expiring; throws when there is no sign-in. */

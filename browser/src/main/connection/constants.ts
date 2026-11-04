@@ -76,6 +76,28 @@ export const STREAM_JPEG_QUALITY = 40;
 
 /** How long a pairing claim may take before it is abandoned. */
 export const PAIRING_TIMEOUT_MS = 15_000;
+/** Each settings request has a finite lifetime, including the catalog read. */
+export const MODEL_SETTINGS_TIMEOUT_MS = 20_000;
+/** The server's shorter model-test deadline finishes before this caller gives up. */
+export const MODEL_DIAGNOSTIC_TIMEOUT_MS = 30_000;
+/** App-started desktop login owns a listener for at most five minutes. */
+export const DESKTOP_LOGIN_TTL_MS = 300_000;
+/** Unpredictable callback state prevents unsolicited web pages from pairing the app. */
+export const DESKTOP_STATE_BYTES = 32;
+/** Bound callback URLs before parsing any untrusted query values. */
+export const DESKTOP_CALLBACK_MAX_CHARS = 2048;
+/** The listener accepts only this route on literal loopback. */
+export const DESKTOP_CALLBACK_PATH = '/oya-desktop/callback';
+/** Loopback callbacks never bind a network interface. */
+export const DESKTOP_CALLBACK_HOST = '127.0.0.1';
+/** Ephemeral listener ports are assigned by the OS. */
+export const DESKTOP_CALLBACK_PORT = 0;
+/** HTTP answers used by the desktop sign-in listener. */
+export const HttpStatus = {
+  /** Callback accepted without claiming socket readiness. */ OK: 200,
+  /** Invalid input leaves the genuine attempt available. */ BAD_REQUEST: 400,
+  /** Other paths do not participate in authentication. */ NOT_FOUND: 404,
+};
 
 /** Follow background playbook runs without depending on the visible panel. */
 export const PLAYBOOK_POLL_MS = 1000;

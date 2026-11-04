@@ -148,6 +148,14 @@
       }
     },
     "win": {
+      "forceCodeSigning": true,
+      "verifyUpdateCodeSignature": true,
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+      },
       "icon": "build/icon.png",
       "target": [
         {

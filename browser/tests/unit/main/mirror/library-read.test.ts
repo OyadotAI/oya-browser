@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { readLibrary } from '../../../../src/main/mirror/library-read.ts';
+import { readLibrary, readLibraryDetailed } from '../../../../src/main/mirror/library-read.ts';
 
 /** 2026-01-01T00:00:00Z in epoch milliseconds. */
 const AT = Date.UTC(2026, 0, 1);
@@ -102,4 +102,33 @@ it('reads nothing, without failing, from a profile with no bookmarks or history 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-libtest-'));
   assert.deepEqual(readLibrary('chrome', dir, 'Default'), { bookmarks: [], history: [] });
   assert.deepEqual(readLibrary('firefox', dir, 'default'), { bookmarks: [], history: [] });
+});
+
+it('a corrupt history database preserves readable bookmarks and reports only that failed part', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-partial-library-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'Default'));
+  fs.writeFileSync(
+    path.join(root, 'Default', 'Bookmarks'),
+    JSON.stringify({
+      roots: {
+        bookmark_bar: { type: 'url', url: 'https://example.com/', name: 'Example', date_added: String(WEBKIT) },
+      },
+    }),
+  );
+  fs.writeFileSync(path.join(root, 'Default', 'History'), 'not a database');
+  const result = readLibraryDetailed(root, 'Default');
+  assert.equal(result.bookmarks.length, 1);
+  assert.deepEqual(result.history, []);
+  assert.match(result.warnings.join(' '), /History could not be read/);
+  assert(!result.warnings.join(' ').includes(root));
+});
+it('an empty profile is distinguishable from unreadable content and linked files are refused', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'oya-empty-library-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'Default'));
+  assert.deepEqual(readLibraryDetailed(root, 'Default'), { bookmarks: [], history: [], warnings: [] });
+  fs.writeFileSync(path.join(root, 'outside'), '{}');
+  fs.symlinkSync(path.join(root, 'outside'), path.join(root, 'Default', 'Bookmarks'));
+  assert.match(readLibraryDetailed(root, 'Default').warnings.join(' '), /Bookmarks could not be read/);
 });
