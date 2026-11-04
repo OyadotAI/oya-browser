@@ -35,6 +35,14 @@ export const MCP_TOKEN_FILE = 'local-mcp-token.enc';
 
 /** The name each agent's config lists Oya under. */
 export const MCP_SERVER_NAME = 'oya-browser';
+/** Agent setup commands must release the first-run UI if a CLI stalls. */
+export const AGENT_CLI_TIMEOUT_MS = 30_000;
+/** Native app launch and terminal readiness may not hold onboarding indefinitely. */
+export const AGENT_OPEN_TIMEOUT_MS = 10_000;
+/** Only a short local marker is polled while the terminal starts. */
+export const AGENT_OPEN_POLL_MS = 100;
+/** Temporary terminal handoffs are private and executable only by this OS user. */
+export const AGENT_LAUNCH_MODE = 0o700;
 
 /** HTTP statuses the port answers with. */
 export const Status = {

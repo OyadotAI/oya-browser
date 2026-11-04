@@ -10,6 +10,7 @@ import { Button, TextField } from '../../../ui/index.ts';
 import type { SetupField, SetupViewModel } from '../view-models/setup-view-model.ts';
 import type { ViewProps } from '../model/models.ts';
 import { TEXT } from '../model/constants.ts';
+import { SetupIllustration } from './setup-illustration.tsx';
 
 /** One labelled field of the manual form. */
 interface FieldProps extends ViewProps<SetupViewModel> {
@@ -47,17 +48,27 @@ function Field({ vm, field, id, label, type, placeholder, hint }: FieldProps) {
   );
 }
 
+/** Back cancels pending first-run work before returning to the selected starting point. */
+function SetupBack({ vm }: ViewProps<SetupViewModel>) {
+  const back = () => {
+    vm.onboarding.cancel();
+    vm.show('checklist');
+  };
+  return (
+    <Button type="button" className="welcome-back" onClick={back}>
+      ← Back
+    </Button>
+  );
+}
+
 /** Waiting: the sign-in finishes in the web browser, and this screen closes on its own. */
 export function WaitingView({ vm }: ViewProps<SetupViewModel>) {
   return (
     <div className="welcome-view" data-view="waiting" id="setup-waiting">
-      <Button type="button" className="welcome-back" data-view-go="checklist" onClick={() => vm.show('checklist')}>
-        ← Back
-      </Button>
-      <h2>Finish in your web browser</h2>
-      <p className="sub">
-        Sign in there, then click <strong>Connect</strong> when Oya asks. This screen closes on its own.
-      </p>
+      <SetupBack vm={vm} />
+      <h2 tabIndex={-1}>Approve this browser</h2>
+      <SetupIllustration scene="waiting" />
+      <p className="sub">Sign in, select Connect, then return here.</p>
       <p className="waiting-status" role="status">
         <span className="welcome-orbit" aria-hidden="true" />
         Waiting for sign-in…
@@ -82,10 +93,9 @@ export function ManualView({ vm }: ViewProps<SetupViewModel>) {
   );
   return (
     <div className="welcome-view" data-view="manual">
-      <Button type="button" className="welcome-back" data-view-go="checklist" onClick={() => vm.show('checklist')}>
-        ← Back
-      </Button>
-      <h2>Connect with an API key</h2>
+      <SetupBack vm={vm} />
+      <h2 tabIndex={-1}>Use your Oya key</h2>
+      <SetupIllustration scene="key" />
       <Field
         vm={vm}
         field="server"
@@ -98,7 +108,7 @@ export function ManualView({ vm }: ViewProps<SetupViewModel>) {
         vm={vm}
         field="apiKey"
         id="cfg-key"
-        label="API key"
+        label="Oya workspace API key"
         type="password"
         placeholder="Enter API key"
         hint={keyHint}

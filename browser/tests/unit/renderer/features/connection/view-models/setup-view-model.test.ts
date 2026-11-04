@@ -125,7 +125,7 @@ describe('signing in with Oya', () => {
   it('enters browsing on "Just browse for now"', () => {
     const app = build();
     app.setup.skip();
-    assert.equal(app.fake.called('enterBrowsing').length, 1);
+    assert.equal(app.fake.called('finishOnboarding').length, 1);
   });
 });
 

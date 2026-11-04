@@ -13,6 +13,8 @@ import { HOME_URL } from '../tabs/constants.ts';
 import { signUp as agentSignUp, type SignedUp } from './signup.ts';
 import * as C from './constants.ts';
 import type { ChatgptAccount } from './auth.ts';
+import { SetupAttempt } from './attempt.ts';
+import { boundedSignal } from './oauth.ts';
 
 /** The services onboarding uses. */
 type Deps = Pick<AppServices, 'config' | 'socket' | 'mirror' | 'chatgpt' | 'tabs' | 'electron' | 'shell'>;
@@ -49,6 +51,8 @@ export interface KeyConnectOptions extends ConnectOptions {
 
 /** What the checklist shows. */
 export interface OnboardingStatus {
+  /** The socket has authenticated this browser; a saved key alone is insufficient. */
+  connected: boolean;
   /** This browser has an Oya key. */
   signedIn: boolean;
   /** The ChatGPT sign-in, and as whom. */
@@ -69,6 +73,8 @@ export class Onboarding {
   active = false;
   /** A ChatGPT sign-in that worked while a later step failed: a retry starts from it, not from OpenAI's page again. */
   private signedIn: ChatgptAccount | null = null;
+  /** A single provider setup owns mutations until completion or cancellation. */
+  private attempt: SetupAttempt | null = null;
   /** The main-process services. */
   private readonly deps: Deps;
   /** The server's HTTP API. */
@@ -76,24 +82,66 @@ export class Onboarding {
   /** The system default-browser setting. */
   private readonly defaultBrowser: DefaultBrowser;
   /** The agent sign-up, replaceable in tests. */
-  private readonly signUp: (serverUrl: string, email: string) => Promise<SignedUp>;
+  private readonly signUp: (serverUrl: string, email: string, signal?: AbortSignal) => Promise<SignedUp>;
 
   /** Runs over `deps`; `signUp` stands in for the server's agent sign-up in tests. */
   constructor(deps: Deps, signUp = agentSignUp) {
     this.deps = deps;
     this.api = new ServerApi(deps);
     this.defaultBrowser = new DefaultBrowser(deps);
-    this.signUp = (url, email) => signUp(url, email);
+    this.signUp = (url, email, signal) => signUp(url, email, undefined, signal);
+  }
+
+  /** Holds the welcome screen until the person explicitly starts browsing. */
+  begin(): void {
+    this.active = true;
+  }
+
+  /** Stops provider work while preserving the screen's hold across path changes. */
+  cancel(): void {
+    this.attempt?.abort.abort();
+    this.deps.chatgpt.cancelSignIn?.();
+    this.signedIn = null;
+  }
+
+  /** Explicit exit, sign-out and owner shutdown release the first-run hold. */
+  reset(): void {
+    this.cancel();
+    this.active = false;
+  }
+
+  /** Enforces one provider operation and binds it to the selected workspace. */
+  private async during<T>(work: (attempt: SetupAttempt) => Promise<T>): Promise<T> {
+    if (this.attempt) throw Error('A connection is still finishing. Try again in a moment.');
+    const attempt = (this.attempt = new SetupAttempt(() => this.deps.config.values));
+    try {
+      return await work(attempt);
+    } finally {
+      if (this.attempt === attempt) this.attempt = null;
+    }
   }
 
   /** Signs in with ChatGPT and puts the project's model on it; a browser without a key gets one and connects. */
   async connect({ importLogins }: ConnectOptions): Promise<ChatgptAccount> {
-    const account = (this.signedIn ??= await this.signIn());
-    const minted = await this.ensureKey(account.email);
-    await this.api.post('config', DESKTOP_MODEL);
-    this.signedIn = null;
-    if (minted) this.connectFirstTime(importLogins);
+    return this.during((attempt) => this.connectPlan(importLogins, attempt));
+  }
+
+  /** Advances the ChatGPT route only while its original workspace remains selected. */
+  private async connectPlan(importLogins: boolean, attempt: SetupAttempt): Promise<ChatgptAccount> {
+    const account = this.signedIn ?? (await this.signIn());
+    attempt.check();
+    this.signedIn = account;
+    const minted = await this.ensureKey(account.email, attempt);
+    await this.api.postCancelable('config', DESKTOP_MODEL, boundedSignal(attempt.abort.signal));
+    attempt.check();
+    this.configured(minted, importLogins);
     return account;
+  }
+
+  /** Successful configuration clears retry state and starts the first authenticated socket if needed. */
+  private configured(minted: boolean, importLogins: boolean): void {
+    this.signedIn = null;
+    if (minted || !this.deps.socket.ready) this.connectFirstTime(importLogins);
   }
 
   /** The key route: makes this browser's Oya key from `email` when it has none and puts the project on the Gemini `key`. */
@@ -101,11 +149,17 @@ export class Onboarding {
     const [mail, secret] = [String(email || '').trim(), String(key || '').trim()];
     if (!C.EMAIL_SHAPE.test(mail)) throw Error(C.BAD_EMAIL);
     if (!secret) throw Error(C.NO_GEMINI_KEY);
-    const minted = await this.ensureKey(mail);
-    await this.api.post('config', geminiModel(secret));
+    return this.during((attempt) => this.connectKey(mail, secret, importLogins, attempt));
+  }
+
+  /** Applies a typed model key to the same workspace that started setup. */
+  private async connectKey(mail: string, secret: string, importLogins: boolean, attempt: SetupAttempt): Promise<void> {
+    const minted = await this.ensureKey(mail, attempt);
+    await this.api.postCancelable('config', geminiModel(secret), boundedSignal(attempt.abort.signal));
+    attempt.check();
     this.deps.config.merge({ modelFromKey: true });
     this.deps.config.save();
-    if (minted) this.connectFirstTime(importLogins);
+    this.configured(minted, importLogins);
   }
 
   /** Signs in to ChatGPT, then brings Oya back in front of the browser the sign-in ran in. */
@@ -116,14 +170,22 @@ export class Onboarding {
   }
 
   /** Makes this browser's key from the ChatGPT email when it has none; answers whether it did. */
-  private async ensureKey(email: string): Promise<boolean> {
+  private async ensureKey(email: string, attempt: SetupAttempt): Promise<boolean> {
+    attempt.check();
     const { config } = this.deps;
     if (config.values.apiKey) return false;
     if (!email) throw Error(C.NO_EMAIL);
-    const { apiKey, claimUrl } = await this.signUp(config.values.serverUrl, email);
+    const { apiKey, claimUrl } = await this.signUp(config.values.serverUrl, email, attempt.abort.signal);
+    attempt.adoptKey(apiKey);
+    this.keepKey(apiKey, claimUrl);
+    return true;
+  }
+
+  /** Persists a new workspace credential only after its attempt has revalidated ownership. */
+  private keepKey(apiKey: string, claimUrl: string): void {
+    const config = this.deps.config;
     config.merge({ apiKey, claimUrl, keyFromApp: true, signedOut: false, account: null, modelFromKey: false });
     config.save();
-    return true;
   }
 
   /** Connects with the new key, holding the checklist up, and imports the logins once connected when asked. */
@@ -139,6 +201,7 @@ export class Onboarding {
     const { apiKey, mirroredFrom, imports, claimUrl, modelFromKey } = this.deps.config.values;
     const chatgpt = this.deps.chatgpt.status();
     return {
+      connected: !!this.deps.socket.ready,
       ...{ signedIn: !!apiKey, chatgpt, hasModel: chatgpt.connected || !!modelFromKey },
       ...{ imported: !!mirroredFrom || (Array.isArray(imports) && imports.length > 0) },
       ...{ isDefault: this.defaultBrowser.isDefault(), claimUrl: String(claimUrl || '') },
@@ -147,7 +210,7 @@ export class Onboarding {
 
   /** Done: the checklist goes and the browser opens on the start page. */
   finish(): void {
-    this.active = false;
+    this.reset();
     this.deps.tabs.enterBrowsingMode(HOME_URL);
   }
 }

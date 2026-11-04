@@ -1,0 +1,148 @@
+/** Compact technical choices share equal weight while status and test controls stay in view. */
+.technical-choices {
+  display: grid;
+  gap: 12px;
+}
+.setup-choice.setup-choice-compact {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  min-height: 88px;
+  padding: 12px 16px;
+}
+.setup-choice-compact .setup-choice-art {
+  flex: 0 0 112px;
+}
+.setup-choice-compact .setup-choice-copy {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.setup-choice.setup-choice-compact > .icon {
+  position: static;
+  flex: none;
+}
+.setup-choice:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.technical-advanced {
+  align-self: flex-start;
+}
+.technical-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.technical-heading .setup-illustration {
+  width: 112px;
+  flex: none;
+}
+.technical-agent-list {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.technical-agent-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.technical-agent-name {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.technical-agent-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+.technical-light {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.technical-light[data-ready='true'] {
+  background: var(--accent);
+}
+.technical-agent-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.technical-providers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.technical-providers button {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 16px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.technical-providers button[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.technical-provider-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 700;
+}
+.technical-model-form {
+  display: grid;
+  gap: 12px;
+}
+.technical-model-field {
+  display: grid;
+  gap: 8px;
+  font-weight: 600;
+}
+.technical-model-field input {
+  width: 100%;
+  min-width: 0;
+  font: inherit;
+  font-weight: 400;
+}
+@media (max-width: 640px) {
+  .technical-agent-list > li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .technical-agent-actions {
+    width: 100%;
+  }
+}
+@media (max-height: 600px) {
+  .setup-choice-compact .setup-choice-art,
+  .technical-heading .setup-illustration {
+    flex-basis: 88px;
+    width: 88px;
+  }
+  .setup-choice.setup-choice-compact {
+    min-height: 76px;
+    padding: 8px 12px;
+  }
+}

@@ -19,6 +19,21 @@ export interface LibraryData {
   /** Explicitly saved pages, newest first. */
   bookmarks: LibraryEntry[];
 }
+/** Counts measure additions retained by the current partition, rather than raw source rows. */
+interface ImportCounts {
+  /** New valid, unique bookmarks. */
+  bookmarks: number;
+  /** New history addresses retained under the history cap. */
+  history: number;
+}
+/** Compute additions after the same filtering and bounds that persistence uses. */
+function addedCounts(current: LibraryData, next: LibraryData): ImportCounts {
+  const known = new Set(current.history.map((entry) => entry.url));
+  return {
+    bookmarks: next.bookmarks.length - current.bookmarks.length,
+    history: next.history.filter((entry) => !known.has(entry.url)).length,
+  };
+}
 /** Dependencies keep persistence and profile identity outside the service. */
 type Deps = Pick<AppServices, 'config' | 'persona'>;
 
@@ -60,9 +75,18 @@ function data(value: unknown): LibraryData {
 /** `imported` added to `current`: the bookmarks it lacked after its own, and every visit by address, newest first. */
 function merged(current: LibraryData, imported: LibraryData): LibraryData {
   const saved = new Set(current.bookmarks.map((entry) => entry.url));
-  const bookmarks = [...current.bookmarks, ...entries(imported.bookmarks).filter((entry) => !saved.has(entry.url))];
+  const bookmarks = [...current.bookmarks, ...uniqueNewBookmarks(entries(imported.bookmarks), saved)];
   const history = newestByAddress([...current.history, ...entries(imported.history)]).slice(0, HISTORY_LIMIT);
   return { bookmarks, history };
+}
+
+/** Imports are idempotent even when the source repeats a bookmark in several folders. */
+function uniqueNewBookmarks(imported: LibraryEntry[], saved: Set<string>): LibraryEntry[] {
+  return imported.filter((entry) => {
+    if (saved.has(entry.url)) return false;
+    saved.add(entry.url);
+    return true;
+  });
 }
 /** One entry per address, the latest visit, newest first. */
 function newestByAddress(list: LibraryEntry[]): LibraryEntry[] {
@@ -93,8 +117,12 @@ export class BrowsingLibrary {
     this.changed();
   }
   /** Adds another browser's bookmarks and history to the persona at `partition`, keeping what it has. */
-  importInto(partition: string, imported: LibraryData): void {
-    this.save(merged(this.snapshot(partition), imported), partition);
+  importInto(partition: string, imported: LibraryData): ImportCounts {
+    const current = this.snapshot(partition);
+    const next = merged(current, imported);
+    const counts = addedCounts(current, next);
+    this.save(next, partition);
+    return counts;
   }
   /** Records a committed main-frame page; repeat visits move it to the front. */
   visit(url: string, title: string): void {

@@ -18,6 +18,7 @@ import {
 import type { ImportRecord, ViewProps } from '../model/models.ts';
 import { Button, StatusLine, TimeAgo } from '../../../ui/index.ts';
 import { SettingsRow } from './settings-list.tsx';
+import { LibraryImportPanel } from './library-import-panel.tsx';
 
 /** The latest import, in two lines; or, before any, what an import is for. */
 function Latest({ vm }: ViewProps<ImportViewModel>) {
@@ -133,6 +134,7 @@ function ImportStatus({ vm }: ViewProps<ImportViewModel>) {
 export function ImportRows({ vm }: ViewProps<ImportViewModel>) {
   return (
     <>
+      <LibraryImportPanel vm={vm.library} />
       <SettingsRow wide control={<ImportControls vm={vm} />}>
         <Latest vm={vm} />
         <Earlier vm={vm} />

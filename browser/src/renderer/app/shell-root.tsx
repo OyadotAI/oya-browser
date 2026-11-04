@@ -144,7 +144,14 @@ function Dialogs({ vms }: ShellRootProps) {
     </>
   );
   const footer = <AppVersion vm={c.updates} />;
-  const models = { dialog: c.dialog, account: c.account, sync: c.sync, imports: c.imports, profile: c.profile };
+  const models = {
+    dialog: c.dialog,
+    account: c.account,
+    sync: c.sync,
+    imports: c.imports,
+    profile: c.profile,
+    setup: c.setup,
+  };
   return (
     <>
       <NotificationsCenter vm={vms.notifications} />
@@ -161,7 +168,7 @@ export function ShellRoot({ vms }: ShellRootProps) {
   useChromeRoot({ theme: vms.chrome.theme, activity: vms.chrome.activity, shell: vms.shell });
   return (
     <>
-      <SetupScreen vm={vms.connection.setup} checklist={vms.connection.checklist} />
+      <SetupScreen vm={vms.connection.setup} agents={vms.connection.agents} imports={vms.connection.imports} />
       <BrowserChrome vms={vms} />
       <PageBackdrop vm={vms.chrome.backdrop} />
       <StartPage vm={vms.start} />

@@ -11,6 +11,7 @@ import type { RendererServices } from '../../../app/services.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import { SERVER_URL, TEXT } from '../model/constants.ts';
 import { messageOf, shape, type Config } from '../model/models.ts';
+import { OnboardingViewModel, type OnboardingBridge } from './onboarding-view-model.ts';
 
 /** The panel's views. */
 export type SetupView = 'accounts' | 'checklist' | 'waiting' | 'manual';
@@ -33,19 +34,20 @@ export interface SetupState extends Record<SetupField, string> {
 }
 
 /** The parts of the bridge the welcome screen uses. */
-export type SetupBridge = Pick<
-  OyaBrowser,
-  | 'makeDefaultBrowser'
-  | 'getConfig'
-  | 'saveConfig'
-  | 'openConsole'
-  | 'enterBrowsing'
-  | 'onWsStatus'
-  | 'onModeChanged'
-  | 'savedAccounts'
-  | 'useSavedAccount'
-  | 'forgetSavedAccount'
->;
+export type SetupBridge = OnboardingBridge &
+  Pick<
+    OyaBrowser,
+    | 'makeDefaultBrowser'
+    | 'getConfig'
+    | 'saveConfig'
+    | 'openConsole'
+    | 'enterBrowsing'
+    | 'onWsStatus'
+    | 'onModeChanged'
+    | 'savedAccounts'
+    | 'useSavedAccount'
+    | 'forgetSavedAccount'
+  >;
 
 /** Why the entered settings cannot be used, or '' when they can. */
 export function setupProblem(server: string, key: string): string {
@@ -61,6 +63,8 @@ export interface SetupDeps extends Pick<RendererServices, 'shell'> {
 
 /** The welcome screen. */
 export class SetupViewModel extends ViewModel<SetupState> {
+  /** First-run choices share this form's connection status without duplicating its fields. */
+  readonly onboarding: OnboardingViewModel;
   /** Explicit opt-in from the welcome screen; native UI handles confirmation and errors. */
   async makeDefaultBrowser(): Promise<void> {
     await this.bridge.makeDefaultBrowser();
@@ -78,10 +82,17 @@ export class SetupViewModel extends ViewModel<SetupState> {
     super({ view: 'checklist', server: '', apiKey: '', name: '', error: '', busy: false, accounts: [], choosing: '' });
     this.bridge = deps.bridge;
     this.shell = deps.shell;
+    this.onboarding = new OnboardingViewModel(deps.bridge, () => this.show('checklist'));
+    this.watch();
+    void this.load();
+  }
+
+  /** One owned lifetime covers first-run progress, mode and socket subscriptions. */
+  private watch(): void {
+    this.own(() => this.onboarding.dispose());
     this.own(() => clearTimeout(this.timer));
     this.own(this.bridge.onWsStatus((s) => this.connectionStatus(s)));
     this.own(this.bridge.onModeChanged((mode) => mode !== 'browsing' && this.loggedOut()));
-    void this.load();
   }
 
   /** Terminal setup failures stop the spinner immediately and preserve the recovery instruction. */
@@ -143,10 +154,12 @@ export class SetupViewModel extends ViewModel<SetupState> {
 
   /** Saves the settings; the connection status switches modes, or the wait reports failure. */
   async connect(): Promise<void> {
+    if (this.state.busy) return;
     const [server, key, name] = [this.state.server, this.state.apiKey, this.state.name].map((v) => v.trim());
     const error = setupProblem(server, key);
     this.set({ error });
     if (error) return;
+    if (!(await this.onboarding.begin())) return;
     this.set({ busy: true });
     await this.save({ serverUrl: server, apiKey: key, browserName: name || undefined });
   }
@@ -161,10 +174,20 @@ export class SetupViewModel extends ViewModel<SetupState> {
     this.wait();
   }
 
+  /** Retries main-owned settings without replacing the paired workspace or its sealed key. */
+  async reconnect(): Promise<void> {
+    if (this.state.busy || !(await this.onboarding.begin())) return;
+    this.set({ busy: true, error: '' });
+    await this.save({});
+  }
+
   /** Opens the dashboard, which sends back a pairing link once the person is signed in. */
   async signIn(): Promise<void> {
+    const current = this.onboarding.guard();
     this.set({ error: '' });
-    const url = await this.bridge.openConsole(this.state.server);
+    if (!(await this.onboarding.begin())) return;
+    const url = await this.bridge.openConsole(this.state.server).catch(() => null);
+    if (!current()) return;
     if (url) this.show('waiting');
     else this.set({ error: TEXT.badConsole });
   }
@@ -176,7 +199,7 @@ export class SetupViewModel extends ViewModel<SetupState> {
 
   /** "Just browse for now". */
   skip(): void {
-    void this.bridge.enterBrowsing();
+    this.onboarding.finish();
   }
 
   /** Waits for the connection to report back. */
@@ -193,6 +216,7 @@ export class SetupViewModel extends ViewModel<SetupState> {
 
   /** Logged out: back to the start, with nothing of the old key left in the form, offering the remembered accounts. */
   private loggedOut(): void {
+    this.onboarding.choose(null);
     this.set({ apiKey: '', view: 'checklist', error: '' });
     void this.loadAccounts();
   }

@@ -25,6 +25,9 @@ type Deps = Pick<
   | 'electron'
   | 'windows'
   | 'deepLinks'
+  | 'onboarding'
+  | 'desktopSignIn'
+  | 'modelSettings'
 >;
 
 /** The channels this group answers. */
@@ -191,11 +194,23 @@ export class SessionHandlers {
    * on the next launch; signing in again clears it.
    */
   private signOut(): void {
+    this.clearSetup();
     rememberAccount(this.deps);
     this.deps.socket.disconnect();
     this.deps.socket.browserId = null;
     this.deps.config.merge({ apiKey: '', signedOut: true, keyFromApp: false, account: null });
     this.deps.config.save();
+    this.leaveWindows();
+  }
+
+  /** Sign-out revokes all windows' pending login and credential operations. */
+  private clearSetup(): void {
+    this.deps.desktopSignIn?.cancel();
+    this.deps.modelSettings?.cancel();
+    this.deps.onboarding?.reset?.();
+  }
+  /** Sign-out clears private windows and returns each ordinary window to account recovery. */
+  private leaveWindows(): void {
     this.deps.windows?.closeIncognito();
     if (this.deps.windows) this.deps.windows.each((scope) => scope.tabs.leaveBrowsingMode());
     else this.deps.tabs.leaveBrowsingMode();

@@ -42,6 +42,7 @@ jobs:
     name: Build Windows installer
     needs: ci
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -54,8 +55,48 @@ jobs:
     - name: Install browser dependencies
       run: cd browser && npm ci
 
+    - name: Test Windows signature refusal paths
+      shell: pwsh
+      run: ./browser/build/test-windows-signatures.ps1
+
+    - name: Require Windows signing credentials
+      shell: pwsh
+      env:
+        WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
+        WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+      run: |
+        foreach ($name in @('WIN_CSC_LINK', 'WIN_CSC_KEY_PASSWORD', 'WINDOWS_SIGNER_SUBJECT')) {
+          if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+            throw "Missing $name. Configure Windows signing as documented in CONTRIBUTING.md."
+          }
+        }
+
     - name: Build NSIS installer
+      env:
+        WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE_P12 }}
+        WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       run: cd browser && npm run dist:win -- --x64
+
+    - name: Verify packaged and installed Windows signatures
+      shell: pwsh
+      env:
+        WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+      run: |
+        $version = (Get-Content browser/package.json | ConvertFrom-Json).version
+        $installer = (Resolve-Path "browser/dist/Oya.Browser-$version-x64.exe").Path
+        $packaged = (Resolve-Path 'browser/dist/win-unpacked/Oya Browser.exe').Path
+        & ./browser/build/verify-windows-signatures.ps1 -Files @($installer, $packaged) -ExpectedSubject $env:WINDOWS_SIGNER_SUBJECT
+        $sqliteProbe = (Resolve-Path 'browser/build/check-sqlite-runtime.cjs').Path
+        try {
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $probe = Start-Process -FilePath $packaged -ArgumentList @("`"$sqliteProbe`"") -PassThru -Wait -NoNewWindow
+          if ($probe.ExitCode -ne 0) { throw 'The packaged Windows runtime lacks required SQLite support.' }
+        } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+        $destination = Join-Path $env:RUNNER_TEMP 'oya-signature-check'
+        $install = Start-Process -FilePath $installer -ArgumentList @('/S', '/currentuser', "/D=$destination") -PassThru -Wait
+        if ($install.ExitCode -ne 0) { throw 'The disposable Windows installation failed.' }
+        & ./browser/build/verify-windows-signatures.ps1 -Files @((Join-Path $destination 'Oya Browser.exe')) -ExpectedSubject $env:WINDOWS_SIGNER_SUBJECT
 
     - name: Upload to GitHub release
       shell: bash

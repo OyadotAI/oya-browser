@@ -35,3 +35,36 @@ describe('openai transport effort', () => {
     assert.equal(body.reasoning_effort, undefined);
   });
 });
+
+describe('bounded diagnostics', () => {
+  afterEach(() => mock.restoreAll());
+  it('carries the output cap and caller cancellation into the underlying fetch', async () => {
+    const abort = new AbortController(),
+      started = Promise.withResolvers<void>();
+    let signal: AbortSignal | undefined, body: any;
+    mock.method(
+      globalThis,
+      'fetch',
+      (_url, init: any) =>
+        new Promise((_resolve, reject) => {
+          signal = init.signal;
+          body = JSON.parse(init.body);
+          signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+          started.resolve();
+        }),
+    );
+    const pending = openai.send({
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'synthetic-key',
+      model: 'catalog-model',
+      messages: [],
+      maxTokens: 73,
+      signal: abort.signal,
+    });
+    await started.promise;
+    abort.abort();
+    await assert.rejects(pending);
+    assert.equal(body.max_tokens, 73);
+    assert.equal(signal?.aborted, true);
+  });
+});

@@ -32,6 +32,54 @@ function setup(apiKey = '', email = 'me@x.test') {
 
 afterEach(() => mock.restoreAll());
 
+it('canceled signup cannot save a late key or configure a model', async () => {
+  const { onboarding, signUp, values } = setup();
+  const answer = Promise.withResolvers<any>();
+  signUp.mock.mockImplementation(() => answer.promise);
+  const fetched = mock.method(globalThis, 'fetch', async () => new Response('{}'));
+  const pending = onboarding.connect({ importLogins: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  onboarding.cancel();
+  answer.resolve({ apiKey: 'late-key', claimUrl: '' });
+  await assert.rejects(pending);
+  assert.equal(values.apiKey, '');
+  assert.equal(fetched.mock.callCount(), 0);
+});
+it('a workspace change during signup cannot overwrite the newer destination', async () => {
+  const { onboarding, signUp, values } = setup();
+  const answer = Promise.withResolvers<any>();
+  signUp.mock.mockImplementation(() => answer.promise);
+  const pending = onboarding.connect({ importLogins: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  Object.assign(values, { serverUrl: 'wss://new.test/ws', apiKey: 'new-workspace' });
+  answer.resolve({ apiKey: 'old-workspace', claimUrl: '' });
+  await assert.rejects(pending, /workspace changed/);
+  assert.equal(values.apiKey, 'new-workspace');
+});
+it('retry after cancellation of a first model write connects the already-minted key', async () => {
+  const { onboarding, socket } = setup();
+  socket.ready = false;
+  const response = Promise.withResolvers<Response>();
+  const fetched = mock.method(globalThis, 'fetch', () => response.promise);
+  const first = onboarding.connect({ importLogins: false });
+  await new Promise((resolve) => setImmediate(resolve));
+  onboarding.cancel();
+  response.resolve(new Response('{}'));
+  await assert.rejects(first);
+  fetched.mock.mockImplementation(async () => new Response('{}'));
+  await onboarding.connect({ importLogins: false });
+  assert.equal(socket.connected, 1);
+});
+it('saved credentials alone do not report a connected browser', () => {
+  const { onboarding, socket } = setup('stored');
+  socket.ready = false;
+  onboarding.begin();
+  assert.equal(onboarding.active, true);
+  assert.equal(onboarding.status().connected, false);
+  onboarding.reset();
+  assert.equal(onboarding.active, false);
+});
+
 it('makes a key from the ChatGPT email, puts the model on this desktop, and connects importing the logins', async () => {
   const posts: any[] = [];
   mock.method(
@@ -41,7 +89,7 @@ it('makes a key from the ChatGPT email, puts the model on this desktop, and conn
   );
   const { onboarding, values, socket, mirror, signUp } = setup();
   await onboarding.connect({ importLogins: true });
-  assert.deepEqual(signUp.mock.calls[0].arguments, ['wss://oya.test/ws', 'me@x.test']);
+  assert.deepEqual(signUp.mock.calls[0].arguments.slice(0, 2), ['wss://oya.test/ws', 'me@x.test']);
   assert.deepEqual([values.apiKey, values.claimUrl], ['new-key', 'https://oya.test/claim#k']);
   assert.equal(posts[0][0], 'https://oya.test/api/config');
   assert.deepEqual([posts[0][1].llm_provider, posts[0][1].openai_api_key], ['chatgpt', 'chatgpt-desktop']);
@@ -85,7 +133,7 @@ it('the Gemini key route makes a key from the typed email, puts the project on G
   });
   const { onboarding, values, socket, mirror, signUp, chatgpt } = setup();
   await onboarding.connectWithKey({ email: ' me@y.test ', key: ' AIza1 ', importLogins: true });
-  assert.deepEqual(signUp.mock.calls[0].arguments, ['wss://oya.test/ws', 'me@y.test']);
+  assert.deepEqual(signUp.mock.calls[0].arguments.slice(0, 2), ['wss://oya.test/ws', 'me@y.test']);
   assert.deepEqual([posts[0].llm_provider, posts[0].openai_api_key, posts[0].chat_model], ['gemini', 'AIza1', null]);
   assert.deepEqual([socket.connected, mirror.importOnConnect, values.modelFromKey], [1, true, true]);
   assert.equal(chatgpt.signIn.mock.callCount(), 0);

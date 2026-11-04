@@ -1,0 +1,137 @@
+/** A single illustration palette follows Oya's light/dark tokens and keeps interface drawings legible. */
+.setup-illustration {
+  --picture-ink: var(--text);
+  --picture-paper: var(--surface);
+  --picture-muted: var(--muted-surface);
+  --picture-outline: var(--border);
+  --picture-terminal: #202b25;
+  --picture-terminal-copy: #e8f1e9;
+  --picture-terminal-muted: #b0c8b6;
+  --picture-line: 2px;
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  flex: 0 0 auto;
+  pointer-events: none;
+  overflow: visible;
+  font-family: var(--font);
+}
+.picture-paper {
+  fill: var(--picture-paper);
+  stroke: var(--picture-outline);
+  stroke-width: 1.5px;
+}
+.picture-muted {
+  fill: var(--picture-muted);
+  stroke: var(--picture-outline);
+  stroke-width: 1px;
+}
+.picture-rule {
+  fill: none;
+  stroke: var(--picture-outline);
+  stroke-width: 1.5px;
+}
+.picture-dot {
+  fill: var(--secondary);
+  opacity: 0.55;
+}
+.picture-label {
+  fill: var(--picture-ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+.picture-small {
+  fill: var(--secondary);
+  font-size: 9px;
+}
+.picture-tiny {
+  fill: var(--secondary);
+  font-size: 8px;
+}
+.picture-copy {
+  fill: none;
+  stroke: var(--secondary);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  opacity: 0.38;
+}
+.picture-green-fill {
+  fill: var(--accent);
+}
+.picture-green-soft {
+  fill: var(--accent-soft);
+}
+.picture-accent-text {
+  fill: var(--accent);
+}
+.picture-green-stroke {
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+}
+.picture-green-line,
+.picture-connector {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: var(--picture-line);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.picture-connector {
+  stroke-width: 3px;
+}
+.picture-pending {
+  stroke-dasharray: 5 6;
+  opacity: 0.6;
+}
+.picture-highlight {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 2px;
+}
+.picture-terminal {
+  fill: var(--picture-terminal);
+  stroke: var(--picture-terminal);
+  stroke-width: 1px;
+}
+.picture-terminal-rule {
+  stroke: var(--picture-terminal-muted);
+  opacity: 0.25;
+}
+.picture-terminal-dot {
+  fill: var(--picture-terminal-muted);
+  opacity: 0.7;
+}
+.picture-terminal-title {
+  fill: var(--picture-terminal-copy);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 650;
+}
+.picture-terminal-copy {
+  fill: var(--picture-terminal-muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+.picture-cursor {
+  stroke: var(--picture-terminal-copy);
+  stroke-width: 2px;
+}
+.picture-key-mask {
+  fill: var(--picture-ink);
+}
+.picture-chat {
+  fill: var(--accent-soft);
+  stroke: var(--accent);
+  stroke-width: 1.5px;
+}
+.picture-white-line {
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.setup-choice-art .setup-illustration {
+  max-height: none;
+}

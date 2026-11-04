@@ -1,9 +1,12 @@
 /** IPC: the dev panel's chat, page source, model settings and quick actions. */
+import type { WebContents } from 'electron';
 import type { AppServices } from '../app/services.ts';
 import type { PageSource as PageSourceAnswer, Payload } from '../../shared/ipc.ts';
 import type { HandlersOf } from './handle.ts';
 import { Chat, type ChatAnswer } from '../connection/chat.ts';
 import { ServerApi } from '../connection/server-api.ts';
+import { statusOf, type ServerConfig, type ModelChoice } from '../connection/model-config.ts';
+export { modelUpdate } from '../connection/model-config.ts';
 import { PageSource } from '../tabs/page-source.ts';
 import { renderPage, FORMATS, type Analysis } from '../../page/render.ts';
 
@@ -22,6 +25,7 @@ type Deps = Pick<
   | 'actions'
   | 'agentTab'
   | 'onboarding'
+  | 'modelSettings'
 >;
 
 /** The channels this group answers. */
@@ -37,129 +41,10 @@ type Channel =
   | 'render-page'
   | 'dev-action';
 
-/** One model provider the server offers. */
-interface Provider {
-  /** Its id ('openai', 'anthropic'...). */
-  id: string;
-  /** Its name for people. */
-  label?: string;
-  /** Its API endpoint. */
-  base?: string;
-  /** Its default model. */
-  model?: string;
-  /** Its models. */
-  models?: unknown[];
-}
-
-/** The model settings in effect. */
-interface Effective {
-  /** Whether the project has a model key. */
-  hasLlmKey?: boolean;
-  /** The model in use. */
-  model?: string;
-  /** The endpoint in use. */
-  baseUrl?: string;
-}
-
-/** Preserve an existing endpoint unless a provider change or explicit edit overrides it. */
-function modelEndpoint(changed: boolean, value: unknown): Payload {
-  return typeof value === 'string' ? endpointUpdate(value) : changed ? { openai_base_url: null } : {};
-}
-
-/** Validates explicit custom endpoints before saving project model settings. */
-function endpointUpdate(value: string): Payload {
-  if (!value.trim()) return { openai_base_url: null };
-  try {
-    const url = new URL(value.trim());
-    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error();
-    return { openai_base_url: value.trim() };
-  } catch {
-    return { error: 'Enter an HTTP or HTTPS model endpoint without embedded credentials.' };
-  }
-}
-
 /** A kept analysis, as far as rendering it again goes. */
 /** Whether a kept analysis still has the blocks a renderer needs. */
 const isKeptAnalysis = (analysis: unknown): analysis is Analysis =>
   !!analysis && typeof analysis === 'object' && Array.isArray((analysis as Partial<Analysis>).blocks);
-
-/** The project's model settings, as GET /config answers them. */
-interface ServerConfig {
-  /** The provider the key saved. */
-  llm_provider?: string;
-  /** The providers the server offers. */
-  llm_catalog?: Provider[];
-  /** What is in effect: whether there is a key, the model and the endpoint. */
-  effective?: Effective;
-}
-
-/** A choice made in Ask: provider, model, and a key when one was typed. */
-interface ModelChoice {
-  /** The provider's id. */
-  provider?: unknown;
-  /** The model, or nothing for the provider's default. */
-  model?: unknown;
-  /** The key, when typed. */
-  key?: unknown;
-  /** Optional custom API endpoint; empty restores the provider default. */
-  baseUrl?: unknown;
-}
-
-/**
- * What Ask offers against a server too old to send its catalog: the providers
- * it has always taken, each on its default model (any other is typed by hand).
- */
-const LEGACY_CATALOG: Provider[] = [
-  ['anthropic', 'Claude', 'sk-ant-...', 'https://console.anthropic.com/settings/keys', 'claude-opus-5'],
-  ['openai', 'OpenAI', 'sk-...', 'https://platform.openai.com/api-keys', 'gpt-4o-mini'],
-  ['gemini', 'Gemini', 'AIza...', 'https://aistudio.google.com/apikey', 'gemini-3.8-flash'],
-].map(([id, label, hint, keysUrl, model]) => ({
-  id,
-  label,
-  hint,
-  keysUrl,
-  model,
-  models: [{ id: model, label: model }],
-}));
-
-/** The server's provider catalog, or the legacy one from a server that has none. */
-const catalogOf = (config: ServerConfig): Provider[] =>
-  config.llm_catalog?.length ? config.llm_catalog : LEGACY_CATALOG;
-
-/** The provider a key runs on: the one it saved, else the catalog entry whose endpoint it is using. */
-function currentProvider(config: ServerConfig): string {
-  if (config.llm_provider) return config.llm_provider;
-  return catalogOf(config).find((p) => p.base && p.base === config.effective?.baseUrl)?.id || '';
-}
-
-/** What the model card needs from the server's config. */
-function statusOf(config: ServerConfig): Payload {
-  const { hasLlmKey, model } = config.effective || {};
-  return {
-    hasLlmKey: !!hasLlmKey,
-    provider: currentProvider(config),
-    model,
-    baseUrl: config.effective?.baseUrl || '',
-    catalog: catalogOf(config),
-  };
-}
-
-/**
- * The POST /config body for a choice made in Ask, or `{ error }`. The model is
- * always sent (never nulled behind the person's back), a key only when one was
- * typed, and the endpoint is reset only when the provider changes, so saving
- * here never undoes a model or gateway chosen in the console.
- */
-export function modelUpdate(config: ServerConfig, { provider, model, key, baseUrl }: ModelChoice = {}): Payload {
-  const secret = typeof key === 'string' ? key.trim() : '';
-  if (!catalogOf(config).some((p) => p.id === provider)) return { error: 'Pick a provider.' };
-  const changed = provider !== currentProvider(config);
-  if (!secret && (changed || !config.effective?.hasLlmKey)) return { error: 'Paste your API key for this provider.' };
-  const body: Payload = { llm_provider: provider, chat_model: (typeof model === 'string' && model.trim()) || null };
-  if (secret) body.openai_api_key = secret;
-  Object.assign(body, modelEndpoint(changed, baseUrl));
-  return body;
-}
 
 /** A kept analysis written again in a known format (the Source pane's format switch); '' otherwise. */
 function renderKeptPage(analysis: unknown, format: string): string {
@@ -172,8 +57,9 @@ export class DevHandlers {
   /** Channel → handler. */
   readonly handlers: HandlersOf<Channel> = {
     'request-takeover': () => this.deps.shield.takeover.request(),
-    'model-status': () => this.modelStatus(),
-    'save-model-key': (_e, choice) => this.saveModelKey(choice),
+    'model-status': (event, requireCatalog) =>
+      requireCatalog === true ? this.technicalStatus(event.sender) : this.modelStatus(),
+    'save-model-key': (event, choice) => this.saveModelKey(choice, event.sender),
     'sign-in-chatgpt': () => this.signInChatgpt(),
     'send-chat': (_e, messages, data, tabId) => this.chat.send(messages, data, tabId),
     'stop-chat': (_e, tabId) => this.chat.stop(tabId),
@@ -213,27 +99,26 @@ export class DevHandlers {
       ? { signedIn, ...statusOf(config) }
       : { signedIn, error: 'Could not load model settings. Try again.' };
   }
+  /** A stalled Technical catalog can be cancelled and retried without retaining a native request. */
+  private technicalStatus(owner: WebContents): Promise<Payload> {
+    const signedIn = !!this.deps.config.values.apiKey;
+    return this.deps.modelSettings.status(owner).then(
+      (status) => ({ signedIn, ...status }),
+      () => ({ signedIn, error: 'Could not load model settings. Try again.' }),
+    );
+  }
 
   /** Saves the provider, model and (when given) key chosen in Ask to the project, checked against what the server has now. */
-  private async saveModelKey(choice: ModelChoice): Promise<ChatAnswer> {
-    if (!this.api.canCall()) return { error: 'Not connected to server' };
-    const config = await this.readConfig();
-    if (!config) return { error: 'Could not read your project settings. Try again.' };
-    const body = modelUpdate(config, choice);
-    return body.error ? body : this.saveConfig(body);
+  private saveModelKey(choice: ModelChoice, owner: WebContents): Promise<ChatAnswer> {
+    return this.deps.modelSettings.write(owner, choice).then(
+      () => ({ ok: true }),
+      (error: Error) => ({ error: error.message }),
+    );
   }
 
   /** Sign in with ChatGPT from the Ask card: this app holds the sign-in and the project's model moves to it. */
   private signInChatgpt(): Promise<ChatAnswer> {
     return this.deps.onboarding.connect({ importLogins: false }).then(
-      () => ({ ok: true }),
-      (e: Error) => ({ error: e.message }),
-    );
-  }
-
-  /** Posts settings, as `{ ok }` or the server's reason. */
-  private saveConfig(body: Payload): Promise<ChatAnswer> {
-    return this.api.post('config', body).then(
       () => ({ ok: true }),
       (e: Error) => ({ error: e.message }),
     );

@@ -11,6 +11,31 @@ import type { LibraryAction, LibraryPresentation } from './library.ts';
 /** A value the main process sends as it is; its shape is owned by the feature that reads it. */
 export type Payload = Record<string, unknown>;
 
+/** An offline browser source exposes selectable profiles, never filesystem paths. */
+export interface LibraryImportSource {
+  /** Validated source identifier. */
+  id: string;
+  /** Browser name shown before consent. */
+  name: string;
+  /** Signed-in sessions require a separate supported import. */
+  sessions: boolean;
+  /** Profiles available for an explicit selection. */
+  profiles: {
+    /** Opaque directory identifier checked again by main. */ id: string;
+    /** User-visible profile name. */ name: string;
+  }[];
+}
+
+/** Local library additions and safe warnings; cookie transfer is never implied. */
+export interface LibraryImportResult {
+  /** New bookmarks retained after validation and deduplication. */
+  bookmarks: number;
+  /** New history addresses retained under the local history limit. */
+  history: number;
+  /** Read failures affecting only part of the selected profile. */
+  warnings: string[];
+}
+
 /** How the person asked to connect ChatGPT on first run. */
 export interface ConnectChatgptOptions {
   /** Bring in the default browser's logins once connected. */
@@ -288,6 +313,10 @@ export interface LocalAgent {
   name: string;
   /** Whether its config lists Oya. */
   connected: boolean;
+  /** Native executable or editor application was found, rather than a settings directory. */
+  installed?: boolean;
+  /** This detected installation has a supported native launch adapter. */
+  launchable?: boolean;
 }
 
 /** An account this browser signed out of, as the welcome screen offers it (never its key). */
@@ -355,6 +384,22 @@ export interface ShellCalls {
   openGeminiKeys(): Promise<void>;
   /** Where each first-run step stands: ChatGPT, logins, default browser, and the claim link. */
   onboardingStatus(): Promise<Payload>;
+  /** Holds first-run setup open while a chosen connection is authenticated. */
+  beginOnboarding(): Promise<void>;
+  /** App-owned authentication returns once, without accepting an untrusted destination. */
+  startDesktopSignIn(): Promise<Payload & Failure>;
+  /** Bind an in-memory provider draft to its intended workspace before login. */
+  beginTechnicalModel(): Promise<void>;
+  /** Tests only the configured workspace's own selected provider key, with no browser task. */
+  testModelKey(provider: string): Promise<Payload & Failure>;
+  /** Cancels the pending provider attempt without abandoning the setup screen. */
+  cancelOnboardingAttempt(): Promise<void>;
+  /** Opens fixed installation or authentication documentation without accepting arbitrary URLs. */
+  openSetupHelp(topic: 'claude-install' | 'claude-auth'): Promise<void>;
+  /** Lists offline library sources and their profiles without returning local paths. */
+  libraryImportSources(): Promise<LibraryImportSource[]>;
+  /** Adds one explicitly selected source profile to the current local browsing library. */
+  importLibrary(source: string, profile: string): Promise<LibraryImportResult>;
   /** Ends the first-run checklist and opens the start page. */
   finishOnboarding(): Promise<void>;
   /** Opens the page where the person turns this browser's key into an Oya account. */
@@ -415,7 +460,11 @@ export interface ShellCalls {
   /** Accounts this browser signed out of, without their keys. */
   savedAccounts(): Promise<SavedAccountView[]>;
   /** The coding agents on this computer, and which list Oya. */
-  localAgents(): Promise<LocalAgent[]>;
+  localAgents(all?: boolean): Promise<LocalAgent[]>;
+  /** Opens only a detected, allowlisted agent; never submits a task. */
+  openAgent(id: string): Promise<Failure>;
+  /** Copies only the public fixed browser test prompt. */
+  copyAgentTest(id: string): Promise<void>;
   /** Adds Oya's MCP port to an agent; answers the list as it now stands. */
   connectAgent(id: string): Promise<LocalAgent[]>;
   /** Takes Oya's MCP port out of an agent; answers the list as it now stands. */
@@ -495,7 +544,7 @@ export interface ShellCalls {
   /** Stops the running chat. */
   stopChat(tabId?: number): Promise<void>;
   /** The project's model and whether it has a key. */
-  modelStatus(): Promise<Payload>;
+  modelStatus(requireCatalog?: boolean): Promise<Payload>;
   /** Saves the project's model provider and key. */
   saveModelKey(choice: Payload): Promise<Payload & Failure>;
   /** Starts Sign in with ChatGPT for the project, in the system browser. */
@@ -639,6 +688,14 @@ export const CALL_CHANNELS = {
   connectGemini: 'connect-gemini',
   openGeminiKeys: 'open-gemini-keys',
   onboardingStatus: 'onboarding-status',
+  beginOnboarding: 'begin-onboarding',
+  startDesktopSignIn: 'start-desktop-sign-in',
+  testModelKey: 'test-model-key',
+  beginTechnicalModel: 'begin-technical-model',
+  cancelOnboardingAttempt: 'cancel-onboarding-attempt',
+  openSetupHelp: 'open-setup-help',
+  libraryImportSources: 'library-import-sources',
+  importLibrary: 'import-library',
   finishOnboarding: 'finish-onboarding',
   openClaim: 'open-claim',
   getConfig: 'get-config',
@@ -656,6 +713,8 @@ export const CALL_CHANNELS = {
   savedAccounts: 'saved-accounts',
   /** The coding agents on this computer, and which list Oya. */
   localAgents: 'local-agents',
+  openAgent: 'open-agent',
+  copyAgentTest: 'copy-agent-test',
   /** Adds Oya's MCP port to an agent. */
   connectAgent: 'connect-agent',
   /** Takes Oya's MCP port out of an agent. */

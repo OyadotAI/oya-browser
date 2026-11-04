@@ -37,10 +37,11 @@ const toolsFor = (baseUrl: string, tools: any[]) =>
 const takesEffort = (baseUrl: string) => /^https:\/\/generativelanguage\.googleapis\.com\//.test(baseUrl);
 
 /** The chat-completions body; tool_choice defaults to 'auto' when tools are given. */
-function bodyFor({ baseUrl, model, messages, tools, toolChoice, effort }: ChatRequest) {
-  const reasoning = effort && takesEffort(baseUrl) ? { reasoning_effort: effort } : {};
-  const described = tools ? { tools: toolsFor(baseUrl, tools), tool_choice: toolChoice || 'auto' } : {};
-  return { model, messages, ...described, ...reasoning, stream: false };
+function bodyFor(r: ChatRequest) {
+  const reasoning = r.effort && takesEffort(r.baseUrl) ? { reasoning_effort: r.effort } : {};
+  const described = r.tools ? { tools: toolsFor(r.baseUrl, r.tools), tool_choice: r.toolChoice || 'auto' } : {};
+  const limit = r.maxTokens ? { max_tokens: r.maxTokens } : {};
+  return Object.assign({ model: r.model, messages: r.messages, stream: false }, described, reasoning, limit);
 }
 
 /** Any OpenAI-compatible endpoint. */
@@ -52,5 +53,6 @@ export const openai: LlmProvider = {
       `${baseOf(request.baseUrl)}/chat/completions`,
       { Authorization: `Bearer ${request.apiKey}`, 'Content-Type': 'application/json' },
       bodyFor(request),
+      request.signal,
     ),
 };

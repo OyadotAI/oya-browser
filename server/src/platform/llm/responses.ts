@@ -20,9 +20,10 @@ const isResponses = (baseUrl: string) => /\/responses$/.test(baseOf(baseUrl || '
 const PLAN = { store: false, stream: true };
 
 /** The request body: the conversation as instructions and input items, and the tools when there are any. */
-function bodyFor({ model, messages, tools, toolChoice }: ChatRequest) {
+function bodyFor({ model, messages, tools, toolChoice, maxTokens }: ChatRequest) {
   const described = tools?.length ? { tools: toolsOf(tools), tool_choice: toolChoiceOf(toolChoice) } : {};
-  return { model, instructions: instructionsOf(messages), input: inputOf(messages), ...described, ...PLAN };
+  const limit = maxTokens ? { max_output_tokens: maxTokens } : {};
+  return { model, instructions: instructionsOf(messages), input: inputOf(messages), ...described, ...limit, ...PLAN };
 }
 
 /** One event's JSON data, or nothing when it is not JSON (a keep-alive, a [DONE] marker). */
@@ -75,7 +76,12 @@ const noAnswer = (err: unknown): never => {
 /** POSTs the streamed request; a 30x is refused like every other provider's. */
 function post(request: ChatRequest) {
   const headers = { Authorization: `Bearer ${request.apiKey}`, 'Content-Type': 'application/json' };
-  const init = { method: 'POST', redirect: 'error' as const, signal: AbortSignal.timeout(LLM_TIMEOUT_MS) };
+  const deadline = AbortSignal.timeout(LLM_TIMEOUT_MS);
+  const init = {
+    method: 'POST',
+    redirect: 'error' as const,
+    signal: request.signal ? AbortSignal.any([deadline, request.signal]) : deadline,
+  };
   return fetch(baseOf(request.baseUrl), { ...init, headers, body: JSON.stringify(bodyFor(request)) }).catch(noAnswer);
 }
 

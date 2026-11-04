@@ -3,6 +3,7 @@
  * and registered in one place through the shell-only guard (handle.ts).
  */
 import { OnboardingHandlers } from './onboarding.ts';
+import { LibraryImportHandlers } from './library-import.ts';
 import type { AppServices } from '../app/services.ts';
 import { ShellIpc, type ShellHandlers } from './handle.ts';
 import { NavigationHandlers } from './navigation.ts';
@@ -20,6 +21,7 @@ export type { Handler, ShellHandlers } from './handle.ts';
 
 /** The services the shell's calls reach. */
 export type IpcDeps = ConstructorParameters<typeof NavigationHandlers>[0] &
+  ConstructorParameters<typeof LibraryImportHandlers>[0] &
   ConstructorParameters<typeof SessionHandlers>[0] &
   ConstructorParameters<typeof RecordingHandlers>[0] &
   ConstructorParameters<typeof ShellPageHandlers>[0] &
@@ -43,6 +45,7 @@ function appHandlers(deps: IpcDeps) {
   return {
     ...new SessionHandlers(deps).handlers,
     ...new OnboardingHandlers(deps).handlers,
+    ...new LibraryImportHandlers(deps).handlers,
     ...new RecordingHandlers(deps).handlers,
     ...libraryHandlers(deps),
   };

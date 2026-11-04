@@ -4,6 +4,7 @@
  */
 import { apiOrigin } from '@/lib/api';
 import { api } from '@/lib/api-client';
+import { desktopReturnUrl, validDesktopReturn, type DesktopReturn } from './desktop-return';
 
 /** What GET /api/config returns. Settings belong to the API key, not an account. */
 export interface KeyConfig {
@@ -137,8 +138,10 @@ export const isOyaProvider = (id: string) => id === 'oya-cloud' || id === 'oya-s
  * the user visits, and it lands in OS logs on the way. The code expires in
  * minutes, redeems once, and the desktop app still asks before acting on it.
  */
-export async function desktopSignInUrl(apiKey: string, profile = 'default'): Promise<string> {
+export async function desktopSignInUrl(apiKey: string, profile = 'default', returnTo?: DesktopReturn): Promise<string> {
+  if (returnTo && !validDesktopReturn(returnTo)) throw Error('Desktop sign-in expired. Start again in Oya.');
   const { code } = await api<Pairing>('/pairing', { key: apiKey, method: 'POST', body: { profile } });
+  if (returnTo) return desktopReturnUrl(returnTo, code);
   const ws = `${apiOrigin().replace(/^http/, 'ws')}/ws`;
   return `oya://connect?code=${encodeURIComponent(code)}&server=${encodeURIComponent(ws)}`;
 }
