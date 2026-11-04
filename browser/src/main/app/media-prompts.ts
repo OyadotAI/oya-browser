@@ -3,11 +3,18 @@
  * the macOS denial. Kept apart from the rules so the copy reads as one family
  * and a test can pin it.
  */
-import type { MessageBoxOptions } from 'electron';
-import { END_CALL_NAMED_SITES } from './constants.ts';
+import type { MessageBoxOptions, SystemPreferences } from 'electron';
+import { END_CALL_NAMED_SITES, MEDIA_SETTINGS_ACTION } from './constants.ts';
 
 /** What a site can ask for in the Allow dialog. */
 export type DeviceKind = 'audio' | 'video';
+/** OS denial applies to one specific device, never an inferred bundle of permissions. */
+export interface MediaDenial {
+  /** The device whose native request failed. */ device: DeviceKind | 'screen';
+  /** Observed status distinguishes denial, restriction and an unknown failure. */ status: ReturnType<
+    SystemPreferences['getMediaAccessStatus']
+  >;
+}
 
 /** The line every Allow dialog ends on: what Allow means, and where to undo it. */
 const REMEMBERED = 'Allow is remembered for this site in this profile; forget it any time under History and bookmarks.';
@@ -39,21 +46,45 @@ export function shareScreenPrompt(origin: string): MessageBoxOptions {
 }
 
 /** Explains an OS denial rather than leaving a call silently without a device. */
-export const OS_DENIED_PROMPT: MessageBoxOptions = {
-  message: 'Device access is blocked in macOS',
-  detail:
-    'Allow Oya Browser in System Settings → Privacy & Security → Microphone, Camera or Screen & System Audio Recording, then rejoin the call.',
-  buttons: ['OK'],
-};
+export function mediaDeniedPrompt(failure: MediaDenial): MessageBoxOptions {
+  const device = failure.device === 'audio' ? 'Microphone' : failure.device === 'video' ? 'Camera' : 'Screen recording';
+  if (failure.status === 'restricted') return restrictedPrompt(device);
+  if (failure.status !== 'denied') return unavailablePrompt(device);
+  return failure.device === 'screen' ? SCREEN_DENIED_PROMPT : blockedDevicePrompt(device);
+}
+/** A confirmed device denial links only to that device's permission pane. */
+function blockedDevicePrompt(device: string): MessageBoxOptions {
+  return {
+    message: `${device} access is blocked by macOS.`,
+    detail: `Allow Oya Browser in System Settings → Privacy & Security → ${device}, then return and try again.`,
+    buttons: ['Not now', `Open ${device} Settings`],
+    ...MEDIA_SETTINGS_ACTION,
+  };
+}
+/** Organization restrictions cannot be fixed by promising an enable-toggle action. */
+function restrictedPrompt(device: string): MessageBoxOptions {
+  return {
+    message: `Your Mac restricts ${device.toLowerCase()} access.`,
+    detail: 'This setting may be managed by your organization.',
+    buttons: ['OK'],
+  };
+}
+/** Failed native requests without a confirmed denial retain honest, generic recovery. */
+function unavailablePrompt(device: string): MessageBoxOptions {
+  return {
+    message: `Couldn’t request ${device.toLowerCase()} access.`,
+    detail: 'Try again from your meeting. If this continues, check that your device is available.',
+    buttons: ['OK'],
+  };
+}
 
 /** Screen Recording has its own pane and may require adding the installed application manually. */
 export const SCREEN_DENIED_PROMPT: MessageBoxOptions = {
-  message: 'Allow Oya to share your screen',
+  message: 'Allow screen sharing in macOS.',
   detail:
-    'In System Settings → Privacy & Security → Screen & System Audio Recording, enable Oya Browser. If it is missing, click + and select Oya Browser in Applications. Then quit and reopen Oya and try sharing again.',
+    'In System Settings → Privacy & Security → Screen & System Audio Recording, enable Oya Browser. If it is missing, click + and select Oya Browser in Applications. Oya tab, window and screen sharing are unavailable until access is allowed. If macOS requires reopening Oya, doing so ends active calls; then try sharing again.',
   buttons: ['Not now', 'Open System Settings'],
-  defaultId: 1,
-  cancelId: 0,
+  ...MEDIA_SETTINGS_ACTION,
 };
 
 /** What would end the call: closing one window, or quitting the app. */

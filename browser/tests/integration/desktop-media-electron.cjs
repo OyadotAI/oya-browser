@@ -7,6 +7,7 @@ const { ScreenShare } = require('../../src/main/app/screen-share.ts');
 const { SitePermissionStore } = require('../../src/main/app/site-permissions.ts');
 const { JsonFile } = require('../../src/main/app/json-file.ts');
 const { installPermissions } = require('../../src/main/identity/permissions.ts');
+const { windowRouting } = require('./desktop-media-routing.cjs');
 const {
   installPicker,
   categories,
@@ -40,6 +41,7 @@ function permissions(window, state) {
   const prompts = [];
   const deps = {
     electron: {
+      shell: { openExternal: async () => undefined },
       dialog: {
         showMessageBox: async (_window, options) => (prompts.push(options), { response: state.response ?? 1 }),
       },
@@ -194,6 +196,7 @@ async function run() {
   state.human = false;
   assert.deepEqual(await capture(contents, { audio: true }), { error: 'NotAllowedError' });
   await screenPermission(ses, window, state);
+  await windowRouting(ses, window, permissions);
   window.destroy();
   console.log(
     'Oya desktop media passed: native callbacks, remembered consent, OS refusal/recovery, reload, camera, display-media handoff and agent refusal.',

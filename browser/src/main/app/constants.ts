@@ -51,6 +51,12 @@ export const OPEN_EXTERNAL_APP_CHOICE = 1;
 
 /** Explicit approval, with Block as the default media permission response. */
 export const ALLOW_MEDIA_CHOICE = 1;
+/** Recovery opens Settings only through its explicit second button; Escape dismisses. */
+export const MEDIA_SETTINGS_ACTION = { defaultId: 1, cancelId: 0 };
+/** Failed settings launches retain a single safe acknowledgement and the manual path. */
+export const MEDIA_MANUAL_ACTION = { buttons: ['OK'], defaultId: 0, cancelId: 0 };
+/** A stalled OS settings handoff must release the approval queue before later requests expire. */
+export const MEDIA_SETTINGS_OPEN_MS = 5_000;
 /** The end-call dialog's "Close Window" or "Quit" button; Cancel is 0, the default. */
 export const END_CALL_CHOICE = 1;
 /** Past this many sites, the end-call dialog names the first and counts the rest. */

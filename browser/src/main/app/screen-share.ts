@@ -64,23 +64,21 @@ export class ScreenShare {
     const contents = this.requester(request);
     const origin = this.deps.mediaPermissions.gate.eligible(contents, request.securityOrigin);
     if (!contents || !origin) return null;
-    const generation = this.deps.mediaPermissions.gate.watch(contents);
-    const partition = this.deps.persona.partitionName();
+    const current = this.deps.mediaPermissions.gate.guard(contents, origin);
     const allowed = await this.approval(contents, origin);
-    return allowed ? this.currentScreen(contents, generation, partition) : null;
+    return allowed && current() ? this.currentScreen(contents, current) : null;
   }
 
   /** Preflight and display requests retain independent approvals while duplicate denials are not re-prompted. */
   private approval(contents: WebContents, origin: string): Promise<boolean> {
     const { gate } = this.deps.mediaPermissions;
     const key = gate.decisionKey(contents, origin, ['screen']);
-    return gate.locked(gate.guard(contents, origin), () => this.approve(contents, origin), key);
+    const current = gate.guard(contents, origin);
+    return gate.locked(current, () => this.approve(contents, origin, current), key);
   }
 
   /** Source enumeration can prompt macOS too; recheck the document and owner before handing pixels to the page. */
-  private async currentScreen(contents: WebContents, generation: number, partition: string): Promise<Streams | null> {
-    const current = () =>
-      this.deps.mediaPermissions.gate.current(contents, generation) && this.deps.persona.partitionName() === partition;
+  private async currentScreen(contents: WebContents, current: () => boolean): Promise<Streams | null> {
     const streams = await this.deps.screenPicker.pick(contents, new URL(contents.getURL()).origin, current);
     if (!streams || !current()) return null;
     // Marked only once a source is handed over: the person can still cancel the picker.
@@ -90,30 +88,31 @@ export class ScreenShare {
   }
 
   /** Site consent (remembered as soon as given, as the camera's is), the document and control rechecked after the wait, then the macOS setting. */
-  private async approve(contents: WebContents, origin: string): Promise<boolean> {
+  private async approve(contents: WebContents, origin: string, current: () => boolean): Promise<boolean> {
     const { gate } = this.deps.mediaPermissions;
     const partition = this.deps.persona.partitionName();
-    const generation = gate.watch(contents);
     const remembered = this.deps.sitePermissions.has(partition, origin, 'screen');
-    if (!remembered && !(await gate.allowedBy(shareScreenPrompt(origin), ALLOW_MEDIA_CHOICE))) return false;
-    if (!gate.current(contents, generation) || this.deps.persona.partitionName() !== partition) return false;
+    if (!remembered && !(await gate.allowedBy(shareScreenPrompt(origin), ALLOW_MEDIA_CHOICE, contents))) return false;
+    if (!current()) return false;
     if (!remembered) this.deps.sitePermissions.grant(partition, origin, ['screen']);
-    return this.confirmOS(contents, generation, partition);
+    return this.confirmOS(contents, current);
   }
 
   /** Request native enumeration before refusing: otherwise macOS may never register Oya for permission. */
-  private async confirmOS(contents: WebContents, generation: number, partition: string): Promise<boolean> {
+  private async confirmOS(contents: WebContents, current: () => boolean): Promise<boolean> {
     if (this.osDenied()) await this.deps.screenPicker.requestOSPermission();
     const { gate } = this.deps.mediaPermissions;
-    if (!gate.current(contents, generation) || this.deps.persona.partitionName() !== partition) return false;
-    return this.osDenied() ? gate.osDenied(contents, generation, true) : true;
+    if (!current()) return false;
+    return this.osDenied() ? gate.osDenied(contents, current, { device: 'screen', status: this.osStatus() }) : true;
   }
 
   /** macOS Screen Recording turned off for Oya in System Settings; elsewhere the OS has no such switch. */
   private osDenied(): boolean {
-    const denied =
-      this.platform === 'darwin' &&
-      ['denied', 'restricted'].includes(this.deps.electron.systemPreferences.getMediaAccessStatus('screen'));
+    const denied = this.platform === 'darwin' && ['denied', 'restricted'].includes(this.osStatus());
     return denied;
+  }
+  /** Re-read the actual OS state after native source enumeration and before reporting a cause. */
+  private osStatus() {
+    return this.deps.electron.systemPreferences.getMediaAccessStatus('screen');
   }
 }

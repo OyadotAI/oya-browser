@@ -35,6 +35,7 @@ export function fixture(platform = 'darwin', file = memoryFile()) {
     devices: string[] = [];
   const deps = {
     electron: {
+      shell: { openExternal: async (_url: string) => undefined },
       dialog: {
         showMessageBox: async (options: any) => {
           prompts.push(options);

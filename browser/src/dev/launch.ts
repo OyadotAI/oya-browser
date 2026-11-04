@@ -8,15 +8,16 @@
  * Keep the installed Electron runtime untouched and cache a branded dev copy.
  * `--prepare` only prints the executable's path. The Electron tests import
  * developmentExecutable() to launch the same copy.
+ * Interactive macOS launches go through Launch Services for native privacy
+ * attribution. It owns the GUI lifetime; interrupting this waiter leaves Oya open.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
-
-/** process.argv index of the first argument after `node launch.ts`. */
-const USER_ARGS_START = 2;
+import { tmpdir } from 'node:os';
+import { USER_ARGS_START, DEVELOPMENT_LOG_MODE, LAUNCH_FAILURE } from './constants.ts';
 
 /** The browser package's folder: what Electron runs, and where build/ and node_modules/ are. */
 const BROWSER_DIR = path.resolve(import.meta.dirname, '..', '..');
@@ -80,14 +81,48 @@ export function developmentExecutable(): string {
   return path.join(bundle, 'Contents', 'MacOS', 'Electron');
 }
 
-/** Runs the browser as a child, passing signals through and exiting with its code. */
+/** Private files retain startup failures when Launch Services cannot inherit terminal output. */
+function developmentLogs(): string[] {
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'oya-development-'));
+  const logs = ['stdout.log', 'stderr.log'].map((name) => path.join(directory, name));
+  for (const log of logs) fs.writeFileSync(log, '', { mode: DEVELOPMENT_LOG_MODE });
+  console.error(`Oya development logs: ${directory}`);
+  console.error('Close Oya to quit the app. Ctrl+C stops only this launch waiter.');
+  return logs;
+}
+
+/** Native launch requests preserve argument boundaries without a shell. */
+interface DevelopmentCommand {
+  /** Exact executable or system Launch Services entry. */ command: string;
+  /** Each argument remains separate, including paths containing spaces. */ args: string[];
+}
+/** Use the exact branded app through macOS while fixture callers retain direct executable control. */
+export function developmentCommand(executable: string, args: string[], logs: string[]): DevelopmentCommand {
+  if (process.platform !== 'darwin') return { command: executable, args };
+  const start = ['-n', '-W', '-a', path.resolve(executable, '../../..')];
+  const output = ['--stdout', logs[0], '--stderr', logs[1]];
+  return { command: '/usr/bin/open', args: [...start, ...output, '--args', ...args] };
+}
+
+/** A macOS waiter reports its own result; other platforms preserve direct-child signal behavior. */
+function finished(code: number | null, signal: NodeJS.Signals | null): void {
+  if (signal && process.platform !== 'darwin') process.kill(process.pid, signal);
+  else process.exitCode = code ?? LAUNCH_FAILURE;
+}
+
+/** Startup failure stays visible in the terminal even when no application was created. */
+function failed(error: Error): void {
+  console.error(error.message);
+  process.exitCode = LAUNCH_FAILURE;
+}
+
+/** Signals target only this launcher's child, which is a waiter rather than Oya on macOS. */
 function runBrowser(executable: string): void {
-  const child = spawn(executable, [BROWSER_DIR, ...process.argv.slice(USER_ARGS_START)], { stdio: 'inherit' });
-  child.on('error', (error) => {
-    console.error(error.message);
-    process.exitCode = 1;
-  });
-  child.on('exit', (code, signal) => (signal ? process.kill(process.pid, signal) : (process.exitCode = code || 0)));
+  const logs = process.platform === 'darwin' ? developmentLogs() : [];
+  const request = developmentCommand(executable, [BROWSER_DIR, ...process.argv.slice(USER_ARGS_START)], logs);
+  const child = spawn(request.command, request.args, { stdio: 'inherit', env: process.env, shell: false });
+  child.on('error', failed);
+  child.on('exit', finished);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => child.kill(signal));
 }
 
