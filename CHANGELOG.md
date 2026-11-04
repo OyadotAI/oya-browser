@@ -14,6 +14,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Corrected meeting microphone, camera and screen-sharing permission routing across browser windows. Added device-specific macOS recovery and distinguished permission denial from unavailable desktop sources.
+- Opened macOS development sessions through Launch Services so Oya receives its own microphone and camera consent, with private startup logs and explicit application lifetime.
 - Added local Chrome/Edge bookmarks and history import with explicit profile selection, partial-result reporting and no external SQLite dependency. Protected Windows signed-in sessions still require signing in directly in Oya.
 - Corrected Windows local-agent executable discovery and VS Code configuration paths while keeping credentials out of shell commands.
 

@@ -222,8 +222,8 @@ it('refuses a screen source if control, document or profile changes during captu
 
 it('a prior microphone denial does not suppress Screen Recording recovery', async () => {
   const f = fixture();
-  const generation = f.service.gate.watch(f.contents as any);
-  await f.service.gate.osDenied(f.contents as any, generation);
+  await f.service.gate.osDenied(f.contents as any, () => true, { device: 'audio', status: 'denied' });
+  f.opened.length = 0;
   f.electron.systemPreferences.getMediaAccessStatus = () => 'denied';
   assert.equal(await f.request(), null);
   assert.equal(f.opened.length, 1);

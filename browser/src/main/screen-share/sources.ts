@@ -65,9 +65,9 @@ export class ShareSources {
   private readonly cleanups: (() => void)[] = [];
   /** A desktop enumeration failure must not hide available browser tabs. */
   desktopError = '';
-  /** macOS recovery is offered only when desktop enumeration failed. */
+  /** Settings recovery requires a confirmed denial, not an empty list or failed enumeration alone. */
   get canOpenSettings(): boolean {
-    return this.platform === 'darwin' && !!this.desktopError;
+    return !!this.desktopError && this.osStatus() === 'denied';
   }
   /** Injectable platform keeps permission regressions independent of the test host. */
   private readonly platform: string;
@@ -136,7 +136,7 @@ export class ShareSources {
       const sources = await withinTime(pending, PICKER.SOURCES_TIMEOUT_MS);
       return this.desktopChoices(sources);
     } catch {
-      this.desktopError = PICKER.DESKTOP_ERROR;
+      this.desktopError = this.failureMessage();
       return [];
     }
   }
@@ -144,15 +144,27 @@ export class ShareSources {
   /** A partial OS list under denied access is not a usable capture choice. */
   private desktopChoices(sources: DesktopCapturerSource[]): Choice[] {
     if (!this.desktopAllowed()) throw Error('Screen Recording is blocked');
-    if (!sources.length) this.desktopError = PICKER.DESKTOP_ERROR;
+    if (!sources.length) this.desktopError = PICKER.DESKTOP_EMPTY;
     return sources.filter((video) => video.id !== this.previews.sourceId).map((video) => this.desktopChoice(video));
   }
 
   /** Check after enumeration: checking before it can prevent macOS from ever asking for access. */
   private desktopAllowed(): boolean {
-    if (this.platform !== 'darwin') return true;
-    const status = this.deps.electron.systemPreferences.getMediaAccessStatus('screen');
+    const status = this.osStatus();
     return status !== 'denied' && status !== 'restricted';
+  }
+  /** Enumeration can fail for many reasons; diagnose only a status the OS actually reports. */
+  private failureMessage(): string {
+    const status = this.osStatus();
+    return status === 'denied'
+      ? PICKER.PERMISSION_ERROR
+      : status === 'restricted'
+        ? PICKER.RESTRICTED_ERROR
+        : PICKER.DESKTOP_ERROR;
+  }
+  /** Non-macOS platforms do not expose this Screen Recording setting. */
+  private osStatus(): string {
+    return this.platform === 'darwin' ? this.deps.electron.systemPreferences.getMediaAccessStatus('screen') : 'granted';
   }
 
   /** Native identifiers stay private; only a random token and PNG are exposed to the picker. */

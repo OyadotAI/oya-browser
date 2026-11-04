@@ -12,7 +12,11 @@ export const PICKER = {
   OWNER_CHECK_MS: 200,
   TAB_LIMIT: 80,
   BACKGROUND: '#10120f',
-  DESKTOP_ERROR: 'Windows and screens are unavailable. Check screen recording access and try sharing again.',
+  DESKTOP_ERROR:
+    'Windows and screens couldn’t be listed. Cancel and try sharing again. Available Oya tabs are listed separately.',
+  DESKTOP_EMPTY: 'No windows or screens are available. Available Oya tabs are listed separately.',
+  PERMISSION_ERROR: 'Screen recording access is blocked by macOS. Allow Oya Browser in System Settings and try again.',
+  RESTRICTED_ERROR: 'Your Mac restricts screen recording. This setting may be managed by your organization.',
   SETTINGS_URL: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
 } as const;
 

@@ -85,10 +85,26 @@ it('keeps tab choices when OS source enumeration fails', async () => {
       options.map(({ kind }) => kind),
       ['tab', 'tab'],
     );
-    assert.match(f.sources.desktopError, /screen recording/);
+    assert.equal(f.sources.canOpenSettings, false, 'enumeration failure is not a confirmed OS denial');
+    assert.match(f.sources.desktopError, /couldn’t be listed/);
   } finally {
     f.sources.dispose();
   }
+});
+it('an empty desktop list does not falsely diagnose an OS permission denial', async () => {
+  const f = fixture();
+  f.deps.electron.desktopCapturer.getSources = async () => [];
+  await f.sources.read();
+  assert.equal(f.sources.canOpenSettings, false);
+  f.sources.dispose();
+});
+it('restricted screen recording is explained without offering an enable-toggle recovery', async () => {
+  const f = fixture();
+  f.deps.electron.systemPreferences.getMediaAccessStatus = () => 'restricted';
+  await f.sources.read();
+  assert.equal(f.sources.canOpenSettings, false);
+  assert.match(f.sources.desktopError, /restrict/);
+  f.sources.dispose();
 });
 
 it('a missing preview does not remove a valid tab, and disposal revokes all tokens', async () => {
