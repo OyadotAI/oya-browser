@@ -33,6 +33,12 @@ function fixture() {
       operations.push('continue');
       held.resolve();
     },
+    passesThrough: (method: string) => method === 'Fetch.fulfillRequest',
+    passthrough: async () => {
+      operations.push('fulfill');
+      held.resolve();
+      return {};
+    },
     dispose: () => {
       disposed++;
     },
@@ -148,5 +154,54 @@ it('authorized native continuations release held work without waiting behind tha
   assert.deepEqual(f.operations, ['runtime:evaluate', 'continue']);
   assert.ok(f.replies.some((reply) => reply.id === 2 && reply.result));
   assert.ok(f.replies.some((reply) => reply.id === 3 && reply.result));
+  f.connection.close();
+});
+
+it('remote browser attachments preserve root/page reply and detach event envelopes', async () => {
+  const f = fixture();
+  f.send(10, 'Target.attachToBrowserTarget');
+  await flush();
+  const root = f.replies.find((reply) => reply.id === 10).result.sessionId;
+  f.send(11, 'Target.attachToTarget', { targetId: 'page', flatten: true }, root);
+  await flush();
+  const attachment = f.replies.find((reply) => reply.id === 11);
+  assert.equal(attachment.sessionId, root);
+  const page = attachment.result.sessionId;
+  f.send(12, 'DOM.getDocument', {}, page);
+  await flush();
+  assert.equal(f.replies.find((reply) => reply.id === 12).sessionId, page);
+  f.send(13, 'Browser.getVersion', {}, page);
+  await flush();
+  const failure = f.replies.find((reply) => reply.id === 13);
+  assert.equal(failure.sessionId, page);
+  assert.match(failure.error.message, /browser endpoint/);
+  f.send(14, 'Target.detachFromTarget', { sessionId: page }, root);
+  await flush();
+  assert.deepEqual(
+    f.replies.find((reply) => reply.method === 'Target.detachedFromTarget'),
+    {
+      method: 'Target.detachedFromTarget',
+      params: { sessionId: page, targetId: 'page' },
+      sessionId: root,
+    },
+  );
+  f.connection.close();
+  assert.deepEqual(f.counts(), { disposed: 1, closed: 1 });
+});
+
+it('response fulfillment unblocks held work without escaping takeover checks', async () => {
+  const f = fixture(),
+    session = await f.attach();
+  f.send(2, 'Runtime.evaluate', { expression: 'held' }, session);
+  await flush();
+  f.send(3, 'Fetch.fulfillRequest', { requestId: 'held-request', responseCode: 200, body: 'b2s=' }, session);
+  await flush();
+  assert.deepEqual(f.operations, ['runtime:evaluate', 'fulfill']);
+  assert(f.replies.some((reply) => reply.id === 3 && reply.result));
+  f.revoke();
+  f.send(4, 'Fetch.fulfillRequest', { requestId: 'other', responseCode: 200 }, session);
+  await flush();
+  assert.match(f.replies.find((reply) => reply.id === 4).error.message, /unavailable/);
+  assert.deepEqual(f.operations, ['runtime:evaluate', 'fulfill']);
   f.connection.close();
 });

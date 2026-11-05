@@ -4,7 +4,9 @@ import { NativeSubscriptions } from './subscriptions.ts';
 import { NativeAutoAttach } from './auto-attach.ts';
 import { NativeDiscovery } from './discovery.ts';
 import { PassthroughSessions } from './passthrough.ts';
-import { randomUUID } from 'node:crypto';
+import { NativeSessions } from './sessions.ts';
+import { SessionLifecycle } from './session-lifecycle.ts';
+import { BrowserScopes, type BrowserScope } from './browser-scopes.ts';
 import { isWebAddress, NOT_A_WEB_ADDRESS } from '../tabs/navigation.ts';
 import { validateParams, nativeParameterNames } from './validation.ts';
 import { NATIVE_DOOR } from './constants.ts';
@@ -77,17 +79,17 @@ const PAGE_ACTIONS: Record<string, string> = {
 /** Supported method implementations have no forwarding branch. */
 const METHODS: Record<string, (session: NativeProtocol, command: NativeCommand) => unknown> = {
   'Oya.getCapabilities': () => nativeCapabilities(),
-  'Storage.getCookies': (s, c) => s.manage('cookies:get', c.params),
-  'Storage.setCookies': (s, c) => s.manage('cookies:set', c.params),
-  'Storage.clearCookies': (s, c) => s.manage('cookies:clear', c.params),
-  'Oya.deleteCookie': (s, c) => s.manage('cookies:delete', c.params),
-  'Browser.setDownloadBehavior': (s, c) => (c.params.browserContextId ? s.manage('download:set', c.params) : {}),
-  'Browser.cancelDownload': (s, c) => s.manage('download:cancel', c.params),
-  'Target.createBrowserContext': (s, c) => s.manage('context:create', c.params),
-  'Target.getBrowserContexts': (s, c) => s.manage('context:list', c.params),
-  'Target.disposeBrowserContext': (s, c) => s.manage('context:dispose', c.params),
-  'Target.setAutoAttach': (s, c) => s.automatic.set(c.params.autoAttach === true),
-  'Target.setDiscoverTargets': (s, c) => s.discovery.set(c.params.discover === true),
+  'Storage.getCookies': (s, c) => s.manage('cookies:get', c),
+  'Storage.setCookies': (s, c) => s.manage('cookies:set', c),
+  'Storage.clearCookies': (s, c) => s.manage('cookies:clear', c),
+  'Oya.deleteCookie': (s, c) => s.manage('cookies:delete', c),
+  'Browser.setDownloadBehavior': (s, c) => (c.params.browserContextId ? s.manage('download:set', c) : {}),
+  'Browser.cancelDownload': (s, c) => s.manage('download:cancel', c),
+  'Target.createBrowserContext': (s, c) => s.manage('context:create', c),
+  'Target.getBrowserContexts': (s, c) => s.manage('context:list', c),
+  'Target.disposeBrowserContext': (s, c) => s.manage('context:dispose', c),
+  'Target.setAutoAttach': (s, c) => s.scope(c).automatic.set(c.params.autoAttach === true),
+  'Target.setDiscoverTargets': (s, c) => s.scope(c).discovery.set(c.params.discover === true),
   'Target.activateTarget': (s, c) => s.activate(s.target(c.params.targetId).targetId),
   'Page.bringToFront': (s, c) => s.activate(s.targetId(c)),
   'Oya.enableNetwork': (s, c) => s.observe(c, 'OyaNetwork', true),
@@ -114,7 +116,7 @@ const METHODS: Record<string, (session: NativeProtocol, command: NativeCommand) 
   }),
   'Target.getTargets': (s) => ({ targetInfos: s.backend.targets() }),
   'Target.getTargetInfo': (s, c) =>
-    !c.params.targetId && !c.sessionId && !s.pinned
+    !c.params.targetId && s.browserSession(c) && !s.pinned
       ? { targetInfo: BROWSER_TARGET }
       : { targetInfo: s.target(c.params.targetId || s.targetId(c)) },
   'Target.createTarget': async (s, c) => ({
@@ -129,13 +131,14 @@ const METHODS: Record<string, (session: NativeProtocol, command: NativeCommand) 
     return { success: true };
   },
   'Target.attachToTarget': (s, c) => s.attach(c),
+  'Target.attachToBrowserTarget': (s, c) => s.attachBrowser(c),
   'Target.detachFromTarget': (s, c) => s.detach(c),
   'Page.navigate': async (s, c) => {
     const target = s.targetId(c);
     await s.backend.execute(target, 'navigate', { url: address(c.params) });
     return { frameId: target };
   },
-  'Page.captureScreenshot': (s, c) => s.screenshot(c),
+  'Page.captureScreenshot': (s, c) => screenshot(s, c),
 };
 /** Each connection owns its session namespace; closing a target invalidates every later operation on it. */
 export class NativeProtocol {
@@ -146,7 +149,11 @@ export class NativeProtocol {
   /** Application-owned capability adapter, never a CDP client. */
   readonly backend: NativeBackend;
   /** Flat sessions belong only to this socket. */
-  private readonly sessions = new Map<string, string>();
+  private readonly sessions = new NativeSessions();
+  /** Browser scopes share authority but never discovery or automatic attachment state. */
+  private readonly scopes: BrowserScopes;
+  /** Attachment revocation and backend cleanup share one resource owner. */
+  private readonly lifecycle: SessionLifecycle;
   /** Event subscriptions are scoped to this socket’s exact session. */
   private readonly subscriptions = new NativeSubscriptions();
   /** Page sessions whose standard methods pass through to their tab. */
@@ -160,64 +167,72 @@ export class NativeProtocol {
     this.backend = backend.connection?.() || backend;
     this.direct = direct;
     this.emit = emit;
-    this.through = new PassthroughSessions(this.backend, emit);
-    this.discovery = this.createDiscovery();
-    this.automatic = this.createAutomatic(fatal);
+    this.through = createPassthrough(this.backend, this.sessions, emit, fatal);
+    this.scopes = this.createScopes(fatal);
+    this.lifecycle = this.createLifecycle();
+    ({ discovery: this.discovery, automatic: this.automatic } = this.scopes.at());
+  }
+  /** Each browser scope gets independent observers over the same authorized backend. */
+  private createScopes(fatal: FatalSink): BrowserScopes {
+    return new BrowserScopes((parent) => ({
+      discovery: this.createDiscovery(parent),
+      automatic: this.createAutomatic(fatal, parent),
+    }));
+  }
+  /** Compose cleanup from the existing connection's collaborators. */
+  private createLifecycle(): SessionLifecycle {
+    return new SessionLifecycle({
+      backend: this.backend,
+      sessions: this.sessions,
+      scopes: this.scopes,
+      subscriptions: this.subscriptions,
+      through: this.through,
+      emit: this.emit,
+    });
   }
   /** Discovery sees this connection's sessions, never another socket's attachment state. */
-  private createDiscovery(): NativeDiscovery {
+  private createDiscovery(parent?: string): NativeDiscovery {
     return new NativeDiscovery({
       backend: this.backend,
-      attached: (id) => [...this.sessions.values()].includes(id),
-      removed: (id) => this.targetRemoved(id),
-      emit: (method, params) => this.emit({ method, params }),
+      attached: (id) => this.sessions.attached(id, parent),
+      removed: (id) => this.lifecycle.removed(id),
+      emit: (method, params) => this.emitScoped(method, params, parent),
     });
   }
 
   /** Automatic allocation shares the same session limit and emits standard flat attachment events. */
-  private createAutomatic(fatal: (reason: string) => void): NativeAutoAttach {
+  private createAutomatic(fatal: (reason: string) => void, parent?: string): NativeAutoAttach {
     return new NativeAutoAttach({
       backend: this.backend,
       fatal,
       capacity: (n) => this.requireCapacity(n),
-      attach: (target) => this.autoAttached(target),
-      detach: (sessionId, targetId) => this.autoDetached(sessionId, targetId),
+      attach: (target) => this.autoAttached(target, parent),
+      detach: (sessionId, targetId) => this.autoDetached(sessionId, targetId, parent),
     });
   }
   /** Preflight capacity applies equally to manual and automatic sessions. */
   private requireCapacity(additional: number): void {
-    if (this.sessions.size + additional > NATIVE_DOOR.maxSessions)
-      throw new ProtocolError('Native session limit exceeded');
+    this.sessions.requireCapacity(additional + this.through.size);
   }
   /** Allocate an automatic session only for a target still exposed by the native backend. */
-  private autoAttached(target: NativeTarget): string {
-    const sessionId = this.allocate(target.targetId);
-    this.emit({
-      method: 'Target.attachedToTarget',
-      params: { sessionId, targetInfo: { ...target, attached: true }, waitingForDebugger: false },
-    });
+  private autoAttached(target: NativeTarget, parent?: string): string {
+    const sessionId = this.allocate(target.targetId, parent);
+    const params = { sessionId, targetInfo: { ...target, attached: true }, waitingForDebugger: false };
+    this.emitScoped('Target.attachedToTarget', params, parent);
     return sessionId;
   }
   /** Revoked targets may have already removed their sessions through discovery; never double-announce detach. */
-  private autoDetached(sessionId: string, targetId: string): void {
+  private autoDetached(sessionId: string, _targetId: string, parent?: string): void {
     if (!this.sessions.has(sessionId)) return;
-    this.detach({ id: 0, method: 'Target.detachFromTarget', params: { sessionId } });
-    this.emit({ method: 'Target.detachedFromTarget', params: { sessionId, targetId } });
+    this.detach({ id: 0, method: 'Target.detachFromTarget', params: { sessionId }, sessionId: parent });
   }
   /** Release per-socket node registries and invalidate attached sessions. */
   dispose(): void {
-    this.discovery.dispose();
-    this.automatic.dispose();
-    this.subscriptions.dispose();
-    this.through.dispose();
-    this.sessions.clear();
-    this.backend.dispose?.();
+    this.lifecycle.dispose();
   }
   /** Resolve only targets currently authorized by the native backend. */
   target(id: unknown): NativeTarget {
-    const target = this.backend.targets().find((candidate) => candidate.targetId === id);
-    if (!target) throw new ProtocolError('Target is closed, unavailable, or outside this endpoint');
-    return target;
+    return findTarget(this.backend, id);
   }
   /** Whether a page endpoint is pinned to one target. */
   get pinned(): boolean {
@@ -225,37 +240,51 @@ export class NativeProtocol {
   }
   /** Whether `command` is on a page: an attached session, or the pinned page endpoint. */
   private pageSession(command: NativeCommand): boolean {
-    return command.sessionId ? this.sessions.has(command.sessionId) : !!this.direct;
+    const id = command.sessionId;
+    return id ? this.sessions.has(id) && !this.sessions.browser(id) : !!this.direct;
+  }
+  /** Native browser commands may run only on a browser endpoint or an owned browser attachment. */
+  browserSession(command: NativeCommand): boolean {
+    return this.sessions.browser(command.sessionId);
+  }
+  /** Discovery and automatic attachment remain private to the requesting browser scope. */
+  scope(command: NativeCommand): BrowserScope {
+    return this.scopes.at(command.sessionId);
+  }
+  /** A browser attachment shares this connection's authorization without becoming a page target. */
+  attachBrowser(command: NativeCommand): { /** Connection-owned browser session. */ sessionId: string } {
+    this.requireCapacity(1);
+    return { sessionId: this.sessions.allocate(command.sessionId).id };
   }
   /** Page commands need a valid local session or exact direct target, never the current active tab. */
   targetId(command: NativeCommand): string {
-    const id = command.sessionId ? this.sessions.get(command.sessionId) : this.direct;
+    const id = command.sessionId ? this.sessions.get(command.sessionId).target : this.direct;
     return this.target(id).targetId;
   }
   /** Only flat attachment is implemented; frame/context auto-attachment is explicitly unsupported. */
   attach(command: NativeCommand): { /** Connection-local session id. */ sessionId: string } {
-    if (this.sessions.size >= NATIVE_DOOR.maxSessions) throw new ProtocolError('Native session limit exceeded');
     if (command.params.flatten !== true) throw new ProtocolError('Only flattened target sessions are supported');
-    return { sessionId: this.allocate(command.params.targetId) };
+    return { sessionId: this.allocate(command.params.targetId, command.sessionId) };
   }
   /** Allocate a session after checking exact native ownership and shared capacity. */
-  private allocate(targetId: unknown): string {
+  private allocate(targetId: unknown, parent?: string): string {
     this.requireCapacity(1);
     const target = this.target(targetId);
-    const sessionId = randomUUID();
-    this.sessions.set(sessionId, target.targetId);
-    this.discovery.refresh();
-    return sessionId;
+    const sessionId = this.sessions.allocate(parent, target.targetId).id;
+    return this.lifecycle.attached(sessionId);
   }
   /** A foreign or stale session cannot detach another connection. */
   detach(command: NativeCommand): object {
     const id = stringParam(command.params, 'sessionId');
-    this.subscriptions.release(id);
-    this.through.release(id);
-    if (!this.sessions.delete(id)) throw new ProtocolError('Unknown session');
-    this.automatic.forget(id);
-    this.discovery.refresh();
+    if (this.sessions.get(id).parent !== command.sessionId)
+      throw new ProtocolError('Session belongs to another browser scope');
+    this.lifecycle.close(id);
     return {};
+  }
+  /** Browser-level events name their requesting browser session, never an unrelated page attachment. */
+  private emitScoped(method: string, params: Record<string, unknown>, parent?: string): void {
+    if (parent && !this.sessions.has(parent)) return;
+    this.emit({ method, params, ...(parent ? { sessionId: parent } : {}) });
   }
   /** Explicit foreground activation uses normal native tab/window ownership. */
   activate(target: string): object {
@@ -275,19 +304,11 @@ export class NativeProtocol {
     return {};
   }
   /** Browser operations have no fallback and remain inside the authenticated admission gate. */
-  manage(action: string, params: Record<string, unknown>): Promise<object> {
+  manage(action: string, command: NativeCommand): Promise<object> {
     if (!this.backend.manage) throw new ProtocolError('Native browser management is unavailable');
-    return this.backend.manage(action, params, (method, values) => this.emit({ method, params: values }));
-  }
-  /** Native target removal invalidates only this connection's matching sessions and event listeners. */
-  private targetRemoved(targetId: string): void {
-    for (const [sessionId, id] of this.sessions) {
-      if (id !== targetId) continue;
-      this.subscriptions.release(sessionId);
-      this.through.release(sessionId);
-      this.sessions.delete(sessionId);
-      this.emit({ method: 'Target.detachedFromTarget', params: { sessionId, targetId } });
-    }
+    return this.backend.manage(action, command.params, (method, values) =>
+      this.emitScoped(method, values, command.sessionId),
+    );
   }
   /** Domains share a local session namespace but never replace each other's observers. */
   observe(command: NativeCommand, domain: string, enabled: boolean): object {
@@ -299,35 +320,62 @@ export class NativeProtocol {
     const base = { backend: this.backend, target, key, domain, enabled };
     return this.subscriptions.set({ ...base, emit: sink, params: command.params });
   }
-  /** Return only native rendered PNG/JPEG data, with no unsupported clipping silently ignored. */
-  async screenshot(command: NativeCommand): Promise<object> {
-    onlyParams(command, ['format', 'quality']);
-    const format = command.params.format || 'png';
-    if (format !== 'png' && format !== 'jpeg') throw new ProtocolError('Unsupported screenshot format');
-    const data = (await this.backend.execute(this.targetId(command), 'screenshot', { ...command.params, format })) as {
-      /** Native capture data URL. */
-      screenshot: string;
-    };
-    return { data: data.screenshot.split(',')[1] };
-  }
   /** Browser management cannot escape a pinned page or attached session. */
   private checkScope(command: NativeCommand): void {
-    if (command.sessionId) this.targetId(command);
+    const page = !this.browserSession(command);
+    if (page) this.targetId(command);
     const browser = isBrowserMethod(command.method);
-    if (command.sessionId && browser) throw new ProtocolError('Browser methods require the browser endpoint');
+    if (page && browser) throw new ProtocolError('Browser methods require the browser endpoint');
     if (this.direct && browser) throw new ProtocolError('Target management requires the browser endpoint');
+  }
+  /** Scheduling alone may inspect the same approved route; dispatch always revalidates it. */
+  passesThrough(command: NativeCommand): boolean {
+    return this.through.handles(command, this.pageSession(command));
   }
   /** Reject unknown commands rather than forwarding them to an engine debugging transport. */
   async dispatch(command: NativeCommand): Promise<unknown> {
-    if (this.through.handles(command, this.pageSession(command)))
-      return this.through.send(command, () => this.targetId(command));
+    this.lifecycle.requireOpen();
+    if (this.passesThrough(command)) return this.through.send(command, () => this.targetId(command));
     validateParams(command);
     this.checkScope(command);
-    if (Object.hasOwn(METHODS, command.method)) return METHODS[command.method](this, command);
-    if (Object.hasOwn(PAGE_ACTIONS, command.method))
-      return this.backend.execute(this.targetId(command), PAGE_ACTIONS[command.method], command.params);
-    throw new ProtocolError(`Unsupported native capability: ${command.method}`, NATIVE_DOOR.unsupported);
+    return dispatchNative(this, command);
   }
+}
+/** Target lookup never falls back to another active tab when authority has disappeared. */
+function findTarget(backend: NativeBackend, id: unknown): NativeTarget {
+  const target = backend.targets().find((candidate) => candidate.targetId === id);
+  if (!target) throw new ProtocolError('Target is closed, unavailable, or outside this endpoint');
+  return target;
+}
+/** Child observers share the owning connection's capacity and fatal transport cleanup. */
+function createPassthrough(backend: NativeBackend, sessions: NativeSessions, emit: EventSink, fatal: FatalSink) {
+  return new PassthroughSessions(backend, emit, {
+    capacity: (children) => sessions.requireCapacity(children),
+    fatal,
+  });
+}
+/** Dispatch only registered native methods after scope and parameter validation. */
+function dispatchNative(protocol: NativeProtocol, command: NativeCommand): unknown {
+  if (Object.hasOwn(METHODS, command.method)) return METHODS[command.method](protocol, command);
+  if (Object.hasOwn(PAGE_ACTIONS, command.method))
+    return protocol.backend.execute(protocol.targetId(command), PAGE_ACTIONS[command.method], command.params);
+  throw new ProtocolError(`Unsupported native capability: ${command.method}`, NATIVE_DOOR.unsupported);
+}
+/** Return only native rendered PNG/JPEG data, with no unsupported clipping silently ignored. */
+async function screenshot(protocol: NativeProtocol, command: NativeCommand): Promise<object> {
+  onlyParams(command, ['format', 'quality']);
+  const format = command.params.format || 'png';
+  if (format !== 'png' && format !== 'jpeg') throw new ProtocolError('Unsupported screenshot format');
+  const data = (await protocol.backend.execute(protocol.targetId(command), 'screenshot', {
+    ...command.params,
+    format,
+  })) as ScreenshotData;
+  return { data: data.screenshot.split(',')[1] };
+}
+/** Native rendered capture result, never a refetched image. */
+interface ScreenshotData {
+  /** Native capture data URL. */
+  screenshot: string;
 }
 /** What Target.getTargetInfo answers for the browser endpoint itself. */
 const BROWSER_TARGET = { targetId: 'browser', type: 'browser', title: '', url: '', attached: true };

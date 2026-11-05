@@ -8,6 +8,8 @@ export const NATIVE_DOOR = {
   maxQueued: 32,
   /** Bound per-socket attachment and event subscription state. */
   maxSessions: 128,
+  /** Page CDP promises may wait on other commands; bound them separately from native ordering. */
+  maxConcurrent: 32,
   /** WebSocket internal failure; no silent partial auto-attachment after a resource failure. */
   failedSocket: 1011,
   /** Maximum request size; screenshots are responses, not requests. */
