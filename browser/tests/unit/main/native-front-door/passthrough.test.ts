@@ -41,11 +41,12 @@ test('a child session the tab attaches routes its commands and events to that ch
   const f = fixture();
   await f.send('Target.setAutoAttach', 's');
   f.fire('Target.attachedToTarget', { sessionId: 'child', targetInfo: {} }, '');
-  assert.equal(f.sessions.handles({ id: 1, method: 'Runtime.enable', params: {}, sessionId: 'child' }, false), true);
-  await f.send('Runtime.enable', 'child');
+  const child = f.emitted.at(-1).params.sessionId;
+  assert.equal(f.sessions.handles({ id: 1, method: 'Runtime.enable', params: {}, sessionId: child }, false), true);
+  await f.send('Runtime.enable', child);
   assert.deepEqual(f.sent.at(-1), ['tab', 'Runtime.enable', {}, 'child']);
   f.fire('Runtime.executionContextCreated', { context: {} }, 'child');
-  assert.equal(f.emitted.at(-1).sessionId, 'child');
+  assert.equal(f.emitted.at(-1).sessionId, child);
 });
 test('events from a child session this connection never saw are dropped', async () => {
   const f = fixture();
@@ -57,7 +58,8 @@ test('releasing a page session stops its events and forgets its children', async
   const f = fixture();
   await f.send('Page.enable', 's');
   f.fire('Target.attachedToTarget', { sessionId: 'child' }, '');
+  const child = f.emitted.at(-1).params.sessionId;
   f.sessions.release('s');
   assert.equal(f.stops(), 1);
-  assert.equal(f.sessions.handles({ id: 1, method: 'Runtime.enable', params: {}, sessionId: 'child' }, false), false);
+  assert.equal(f.sessions.handles({ id: 1, method: 'Runtime.enable', params: {}, sessionId: child }, false), false);
 });

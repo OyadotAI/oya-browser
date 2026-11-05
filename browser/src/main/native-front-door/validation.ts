@@ -46,6 +46,7 @@ const PARAMS: Record<string, readonly string[]> = {
   'Target.disposeBrowserContext': ['browserContextId'],
   'Target.closeTarget': ['targetId'],
   'Target.attachToTarget': ['targetId', 'flatten'],
+  'Target.attachToBrowserTarget': [],
   'Target.detachFromTarget': ['sessionId'],
   'Page.navigate': ['url'],
   'Page.captureScreenshot': ['format', 'quality'],

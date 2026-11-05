@@ -14,6 +14,7 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ### Fixed
 
+- Restored standard CDP browser-session attachment so clients can create independent page CDP sessions, with scoped events and cleanup that preserve other attachments. Iframe and nested worker sessions now keep independent identities for each page attachment. Approved page commands run concurrently within a fixed limit, so an unfinished response-body read cannot stall the crawl. Response fulfillment now unblocks intercepted navigations instead of waiting behind them.
 - Prepared Windows releases for protected Azure managed signing with GitHub OIDC, exact publisher verification and a non-publishing signing probe.
 - Corrected meeting microphone, camera and screen-sharing permission routing across browser windows. Added device-specific macOS recovery and distinguished permission denial from unavailable desktop sources.
 - Opened macOS development sessions through Launch Services so Oya receives its own microphone and camera consent, with private startup logs and explicit application lifetime.

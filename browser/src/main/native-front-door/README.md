@@ -33,7 +33,10 @@ The passthrough keeps the door's rules:
   Profiler, Tracing and SystemInfo method; iframe and worker sessions get the
   same allowlist as their page;
 - the tab's CDP target id is translated to the door's target id both ways, so
-  the main frame id equals the target id as clients expect.
+  the main frame id equals the target id as clients expect;
+- iframe and worker session IDs are opaque and independent for each page attachment, including
+  nested workers. Their commands still reach the exact tab and raw child that attachment observed.
+  Detaching a frame revokes its descendants, and page cleanup preserves sibling attachments.
 
 Browser-endpoint compatibility for Playwright: `Target.setAutoAttach` accepts
 `waitForDebuggerOnStart:true` (nothing is ever paused) and no filter (pages
@@ -80,6 +83,11 @@ patched-engine integration, not merely adapter-level checks.
   tables. The response explicitly declares partial compatibility and execution-time
   availability checks; it is not a promise of full CDP or old-engine support.
 - `Browser.getVersion`.
+- `Target.attachToBrowserTarget` creates a connection-owned browser session. Standard browser
+  commands, discovery and automatic attachment keep that session's scope; page attachments
+  created through it receive their own session IDs. Detaching a browser session revokes its
+  descendants and emits detach events to their parents while preserving sibling attachments.
+  Browser and page sessions share the existing connection limit and backend authority.
 - `Target.getTargets`, `getTargetInfo`, `createTarget`, `closeTarget`,
   `attachToTarget`, `detachFromTarget`. Private contexts must be explicitly owned.
 - `Target.setDiscoverTargets`: native page creation, metadata changes and destruction;
@@ -273,8 +281,12 @@ the real main world through a separate native V8 registry. Explicit
 DOM focus/scroll operations do not invoke page-world helpers. DOM reads
 are bounded by node, text and depth limits. Console events recheck human control
 and exact live-tab protection before delivery. Slow event consumers are closed.
-Commands are serialized under the existing human/agent admission gate; disconnect
-cancels queued work but does not prematurely release a running native command.
+Native commands are serialized under the existing human/agent admission gate. Approved page
+passthrough commands use a separate bounded concurrent lane: response bodies and awaiting promises
+cannot hold up the commands that resolve them. Each local command retains its own admission until
+its underlying operation settles. Disconnect cancels queued work and suppresses late replies; it
+does not pretend that a still-running command was cancelled. Fetch resolutions remain available
+when the page lane is full.
 
 Run `npm run test:unit`, then set `OYA_NATIVE_ENGINE` to the patched Oya executable
 and run `npm run test:native-front-door`. The real-engine test uses disposable
