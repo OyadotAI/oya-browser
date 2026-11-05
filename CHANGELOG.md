@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.211](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.211) · 2026-11-05
+
 ### Changed
 
 - Added equal Technical setup choices for Oya sign-in, local agents and model API keys. Local-agent status now matches this browser, launch actions keep a practical GitHub test prompt ready, and Gemini, Claude API and OpenRouter keys receive a bounded provider test.
