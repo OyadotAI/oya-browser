@@ -2,20 +2,101 @@
   <img src="assets/oya-banner.svg" alt="Oya Browser" width="100%">
 </p>
 
-<h3 align="center">Your agent does it once. After that, it's a script.</h3>
-
 <p align="center">
-  Oya is a real browser for AI agents. Save any run that worked, and it replays with
-  no model, no tokens and no luck. When a page changes, the agent fixes that one step.
-</p>
-
-<p align="center">
-  <a href="https://github.com/OyadotAI/oya-browser/releases/latest"><img src="https://img.shields.io/github/v/release/OyadotAI/oya-browser?label=release&color=39ed35" alt="Latest release"></a>
-  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://img.shields.io/npm/v/@oya-ai/browser?color=39ed35&label=@oya-ai/browser&logo=npm" alt="npm: @oya-ai/browser"></a>
-  <a href="https://codecov.io/gh/OyadotAI/oya-browser"><img src="https://img.shields.io/codecov/c/github/OyadotAI/oya-browser?label=coverage&logo=codecov" alt="Coverage"></a>
+  <a href="https://github.com/OyadotAI/oya-browser/releases/latest"><img src="https://badgen.net/github/tag/OyadotAI/oya-browser?label=release&color=39ed35" alt="Latest release"></a>
+  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://badgen.net/npm/v/@oya-ai/browser?label=@oya-ai/browser&color=39ed35" alt="npm: @oya-ai/browser"></a>
+  <a href="https://codecov.io/gh/OyadotAI/oya-browser"><img src="https://badgen.net/codecov/c/github/OyadotAI/oya-browser?label=coverage" alt="Coverage"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
   <a href="https://discord.gg/wqSeXJPygn"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
 </p>
+
+# Oya Browser
+
+Oya Browser is a browser for AI agents that you can run on your own infrastructure or use as a
+managed service. An agent completes a task once in natural language; Oya records the steps as a
+playbook that replays deterministically, without calling a model, and repairs individual steps
+when a page changes. People can watch any session and take control at any time.
+
+This repository contains the community edition: the browser, the control plane, the web console,
+the TypeScript SDK and the CLI.
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quickstart](#quickstart)
+- [Usage](#usage)
+- [Samples](#samples)
+- [Deployment](#deployment)
+- [Security and compliance](#security-and-compliance)
+- [Documentation](#documentation)
+- [Support](#support)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Features
+
+- **Record and replay.** A successful `ask()` is saved with `toPlaybook()` and replayed with
+  `play()` using new inputs and no model calls. Each playbook is also exported as a Playwright
+  module. In a [ten-site benchmark](docs/replay-benchmark.md), nine sites replayed every recorded
+  step with healing disabled.
+- **Step repair.** When a recorded step no longer matches the page, the agent completes that step
+  and the playbook is updated. Repair can be disabled per call.
+- **Stable browser identity.** Personas bind a fingerprint, cookie store and proxy that persist
+  across sessions ([stealth results](docs/stealth.md): 0% headless on CreepJS, 31/31 on
+  Sannysoft).
+- **Authentication.** Stored passwords and TOTP seeds are sealed and never exposed to the model.
+  CAPTCHA detection and solving, and reuse of logins from your desktop browser, are built in
+  ([logins](docs/logins.md)).
+- **Human in the loop.** Any session can be watched live and taken over, then returned to the
+  agent.
+- **Provider choice.** The same API runs browsers on your own Docker hosts, Oya Cloud,
+  Browserbase, Steel, Anchor, Browser Use or any Chrome endpoint ([comparison](docs/why-oya.md)).
+- **Standard protocols.** Every browser exposes CDP for Playwright, Puppeteer and similar
+  clients, and an MCP endpoint for AI assistants.
+
+<p align="center">
+  <img src="assets/prior-auth.gif" alt="An agent completes a prior authorization in a mock payer portal" width="100%">
+</p>
+<p align="center"><sub>An agent session in the Oya desktop app, accelerated. The portal and patient data are fictional.</sub></p>
+
+## Requirements
+
+| Component | Version |
+| :--- | :--- |
+| Node.js | 20 or later |
+| Docker | Docker Desktop or Docker Engine with Compose 2.24 or later (local installation only) |
+| Model API key | Anthropic, OpenAI or Gemini, for natural-language tasks |
+
+## Quickstart
+
+This quickstart installs the control plane and one browser on your machine with Docker, then runs
+a sample that records a task and replays it.
+
+### 1. Install the control plane
+
+Export a model API key, then run the installer:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, or GEMINI_API_KEY
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes
+```
+
+The installer clones this repository to `~/oya-browser`, starts the services and prints the
+connection settings. Export them:
+
+```bash
+export OYA_BASE_URL=http://localhost:3100
+export OYA_API_KEY=oya_...
+```
+
+### 2. Install the SDK
+
+```bash
+npm install @oya-ai/browser
+```
+
+### 3. Run the sample
+
+Save the following as `agent.mjs` and run `node agent.mjs`:
 
 ```js
 import { Oya } from '@oya-ai/browser';
@@ -36,83 +117,31 @@ console.log(`replay: ${(Date.now() - t) / 1000}s, no model`);
 await browser.stop();
 ```
 
-That is the whole idea. [Run it in a minute](#quickstart).
+The agent completes the order once and the result is saved as the playbook `pizza`. The replay
+submits the same order for a different name without calling the model. Output from one run with
+Gemini 3.8 Flash:
 
-## Why
-
-Browser agents work in the demo and fall over in production:
-
-| The problem | What Oya does |
-|:---|:---|
-| **Every run re-prompts the model.** Slow, costs tokens, and does something slightly different each time. | **Record once, replay forever.** A successful `ask()` becomes a playbook: deterministic steps, plus the same flow as a Playwright file you can read. [9 of 10 real sites replayed every step with no model and healing off.](docs/replay-benchmark.md) |
-| **Real sites block bots.** Headless Chrome gets flagged on sight. | **A real browser with a stable identity.** Personas pin fingerprint, cookies and proxy across runs. [0% headless on CreepJS, 31/31 on Sannysoft.](docs/stealth.md) |
-| **Logins, MFA and CAPTCHAs stop the run.** | **Built in.** Sealed passwords and TOTP the agent never sees, CAPTCHA solving, and your own signed-in desktop browser. [Logins](docs/logins.md) |
-| **When the agent gets stuck, nobody can step in.** | **A person one click away.** Watch any run live, take over, hand it back. |
-| **You are locked to one browser vendor.** | **One API, any backend.** Your Docker, Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or any Chrome. [Why route through Oya?](docs/why-oya.md) |
-
-<p align="center">
-  <img src="assets/prior-auth.gif" alt="The Oya agent completes a prior authorization in a mock payer portal" width="100%">
-</p>
-<p align="center"><sub>An agent run in the Oya desktop app, sped up. The portal and patient data are fictional.</sub></p>
-
-## Quickstart
-
-Runs everything on your machine: the control plane and a browser, in Docker. You need
-[Docker](https://docs.docker.com/get-docker/) running and Node.js 20 or newer.
-
-**1. Start Oya.** Export a model key first so the agent can think. Any one of these works:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, or GEMINI_API_KEY
-curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh -s -- --yes
+```text
+agent:  152.712s
+replay: 14.246s, no model
 ```
 
-The install takes about a minute, then prints two lines. Export them:
+Agent time depends on the model; replay time does not. To watch the session, open
+http://localhost:3100 and sign in with the same API key.
 
-```bash
-export OYA_BASE_URL=http://localhost:3100
-export OYA_API_KEY=oya_...
-```
+### Using Oya Cloud instead
 
-No key yet? A [Gemini key](https://aistudio.google.com/apikey) is free. Expect a slow agent: on
-Gemini 3.8 Flash the agent's run in the example at the top took 153s (one measured run). The
-replay took 14s either way, because it calls no model.
+To skip the local installation, create an API key at [oyabrowser.com](https://oyabrowser.com),
+export only `OYA_API_KEY`, and run the same sample. `start()` uses the
+[Oya desktop app](https://oyabrowser.com/#download) when it is open and signed in, and otherwise
+starts a browser in Oya Cloud.
 
-**2. Install the SDK:**
+## Usage
 
-```bash
-npm install @oya-ai/browser
-```
+### Choosing a model
 
-**3. Run your first agent.** Save as `agent.mjs` and run `node agent.mjs`:
-
-```js
-import { Oya } from '@oya-ai/browser';
-
-const browser = await new Oya().browser.start();
-await browser.goto('https://news.ycombinator.com');
-console.log(await browser.ask('What are the top 3 stories and their points?'));
-await browser.stop();
-```
-
-`start()` hands you the browser running in Docker. Open http://localhost:3100 with the same
-key to watch it work.
-
-**Then try the examples.** The installer cloned the repo to `~/oya-browser`:
-
-```bash
-cd ~/oya-browser/examples && npm install
-cp .env.example .env   # paste the same OYA_BASE_URL and OYA_API_KEY
-npx tsx --env-file=.env playwright/01-connect.ts
-```
-
-**Rather not run anything?** Get a key at [oyabrowser.com](https://oyabrowser.com), skip step 1,
-and export only `OYA_API_KEY`: the same script runs on an Oya Cloud browser, or on the
-[Oya desktop app](https://oyabrowser.com/#download) when it is open.
-
-## Pick your model
-
-Pass it in code. It applies to this client only and is never saved to your key:
+By default, `ask()` uses the model configured for your API key. To choose one in code, pass
+`model` to the client. The setting applies to that client only and is not saved:
 
 ```js
 const oya = new Oya({
@@ -120,27 +149,13 @@ const oya = new Oya({
 });
 ```
 
-`provider` is one of `openai`, `anthropic`, `gemini`, `vertex` or `openrouter`. With your own
-`apiKey`, calls go straight to that provider and are billed to you.
+Supported providers are `openai`, `anthropic`, `gemini`, `vertex` and `openrouter`. When
+`apiKey` is set, requests go directly to that provider and are billed to your account.
 
-## Use it from your coding agent
+### Connecting Playwright and other CDP clients
 
-Install the [desktop app](https://oyabrowser.com/#download), sign in, and connect Claude Code,
-Codex, Cursor or VS Code from the app. Your agent works in your own signed-in browser, in tabs of
-its own, and you can take over at any moment.
-
-Or connect any MCP client to Oya Cloud. For Claude Code:
-
-```bash
-claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
-  --header "Authorization: Bearer $OYA_API_KEY"
-```
-
-Agents setting themselves up should read [oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
-
-## Bring your own Playwright
-
-Every Oya browser speaks CDP, so Playwright, Puppeteer, Stagehand and browser-use connect as they are:
+Every Oya browser exposes a CDP endpoint, so Playwright, Puppeteer, Stagehand and browser-use
+connect without changes:
 
 ```js
 import { chromium } from 'playwright-core';
@@ -156,57 +171,101 @@ await cdp.close();
 await browser.stop();
 ```
 
-## Examples
+### Connecting AI assistants
 
-| Example | What it shows | Runs on |
+The [desktop app](https://oyabrowser.com/#download) connects Claude Code, Codex, Cursor and
+VS Code to your own signed-in browser. Agent activity runs in separate tabs, and you can take
+control at any time.
+
+Any MCP client can connect to Oya Cloud. For Claude Code:
+
+```bash
+claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
+  --header "Authorization: Bearer $OYA_API_KEY"
+```
+
+Setup instructions written for agents are published at
+[oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
+
+## Samples
+
+The [`examples`](examples/README.md) directory contains runnable TypeScript samples. After the
+quickstart, the installer's copy is ready to use:
+
+```bash
+cd ~/oya-browser/examples && npm install
+cp .env.example .env   # set OYA_BASE_URL and OYA_API_KEY
+npx tsx --env-file=.env playwright/01-connect.ts
+```
+
+| Sample | Description | Runs on |
 | :--- | :--- | :--- |
-| [`sdk/01-quickstart.ts`](examples/sdk/01-quickstart.ts) | Start a browser and drive it in plain English | Local install or Oya Cloud |
-| [`sdk/05-playbooks.ts`](examples/sdk/05-playbooks.ts) | Record, replay, background runs and auto-heal | Local install or Oya Cloud |
-| [`playwright/01-connect.ts`](examples/playwright/01-connect.ts) | Standard Playwright through Oya's CDP endpoint | Local install or Oya Cloud |
-| [`sdk/03-mfa.ts`](examples/sdk/03-mfa.ts) | Password plus TOTP sign-in the agent never sees | The desktop app (it pairs it) |
-| [`sdk/02-captcha.ts`](examples/sdk/02-captcha.ts) | CAPTCHA detection and solving | Oya Cloud, or a solver key in Settings |
-| [`sdk/04-personas.ts`](examples/sdk/04-personas.ts) | Stable device identities you reuse across runs | Oya Cloud |
-| [`playwright/reddit/`](examples/playwright/reddit/) | 10 parallel browsers through a residential proxy | Oya Cloud, with a proxy on the persona |
-| [`multi-vendor/`](examples/multi-vendor/01-multi-vendor.ts) | One script on Oya Cloud, Browserbase, Steel, Anchor and Browser Use | Oya Cloud plus each vendor's key |
+| [`sdk/01-quickstart.ts`](examples/sdk/01-quickstart.ts) | Start a browser and complete a task in natural language | Local installation or Oya Cloud |
+| [`sdk/05-playbooks.ts`](examples/sdk/05-playbooks.ts) | Record, replay, background runs and step repair | Local installation or Oya Cloud |
+| [`playwright/01-connect.ts`](examples/playwright/01-connect.ts) | Playwright through the CDP endpoint | Local installation or Oya Cloud |
+| [`sdk/03-mfa.ts`](examples/sdk/03-mfa.ts) | Password and TOTP sign-in with sealed credentials | Desktop app |
+| [`sdk/02-captcha.ts`](examples/sdk/02-captcha.ts) | CAPTCHA detection and solving | Oya Cloud, or a configured solver |
+| [`sdk/04-personas.ts`](examples/sdk/04-personas.ts) | Persistent browser identities | Oya Cloud |
+| [`playwright/reddit/`](examples/playwright/reddit/) | Ten parallel browsers through a residential proxy | Oya Cloud, with a proxy assigned to the persona |
+| [`multi-vendor/`](examples/multi-vendor/01-multi-vendor.ts) | One script across Oya Cloud, Browserbase, Steel, Anchor and Browser Use | Oya Cloud and each provider's API key |
 
-The local install runs one Docker browser and no Oya Cloud. For the Oya Cloud rows, use a key from
-[oyabrowser.com](https://oyabrowser.com) and leave `OYA_BASE_URL` unset.
+The local installation runs one Docker browser. For samples that require Oya Cloud, use an API
+key from [oyabrowser.com](https://oyabrowser.com) and leave `OYA_BASE_URL` unset.
 
-All of them: [examples/](examples/README.md).
+## Deployment
 
-## In production
+The quickstart installs a single-node deployment with SQLite and one browser. For production,
+including Postgres, multiple browsers, Amazon ECS, Kubernetes and GKE, see the
+[self-hosting guide](docs/self-hosting.md) and the [deployment templates](deployments/).
 
-The quickstart's install runs SQLite and one browser. For more browsers, Postgres, and
-deployments on Docker, Amazon ECS, Kubernetes or GKE, see the
-[self-hosting guide](docs/self-hosting.md) and [deployment templates](deployments/).
+## Security and compliance
 
-## Governance
+Self-hosted deployments include host-level egress rules and a tamper-evident audit trail. See the
+[control evidence](compliance/EVIDENCE.md) and the [trust center](https://oyabrowser.com/trust).
+To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
-Self-hosted deployments include host egress rules and a tamper-evident audit trail.
-[Control evidence](compliance/EVIDENCE.md) · [Trust center](https://oyabrowser.com/trust).
-This repository is the community edition. The enterprise edition, including the HIPAA-ready
-offering, is separate: [sales@getoya.ai](mailto:sales@getoya.ai).
+An enterprise edition, including a HIPAA-ready offering, is maintained separately. Contact
+[sales@getoya.ai](mailto:sales@getoya.ai).
+
+## Documentation
+
+| Topic | Link |
+| :--- | :--- |
+| SDK reference | [packages/sdk](packages/sdk/README.md) |
+| CLI reference | [packages/cli](packages/cli/README.md) |
+| Self-hosting | [docs/self-hosting.md](docs/self-hosting.md) |
+| Logins and sessions | [docs/logins.md](docs/logins.md) |
+| Replay benchmark | [docs/replay-benchmark.md](docs/replay-benchmark.md) |
+| Architecture | [ARCHITECTURE.md](ARCHITECTURE.md) |
+
+## Support
+
+- Questions and discussion: [Discord](https://discord.gg/wqSeXJPygn)
+- Bug reports and feature requests: [GitHub Issues](https://github.com/OyadotAI/oya-browser/issues)
+- Commercial licensing and enterprise: [sales@getoya.ai](mailto:sales@getoya.ai)
 
 ## Contributing
+
+Contributions are welcome. To set up a development environment:
 
 ```bash
 git clone https://github.com/OyadotAI/oya-browser.git && cd oya-browser
 npm run setup
 ```
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) for the map and [AGENTS.md](AGENTS.md) for the
-conventions and each part's commands. Issues and pull requests are welcome; so is
-[Discord](https://discord.gg/wqSeXJPygn).
+Read [ARCHITECTURE.md](ARCHITECTURE.md) for an overview of the codebase and [AGENTS.md](AGENTS.md)
+for conventions and the checks each part requires.
 
-| Path | What it is |
+| Path | Contents |
 | :--- | :--- |
 | [`packages/sdk`](packages/sdk) | `@oya-ai/browser`, the TypeScript SDK (MIT) |
-| [`packages/cli`](packages/cli) | `@oya-ai/cli`, setup and terminal commands (MIT) |
+| [`packages/cli`](packages/cli) | `@oya-ai/cli`, installation and command-line tools (MIT) |
 | [`browser`](browser) | The desktop browser and the cloud browser image |
 | [`server`](server) | API, MCP, browser connections and control plane |
 | [`ui`](ui) | Web console and public site |
 
 ## License
 
-The SDK and CLI are MIT. Everything else is under the Sustainable Use License: see
-[LICENSE.md](LICENSE.md) for self-hosting terms and commercial licensing.
+The SDK and CLI are licensed under MIT. All other components are available under the Sustainable
+Use License. See [LICENSE.md](LICENSE.md) for permitted use, self-hosting terms and commercial
+licensing.
