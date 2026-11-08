@@ -1,6 +1,7 @@
 /**
  * Unit tests for isolated-world runs through the tab preload: the stock fallback
- * after a missing acknowledgement, and a preload-only run that never falls back.
+ * after a missing acknowledgement, a preload-only run that never falls back, and a
+ * run sent to one subframe that only that subframe can answer.
  */
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,7 +50,7 @@ describe('runInWorld', () => {
 
   it('never falls back when asked for the preload only, so a slow load is not mistaken for silence', async () => {
     const contents = tab();
-    const run = runInWorld(contents, 1, '1', true);
+    const run = runInWorld(contents, 1, '1', { preloadOnly: true });
     mock.timers.tick(STOCK_WORLD_ACK_MS * 5);
     assert.equal(contents.stockCalls, 0);
     answer(contents, contents.sent[0].id, 1);
@@ -58,8 +59,37 @@ describe('runInWorld', () => {
 
   it('gives up a preload-only run when its renderer dies', async () => {
     const contents = tab();
-    const run = runInWorld(contents, 1, '1', true);
+    const run = runInWorld(contents, 1, '1', { preloadOnly: true });
     contents.emit('render-process-gone');
     await assert.rejects(run, /disposed/);
+  });
+
+  it('runs in the exact subframe it names, and takes the answer from that frame alone', async () => {
+    const contents = tab();
+    const sub = {
+      sent: [],
+      /** Receives a run, as the subframe's preload would. */
+      send: (_channel, run) => sub.sent.push(run),
+    };
+    const run = runInWorld(contents, 1, '1', { frame: sub });
+    assert.deepEqual([contents.sent.length, sub.sent.length], [0, 1]);
+    answer(contents, sub.sent[0].id, 'from the page'); // the main frame cannot answer for it
+    ipc.handlers.get(STOCK_PERSONA.RESULT)(
+      { sender: contents, senderFrame: sub },
+      { id: sub.sent[0].id, value: 'from the frame' },
+    );
+    assert.equal(await run, 'from the frame');
+  });
+
+  it('fails a silent subframe instead of falling back to the stock API, which only reaches the main frame', async () => {
+    const contents = tab();
+    const sub = {
+      /** A preload that never answers. */
+      send: () => {},
+    };
+    const run = runInWorld(contents, 1, '1', { frame: sub });
+    mock.timers.tick(STOCK_WORLD_ACK_MS);
+    await assert.rejects(run, /did not answer/);
+    assert.equal(contents.stockCalls, 0);
   });
 });

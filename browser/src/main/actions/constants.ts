@@ -69,3 +69,20 @@ export const SCREENSHOT_JPEG_QUALITY = 70;
 
 /** Recovery guidance when native input would land on another element. */
 export const COVERED_TARGET_ERROR = 'Element is covered. Dismiss the overlay and analyze again.';
+
+/**
+ * Element ids of a cross-origin iframe start at its slot times this. The MCP tools type
+ * an element id as a number, so a subframe's ids stay integers: slot 1's first element is
+ * 100001. A page has far fewer than this many elements, so the ranges never meet.
+ */
+export const FRAME_ID_STRIDE = 100_000;
+
+/** Why a subframe element cannot be acted on: its frame navigated or closed since the read. */
+export const FRAME_GONE_ERROR = 'That element was in a frame that has changed since the page was read. Analyze again.';
+
+/** Why a subframe point is refused: it lies outside the frame's own box, where the frame has no say. */
+export const FRAME_OUTSIDE_ERROR = 'That element is outside its frame. Scroll it into view and analyze again.';
+
+/** Why a command is refused on a frame element: only some commands can run inside a frame. */
+export const FRAME_UNSUPPORTED_ERROR =
+  'That action cannot be used on an element inside another site’s frame yet. Use click, type, hover or select.';

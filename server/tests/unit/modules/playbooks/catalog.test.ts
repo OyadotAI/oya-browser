@@ -67,7 +67,7 @@ describe('playbook catalog', () => {
       browser.disconnect();
     });
 
-    it('keeps tab steps with their tab url, so a replay never runs a step in the wrong tab', async () => {
+    it('starts a run that switched tabs before its work in the tab it worked in', async () => {
       const run = {
         prompt: 'Search for {{query}}',
         steps: [
@@ -81,9 +81,66 @@ describe('playbook catalog', () => {
       const steps = keyConfig.getPlaybook(KEY, 'wikipedia-search').steps;
       assert.deepEqual(
         steps.map((step) => step.action),
-        ['navigate', 'open_tab', 'switch_tab', 'type'],
+        ['navigate', 'type'],
       );
-      assert.equal(steps[2].tabUrl, 'https://www.wikipedia.org/');
+      assert.equal(steps[0].url, 'https://www.wikipedia.org/');
+    });
+
+    it('drops the agent’s run-up before its first real action, starting from that page', async () => {
+      const run = {
+        prompt: 'Order a large pizza for {{name}}',
+        steps: [
+          { action: 'navigate', url: 'https://httpbin.org/forms/post', start: true },
+          { action: 'scroll', direction: 'up', amount: 1000 },
+          { action: 'close_tab', tabUrl: 'https://httpbin.org/forms/post' },
+          { action: 'open_tab', url: 'https://httpbin.org/forms/post' },
+          { action: 'press_key', key: 'Tab' },
+          { action: 'reload' },
+          { action: 'type', text: '{{name}}', el: { type: 'input', name: 'custname' } },
+          { action: 'click', el: { type: 'button', text: 'Submit order' } },
+        ],
+      };
+      await catalog.create(KEY, 'b-runup', 'pizza-clean', run);
+      const steps = keyConfig.getPlaybook(KEY, 'pizza-clean').steps;
+      assert.deepEqual(
+        steps.map((step) => step.action),
+        ['navigate', 'type', 'click'],
+      );
+      assert.equal(steps[0].url, 'https://httpbin.org/forms/post');
+    });
+
+    it('keeps the whole run when the run-up ends on a page it cannot name, such as after closing a tab', async () => {
+      const run = {
+        prompt: 'p',
+        steps: [
+          { action: 'navigate', url: 'https://a.test/', start: true },
+          { action: 'open_tab', url: 'https://b.test/' },
+          { action: 'close_tab' },
+          { action: 'click', el: { text: 'Go' } },
+        ],
+      };
+      await catalog.create(KEY, 'b-close', 'close', run);
+      assert.deepEqual(
+        keyConfig.getPlaybook(KEY, 'close').steps.map((step) => step.action),
+        ['navigate', 'open_tab', 'close_tab', 'click'],
+      );
+    });
+
+    it('keeps a tab switch after the work has begun', async () => {
+      const run = {
+        prompt: 'p',
+        steps: [
+          { action: 'navigate', url: 'https://a.test/', start: true },
+          { action: 'click', el: { text: 'Open portal' } },
+          { action: 'switch_tab', tabUrl: 'https://b.test/' },
+          { action: 'click', el: { text: 'Continue' } },
+        ],
+      };
+      await catalog.create(KEY, 'b-switch', 'switch', run);
+      assert.deepEqual(
+        keyConfig.getPlaybook(KEY, 'switch').steps.map((step) => step.action),
+        ['navigate', 'click', 'switch_tab', 'click'],
+      );
     });
 
     it('keeps typing into a focused field and key chords, with their variables', async () => {

@@ -1,4 +1,4 @@
-/** Native isolated execution targets an exact frame, including cross-process frames on the patched engine. */
+/** Native isolated execution targets an exact frame, cross-process frames included, on stock Electron and the patched engine. */
 import type { WebContents, WebFrameMain } from 'electron';
 import { ANALYZER_WORLD_ID } from './constants.ts';
 import { runInWorld } from './stock-world.ts';
@@ -23,10 +23,13 @@ export async function evaluateFrame(frame: NativeAgentFrame, code: string): Prom
   if (typeof frame._executeJavaScriptInOyaWorld !== 'function') return evaluateStock(frame, code);
   return frame._executeJavaScriptInOyaWorld(code, false);
 }
-/** Same agent world through stock Electron; subframes need the patched engine. */
+/**
+ * Same agent world through stock Electron. A subframe, cross-origin ones included, is
+ * reached through the tab preload every frame loads (nodeIntegrationInSubFrames), which
+ * runs the code in the isolated world in that frame's own process: the page never sees it.
+ */
 function evaluateStock(frame: NativeAgentFrame, code: string): Promise<unknown> {
   const page = pageOf(frame);
-  if (!page || (page.mainFrame as unknown) !== frame)
-    throw new Error('This Oya engine does not support native isolated frame execution');
-  return runInWorld(page as WebContents, ANALYZER_WORLD_ID, code);
+  if (!page) throw new Error('This Oya engine does not support native isolated frame execution');
+  return runInWorld(page as WebContents, ANALYZER_WORLD_ID, code, { frame: frame as WebFrameMain });
 }

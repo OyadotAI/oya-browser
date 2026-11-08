@@ -87,10 +87,59 @@ function replayableSteps(run) {
   if (!run) return [];
   if (run.schemaVersion === WORKFLOW_SCHEMA) return structuredClone(run.steps || []);
   const steps = Array.isArray(run.steps) ? run.steps : [];
-  const kept = steps.filter((s) => replayableAction(s?.action));
+  const kept = withoutRunUp(steps.filter((s) => replayableAction(s?.action)));
   // Refused, not cut: a playbook missing its tail would replay as if it were whole.
   if (kept.length > MAX_STEPS) throw new HttpError(Status.BAD_REQUEST, `A playbook is limited to ${MAX_STEPS} steps`);
   return structuredClone(kept);
+}
+
+/** Steps that change something on the page; the rest only move around it. */
+const ACTS = new Set(['type', 'keyboard_type', 'select_option', 'upload_file', 'click', 'double_click', 'edit_text']);
+/** Steps that change which page the run is on, and the field that says which page it is now. */
+const FRESH: Record<string, string> = {
+  navigate: 'url',
+  reload: '',
+  open_tab: 'url',
+  switch_tab: 'tabUrl',
+  // Closing a tab leaves the run on a page the recording does not name.
+  close_tab: 'none',
+};
+
+/**
+ * The run from its last change of page (a navigation, reload, new tab or tab switch)
+ * before its first real action, opened with a navigation to the page it was then on. An agent often looks around first,
+ * scrolling, opening and closing tabs, pressing Tab, reloading, and a playbook that kept
+ * that run-up replayed every bit of it and read as nonsense in its Playwright file.
+ * Nothing after the first real action is touched: a tab switch mid-task still replays.
+ */
+function withoutRunUp(steps) {
+  const { start, url } = lastFreshStart(
+    steps,
+    steps.findIndex((s) => ACTS.has(s.action)),
+  );
+  if (start < 1 || !url) return steps;
+  return [{ action: 'navigate', url, start: true }, ...steps.slice(start + 1)];
+}
+
+/** Where a run last started afresh. */
+interface FreshStart {
+  /** The step's index, or -1 for none. */
+  start: number;
+  /** The page it was on. */
+  url?: string;
+}
+
+/** The last change of page before step `first`, and the page it left the run on (a reload stays on the same one). */
+function lastFreshStart(steps, first: number): FreshStart {
+  let start = -1;
+  let url;
+  for (let i = 0; i < first; i++) {
+    if (!Object.hasOwn(FRESH, steps[i].action)) continue;
+    start = i;
+    // A reload stays put; a step that does not say where it left the run makes the page unknown.
+    url = FRESH[steps[i].action] === '' ? url : steps[i][FRESH[steps[i].action]];
+  }
+  return { start, url };
 }
 
 /** The playbook a run becomes. */
