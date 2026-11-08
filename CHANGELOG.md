@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.212](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.212) · 2026-11-08
+
 ### Changed
 
 - Rewrote the README for developers: what Oya fixes, a record-and-replay example on the first screen, and a quickstart that installs the control plane locally and runs the examples against its Docker browser.
