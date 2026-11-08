@@ -611,6 +611,9 @@ jobs:
     # Each package must list this repo and deploy-prod.yaml as its trusted
     # publisher on npmjs.com (package settings, Trusted Publisher).
     needs: deploy
+    # Explicit, not the default success(): that also fails on any job upstream of the
+    # deploy, so an unsigned Windows build skipped publishing although prod was live.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
@@ -646,6 +649,9 @@ jobs:
     # After the deploy, so the listing never points at tools that are not live
     # yet: the registry entry advertises this server to every MCP client.
     needs: deploy
+    # Explicit, not the default success(): that also fails on any job upstream of the
+    # deploy, so an unsigned Windows build skipped publishing although prod was live.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       # OIDC proves the workflow belongs to this repo, and the repo's owner is
