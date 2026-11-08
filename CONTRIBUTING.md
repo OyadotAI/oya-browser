@@ -132,12 +132,13 @@ which makes whoever can push to `main` or a `v*` tag able to get a binary signed
 Protect `main` with required pull-request review before relying on that. Release tags must
 resolve to a SHA on main.
 
-The Windows job refuses missing signing inputs and tags outside main, requires SHA-256 timestamped signing and checks
-the installer, packaged executable and a disposable installed executable against the expected
-identity before upload. It also probes SQLite support inside the packaged Windows executable.
-Run `browser/build/verify-windows-signatures.ps1` on Windows to repeat
-signature checks. Missing credentials now block Windows releases instead of publishing unsigned
-downloads. The manual **Windows signing preflight** first checks configuration/ref refusal,
+The Windows job signs through Azure Artifact Signing when every setting above is present, and
+then checks the installer, packaged executable and a disposable installed executable against the
+expected identity before upload, and probes SQLite support inside the packaged executable. Until
+signing is configured it builds a self-signed installer instead and marks the run with a warning:
+Windows warns on installing it, and auto-update skips the signature check for those builds. It
+always refuses tags outside main. Run `browser/build/verify-windows-signatures.ps1` on Windows to
+repeat signature checks. The manual **Windows signing preflight** first checks configuration/ref refusal,
 signature guards and owned PE compilation on Windows without credentials on the selected ref; its protected main-only job
 then authenticates, signs a harmless executable and verifies signer and timestamp without
 publishing release assets. Successful Azure login alone does not prove signing readiness.
