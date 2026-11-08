@@ -18,9 +18,9 @@ let ip = 0;
 /** A fresh client address, so one test's attempts do not rate limit another's. */
 const nextIp = () => `10.0.0.${++ip}`;
 
-/** A claim from one address. */
+/** A claim from one address, as the ingress reports it in its own X-Forwarded-For hop. */
 const claim = (code, address = nextIp()) =>
-  callRoute(router, { method: 'POST', url: '/pairing/claim', body: { code }, extra: { ip: address } });
+  callRoute(router, { method: 'POST', url: '/pairing/claim', body: { code }, headers: { 'x-forwarded-for': address } });
 
 describe('pairing routes', () => {
   before(() => (forget = allowKey(KEY)));

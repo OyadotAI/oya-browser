@@ -3,6 +3,7 @@ import { Router, urlencoded, type Request, type Response } from 'express';
 import { Status } from '../../platform/http-status.ts';
 import type { HttpError } from '../../platform/errors.ts';
 import { consume } from '../../platform/limits.ts';
+import { clientAddress } from '../auth/service.ts';
 import { invalidSetup } from './model.ts';
 import { unavailable, type MarketplaceConfig } from './config.ts';
 import { clearSetupCookies, privateSetupResponse, writeSetupCookies } from './cookies.ts';
@@ -31,7 +32,9 @@ function tokenOf(body: unknown): string {
 function startCallback(req: Request, res: Response, next: () => void) {
   privateSetupResponse(res);
   clearSetupCookies(res);
-  const limit = consume('connect', req.ip);
+  // The caller's own address, not req.ip: behind the ingress that is the proxy, and one shared
+  // bucket let anyone posting junk here turn every real buyer away.
+  const limit = consume('connect', `aws:${clientAddress(req)}`);
   if (!limit.allowed) {
     res.redirect(Status.SEE_OTHER, `${FULFILLMENT_PATH}?setup=unavailable`);
     return;

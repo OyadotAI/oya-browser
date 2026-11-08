@@ -555,3 +555,14 @@ describe('translation consent and document ownership', () => {
     }
   });
 });
+
+describe('agent reads', () => {
+  it('an agent read on a tab with nothing translated publishes nothing', async () => {
+    const t = setup();
+    await t.translator.detect(t.tab);
+    t.claimed.add(1);
+    const before = t.changes();
+    for (let i = 0; i < 10; i++) await t.translator.released(t.tab.view);
+    assert.equal(t.changes() - before, 0);
+  });
+});

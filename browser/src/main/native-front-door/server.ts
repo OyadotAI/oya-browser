@@ -82,8 +82,14 @@ class CommandQueue {
     } catch (error) {
       return failure(socket, error);
     }
-    if (resolveHeldRequest(socket, protocol, msg)) return;
+    // Resolving a held request cannot wait behind the navigation it unblocks, so it skips the
+    // queues, but not admission: in Human Mode a client must not answer the person's requests.
+    if (resolvesRequest(msg.method)) return this.resolveHeld(socket, protocol, msg);
     this.schedule(socket, protocol, msg);
+  }
+  /** A held request answered at once, under the same control admission as every other command. */
+  private resolveHeld(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
+    void this.run(socket, protocol, msg).catch((error) => failure(socket, error, msg));
   }
   /** Bound the shared queue before accepting another operation. */
   private schedule(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
@@ -211,11 +217,4 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error.slice(0, NATIVE_DOOR.maxPayload);
   return 'Native command failed';
-}
-
-/** Resolving an existing native pause cannot wait behind the navigation it is unblocking. */
-function resolveHeldRequest(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): boolean {
-  if (!resolvesRequest(msg.method)) return false;
-  void reply(socket, protocol, msg).catch((error) => failure(socket, error, msg));
-  return true;
 }

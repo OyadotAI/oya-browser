@@ -170,9 +170,20 @@ export class Translator {
   async released(view?: TabView): Promise<void> {
     await Promise.all(
       this.tabs()
-        .filter((tab) => !view || tab.view === view)
+        .filter((tab) => (!view || tab.view === view) && this.holds(tab))
         .map((tab) => this.showOriginal(tab)),
     );
+  }
+
+  /**
+   * Whether a tab has anything a read must undo: translated text, a run or restore under way,
+   * a pending confirmation, or continued consent. Every agent command calls released(), and
+   * showing the original of a tab with none of these only republished the tab list to every
+   * window, once per CDP message from a Playwright session.
+   */
+  private holds(tab: Tab): boolean {
+    const page = this.pages.state(tab);
+    return !!(page.last || page.restoring || this.proposals.has(tab) || tab.translateKeep);
   }
 
   /** Publish main-owned state to the shell. */

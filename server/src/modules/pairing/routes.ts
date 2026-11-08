@@ -3,7 +3,7 @@
  */
 
 import { Router } from 'express';
-import { authMiddleware } from '../auth/service.ts';
+import { authMiddleware, clientAddress } from '../auth/service.ts';
 import { audit, fingerprint } from '../../platform/audit.ts';
 import { enforce, consume } from '../../platform/limits.ts';
 import { container } from '../../app/container.ts';
@@ -30,9 +30,6 @@ router.post('/pairing', authMiddleware, enforce('provision'), (req, res) => {
   audit({ action: 'pairing.issue', actorKey: key, targetType: 'key', targetId: fingerprint(key), req });
   res.status(Status.CREATED).json({ code, expiresAt });
 });
-
-/** The address a claim is rate limited by. */
-const clientAddress = (req) => req.ip || req.socket?.remoteAddress || 'unknown';
 
 /**
  * Redeem a code for the key it stands for. Unauthenticated by necessity, the

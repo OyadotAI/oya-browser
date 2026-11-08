@@ -1,5 +1,5 @@
 /**
- * Opens the ChatGPT sign-in in a browser other than this one. When Oya is the
+ * Opens a sign-in page (ChatGPT, the Oya dashboard) in a browser other than this one. When Oya is the
  * default browser, "open in the browser" hands the page straight back to Oya,
  * which leaves the first-run checklist and shows OpenAI's login in a fresh
  * persona with no ChatGPT session, where it keeps asking to sign in. The person
@@ -37,5 +37,5 @@ const opened = (run: Run, browser: string, url: string) =>
 /** The first of the usual browsers this Mac has. */
 async function openOnMac(url: string, run: Run): Promise<void> {
   for (const browser of C.OTHER_MAC_BROWSERS) if (await opened(run, browser, url)) return;
-  throw Error('No other browser to sign in to ChatGPT with. Install Chrome or Safari and try again.');
+  throw Error('No other browser to sign in with. Install Chrome or Safari and try again.');
 }

@@ -91,7 +91,8 @@ export class AgentsViewModel extends ViewModel<AgentsState> {
   private change(agent: LocalAgent): Promise<void> {
     const { id, connected } = agent;
     return (connected ? this.bridge.disconnectAgent(id) : this.bridge.connectAgent(id)).then(
-      (agents) => this.set({ agents: listOf(agents), note: this.done(agent) }),
+      // The answer lists installed agents only: a view of all of them keeps its rows until its refresh.
+      (agents) => this.set(this.all ? { note: this.done(agent) } : { agents: listOf(agents), note: this.done(agent) }),
       (error: unknown) => this.set({ note: messageOf(error, `Could not change ${agent.name}.`) }),
     );
   }

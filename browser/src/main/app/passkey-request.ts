@@ -73,17 +73,36 @@ function passkeyWindowCurrent({ tab, owner, window }: PasskeySource): boolean {
   return (tab.window ?? owner.shell.window) === window && (!!tab.window || owner.tabs.activeTabId === tab.id);
 }
 
-/** Popup ids are not necessarily claimed by the opener's agent; preserve the entire native adoption provenance. */
+/**
+ * The popup's opener chain: popup ids are not necessarily claimed by the opener's agent, so
+ * the whole native adoption provenance is kept, and an agent-owned tab anywhere up the chain
+ * blocks the request. A popup with no live opener is refused. A tab in the strip whose opener
+ * has since closed is the chain's root: it keeps that opener's id for good, and treating the
+ * gone tab as missing refused every passkey in its popups.
+ */
 function passkeyFamily(deps: PasskeyDeps, tab: Tab): Relative[] | null {
-  const family: Tab[] = [tab];
-  for (let child = tab; tab.window && child.openerId !== undefined;) {
-    const parent = deps.windows?.owner(child.openerId)?.tabs.find(child.openerId);
-    if (!parent || family.includes(parent)) return null;
-    family.push(parent);
-    child = parent;
-  }
-  return family.map((tab) => ({ tab, owner: deps.windows!.owner(tab.id)! }));
+  const family = openerChain(deps, tab);
+  return family && family.map((tab) => ({ tab, owner: deps.windows!.owner(tab.id)! }));
 }
+
+/** `tab` and the tabs that opened it, nearest first; null for a missing popup opener or a cycle. */
+function openerChain(deps: PasskeyDeps, tab: Tab): Tab[] | null {
+  const family: Tab[] = [tab];
+  for (let child = tab; tab.window && child.openerId !== undefined; child = family[family.length - 1]) {
+    const parent = openerOf(deps, child);
+    if (!parent) return child.window ? null : family; // a strip tab whose opener closed is the root
+    if (family.includes(parent)) return null;
+    family.push(parent);
+  }
+  return family;
+}
+
+/** The live tab that opened `child`, wherever it is now, or undefined when it has closed. */
+const openerOf = (deps: PasskeyDeps, child: Tab) =>
+  child.openerId === undefined ? undefined : deps.windows?.owner(child.openerId)?.tabs.find(child.openerId);
+
+/** Whether `index` is the chain's last tab and sits in the strip: its opener, if any, closed before the request. */
+const rootStripTab = (family: Relative[], index: number) => index === family.length - 1 && !family[index].tab.window;
 
 /** Closing, replacing, reparenting or claiming an opener invalidates a previously admitted popup. */
 function familyCurrent(deps: PasskeyDeps, family: Relative[]): boolean {
@@ -92,7 +111,7 @@ function familyCurrent(deps: PasskeyDeps, family: Relative[]): boolean {
       deps.agentTab.humanMay(tab.id) &&
       deps.windows?.owner(tab.id) === owner &&
       owner.tabs.find(tab.id) === tab &&
-      (!family[0].tab.window || tab.openerId === family[index + 1]?.tab.id),
+      (!family[0].tab.window || tab.openerId === family[index + 1]?.tab.id || rootStripTab(family, index)),
   );
 }
 
