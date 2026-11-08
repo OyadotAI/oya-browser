@@ -32,6 +32,7 @@ import { MASK_TAIL } from './constants.ts';
 import { agentKeyUnclaimed } from '../auth/service.ts';
 import { credentialOf, desktopHeld } from './chatgpt-credential.ts';
 import type { ModelTransport } from '../../platform/llm/index.ts';
+import { onRequestLlm, requestLlm } from './request-llm.ts';
 
 export { FIELDS, PROVIDER_CHOICES } from './fields.ts';
 
@@ -109,7 +110,7 @@ const withExternalId = (view, apiKey) => ({ ...view, ecs: { ...view.ecs, externa
 /** Masked view for the dashboard and `oya init`. */
 export function get(apiKey) {
   const own: any = plain(apiKey);
-  const llm = resolve(apiKey);
+  const llm = resolveSaved(apiKey);
   return {
     ...withExternalId(masked(own), apiKey),
     ...llmView(own, llm, runtimeConfig.get()),
@@ -248,8 +249,18 @@ const noLlm = (own): LlmConfig => ({
   model: own.chat_model || '',
 });
 
-/** Effective LLM config for a request. */
+/**
+ * Effective LLM config for a request: the model the request itself asked for
+ * (`new Oya({ model })`) over the key's saved one, so billing, budgets and the
+ * project's model policy all see what the run actually uses.
+ */
 export function resolve(apiKey): LlmConfig {
+  const asked = requestLlm();
+  return asked ? onRequestLlm(resolveSaved(apiKey), asked) : resolveSaved(apiKey);
+}
+
+/** The key's saved LLM config, what the console and `oya init` show and change. */
+export function resolveSaved(apiKey): LlmConfig {
   const own: any = plain(apiKey);
   const defaults = LLM_DEFAULTS[own.llm_provider] || LLM_DEFAULTS.openai;
   if (own.openai_api_key) return ownLlm(own, defaults);

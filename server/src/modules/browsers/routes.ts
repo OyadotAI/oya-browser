@@ -13,6 +13,7 @@ import * as keyConfig from '../config/service.ts';
 import { admission } from '../control/admission.ts';
 import { getKey, requireBrowser } from '../../app/http.ts';
 import { startBrowser } from './lifecycle/start.ts';
+import { cloudWhenNothingConnected } from './lifecycle/start-connected.ts';
 import { stopOne, stopMany, disconnect, disconnectAll, detach } from './http/stop.ts';
 import { browserDetail, liveView } from './http/inspect.ts';
 import { connectCdp } from './http/connect.ts';
@@ -61,7 +62,15 @@ router.post('/browsers/connect', authMiddleware, enforce('connect'), admission('
 router.delete('/browsers/:browserId/connection', authMiddleware, detach);
 
 /** POST /browsers/start, starts a browser on whichever provider is configured. */
-router.post('/browsers/start', authMiddleware, enforce('provision'), cloudNeedsPerson(), admission(), startBrowser);
+router.post(
+  '/browsers/start',
+  authMiddleware,
+  enforce('provision'),
+  cloudWhenNothingConnected,
+  cloudNeedsPerson(),
+  admission(),
+  startBrowser,
+);
 
 /** POST /browsers/:browserId/captcha, detects a CAPTCHA on the page and, unless `solve` is false, solves it. */
 router.post('/browsers/:browserId/captcha', authMiddleware, enforce('command'), requireBrowser, solveCaptcha);

@@ -91,6 +91,11 @@ describe('buildEnv', () => {
     assert.equal(buildEnv({ ...BASE, fleet: 'k8s' }, {}, {}).values.OYA_BROWSER_PROVIDER, 'k8s');
   });
 
+  it('names no provider for Docker workers, so start() borrows a connected worker', () => {
+    const { values } = buildEnv({ ...BASE, fleet: 'docker-workers' }, {}, { OYA_BROWSER_PROVIDER: 'oya-selfhosted' });
+    assert.equal(values.OYA_BROWSER_PROVIDER, undefined);
+  });
+
   it('names any other fleet as the provider, and adds optional services', () => {
     const optional = { captcha: 'capsolver', recordingBucket: 'rec', metrics: true };
     const { values, extra } = buildEnv({ ...BASE, fleet: 'steel', optional }, {}, { OYA_METRICS_TOKEN: 'mt' });

@@ -67,27 +67,69 @@ describe('playbook catalog', () => {
       browser.disconnect();
     });
 
-    it('drops incidental tab and reload commands from an agent run before saving', async () => {
+    it('keeps tab steps with their tab url, so a replay never runs a step in the wrong tab', async () => {
       const run = {
         prompt: 'Search for {{query}}',
         steps: [
           { action: 'navigate', url: 'https://www.wikipedia.org/', start: true },
           { action: 'open_tab', url: 'https://en.wikipedia.org/' },
           { action: 'switch_tab', tabUrl: 'https://www.wikipedia.org/' },
-          { action: 'close_tab', tabUrl: 'https://www.wikipedia.org/' },
-          { action: 'reload' },
-          { action: 'type', text: 'Apollo 11', el: { type: 'input', name: 'search' } },
-          {
-            action: 'click',
-            el: { type: 'link', text: 'Apollo 11', rawHref: 'https://en.wikipedia.org/wiki/Apollo_11' },
-          },
+          { action: 'type', text: '{{query}}', el: { type: 'input', name: 'search' } },
         ],
       };
       await catalog.create(KEY, 'b-tabs', 'wikipedia-search', run);
+      const steps = keyConfig.getPlaybook(KEY, 'wikipedia-search').steps;
       assert.deepEqual(
-        keyConfig.getPlaybook(KEY, 'wikipedia-search').steps.map((step) => step.action),
-        ['navigate', 'type', 'click'],
+        steps.map((step) => step.action),
+        ['navigate', 'open_tab', 'switch_tab', 'type'],
       );
+      assert.equal(steps[2].tabUrl, 'https://www.wikipedia.org/');
+    });
+
+    it('keeps typing into a focused field and key chords, with their variables', async () => {
+      const run = {
+        prompt: 'Order a large pizza for {{name}}',
+        steps: [
+          { action: 'navigate', url: 'https://httpbin.org/forms/post', start: true },
+          { action: 'keyboard_type', text: '{{name}}' },
+          { action: 'key_chord', key: 'Control+a' },
+          { action: 'click', el: { type: 'button', text: 'Submit order' } },
+        ],
+      };
+      const described = await catalog.create(KEY, 'b-keys', 'pizza', run);
+      assert.deepEqual(
+        keyConfig.getPlaybook(KEY, 'pizza').steps.map((step) => step.action),
+        ['navigate', 'keyboard_type', 'key_chord', 'click'],
+      );
+      assert.ok(described.variables.includes('name'));
+    });
+
+    it('refuses a run past the step limit rather than saving it cut short', async () => {
+      const steps = [{ action: 'navigate', url: 'https://a.test/', start: true }];
+      for (let i = 0; i < 500; i++) steps.push({ action: 'press_key', key: 'Tab' } as any);
+      await assert.rejects(catalog.create(KEY, 'b-long', 'long', { prompt: 'p', steps }), {
+        status: 400,
+        message: /limited to 500 steps/,
+      });
+    });
+
+    it('drops an action replay has no handler for, and keeps the flags replay reads', async () => {
+      const run = {
+        prompt: 'p',
+        steps: [
+          { action: 'navigate', url: 'https://a.test/', start: true },
+          { action: 'teleport' },
+          { action: 'click', unaimable: true, optional: true },
+          { action: 'press_key', key: 'Enter' },
+        ],
+      };
+      await catalog.create(KEY, 'b-flags', 'flags', run);
+      const steps = keyConfig.getPlaybook(KEY, 'flags').steps;
+      assert.deepEqual(
+        steps.map((step) => step.action),
+        ['navigate', 'click', 'press_key'],
+      );
+      assert.deepEqual([steps[1].unaimable, steps[1].optional], [true, true]);
     });
 
     it('keeps a workflow run’s declared variables, with non-secret defaults', async () => {

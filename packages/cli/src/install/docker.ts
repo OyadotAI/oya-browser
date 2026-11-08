@@ -45,6 +45,8 @@ function nativeContext(): string {
 export async function provisionDocker(root: string, a: Answers): Promise<void> {
   if (a.fleet === 'oya-selfhosted') await provisionGoverned(root);
   const scale = a.fleet === 'docker-workers' ? ['--scale', `browser=${a.workers}`] : ['--scale', 'browser=0'];
+  // Compose pulls an image only when it has none, so a re-install would keep a stale worker.
+  if (a.fleet === 'docker-workers') await run('docker', ['compose', 'pull', '--quiet', 'browser'], { cwd: root });
   await run('docker', ['compose', 'up', '-d', '--build', ...scale], { cwd: root });
 }
 

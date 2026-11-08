@@ -6,6 +6,23 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Rewrote the README for developers: what Oya fixes, a record-and-replay example on the first screen, and a quickstart that installs the control plane locally and runs the examples against its Docker browser.
+- `new Oya({ model: { provider, name, apiKey } })` picks the model behind `ask()`, runs and replays in code, for that client only and never saved to the key. `oya init` is no longer needed to choose one.
+- A bare `oya.browser.start()` with no provider and nothing connected now starts an Oya Cloud browser where the deployment runs them, instead of answering 409. A connected desktop or Docker worker is still borrowed first.
+- `oya install --yes` picks up `GEMINI_API_KEY` (after `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`), whose free tier makes a first run cost nothing.
+- The no-model and no-key errors now say how to fix them in code first.
+
+### Fixed
+
+- Saving an agent run as a playbook no longer drops typing into a focused field, key chords, tab switches and other recorded steps. Replays had been ignoring new inputs while reporting success.
+- Read-only page scripts can no longer fill a field through bracket assignment, `execCommand` or the native value setter, which left no step to replay.
+- A playbook over 500 steps is refused instead of being saved cut short.
+- The local install no longer fails building the browser image: `docker compose` pulls the published one, and `docker-compose.build.yml` builds it for those with the engine. Updates pull the latest browser image.
+- After a local install, `start()` borrows the Docker browser worker instead of asking for Oya Cloud settings.
+- The Playwright example exits when done on a borrowed browser instead of hanging.
+
 ## [1.0.211](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.211) · 2026-11-05
 
 ### Changed
