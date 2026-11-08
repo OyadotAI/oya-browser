@@ -75,12 +75,51 @@ jobs:
       shell: pwsh
       run: ./browser/build/test-windows-signatures.ps1
 
-    - uses: ./.github/actions/windows-signing
+    # Managed (Azure Artifact Signing) when every setting is present; until then a self-signed
+    # build, so a release is never blocked on signing. Windows warns on installing a self-signed
+    # installer, and auto-update cannot check its signature, so that check is off for those builds.
+    - name: Choose Windows signing
+      id: signing
+      shell: bash
+      run: |
+        missing=""
+        for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT_NAME AZURE_SIGNING_PROFILE_NAME WINDOWS_PUBLISHER_NAME WINDOWS_SIGNER_SUBJECT; do
+          [ -n "${!name}" ] || missing="$missing $name"
+        done
+        if [ -z "$missing" ]; then
+          echo "mode=managed" >> "$GITHUB_OUTPUT"
+        else
+          echo "mode=self" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Self-signed Windows build::Managed signing is not configured (missing:$missing). This release's installer is self-signed: Windows warns on install, and auto-update skips its signature check."
+        fi
 
-    - name: Build NSIS installer
+    - uses: ./.github/actions/windows-signing
+      if: steps.signing.outputs.mode == 'managed'
+
+    - name: Build NSIS installer (managed signing)
+      if: steps.signing.outputs.mode == 'managed'
       run: cd browser && npm run dist:win -- --x64 --config build/windows-signing.cjs
 
+    - name: Make a self-signed code-signing certificate
+      if: steps.signing.outputs.mode == 'self'
+      shell: pwsh
+      run: |
+        $bytes = New-Object byte[] 24
+        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $password = [Convert]::ToBase64String($bytes)
+        Write-Output "::add-mask::$password"
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Oya Browser (self-signed)' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(1)
+        $pfx = Join-Path $env:RUNNER_TEMP 'oya-self-signed.pfx'
+        Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
+        "CSC_LINK=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "CSC_KEY_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+    - name: Build NSIS installer (self-signed)
+      if: steps.signing.outputs.mode == 'self'
+      run: cd browser && npm run dist:win -- --x64 -c.win.verifyUpdateCodeSignature=false
+
     - name: Verify packaged and installed Windows signatures
+      if: steps.signing.outputs.mode == 'managed'
       shell: pwsh
       run: |
         $version = (Get-Content browser/package.json | ConvertFrom-Json).version
