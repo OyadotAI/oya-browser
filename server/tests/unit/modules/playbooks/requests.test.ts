@@ -48,6 +48,17 @@ describe('recordedRun', () => {
     assert.equal(recordedRun({ steps }).prompt, '');
   });
 
+  it('still sanitizes a recording a page sends, dropping actions it does not take from a page', () => {
+    const steps = [
+      { action: 'click', el: { text: 'Go' } },
+      { action: 'keyboard_type', text: 'x' },
+    ];
+    assert.deepEqual(
+      recordedRun({ steps }).steps.map((s) => s.action),
+      ['click'],
+    );
+  });
+
   it('refuses a recording with nothing to replay', () => {
     assert.throws(() => recordedRun({ steps: [] }), { status: 400 });
   });

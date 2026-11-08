@@ -18,7 +18,8 @@ import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { hosted } from '../billing/config.ts';
 import { control, hash, keyOfProject, projectId } from '../control/service.ts';
 import { LLM_DEFAULTS } from './llm-catalog.ts';
-import { resolve, set, type LlmConfig } from './service.ts';
+import { resolve, resolveSaved, set, type LlmConfig } from './service.ts';
+import { checkRequestLlm, requestLlm } from './request-llm.ts';
 import * as C from './constants.ts';
 import { credentialOf, desktopHeld, type Credential } from './chatgpt-credential.ts';
 import { desktopRelay } from '../browsers/connection/model-relay.ts';
@@ -281,6 +282,13 @@ const onDesktop = (llm: LlmConfig, apiKey: string, browserId?: string): LlmConfi
 });
 
 /**
+ * Whether `llm` holds the key's own saved credential. A key the request brought
+ * (`new Oya({ model })`) is an API key for the catalog's endpoint, never a stored
+ * sign-in to refresh or relay, whatever its text looks like.
+ */
+const savedOwn = (llm: LlmConfig) => !!llm.own && !requestLlm()?.apiKey;
+
+/**
  * The LLM settings a request runs with, as resolve() gives them, except that a key
  * whose stored credential is a ChatGPT sign-in gets a live access token and always
  * the plan's own endpoint. Decided by the stored value, never by llm_provider or
@@ -288,10 +296,16 @@ const onDesktop = (llm: LlmConfig, apiKey: string, browserId?: string): LlmConfi
  * refresh token sent as a bearer to a chosen host would be that account's for good.
  */
 export async function resolveFresh(apiKey: string, browserId?: string): Promise<LlmConfig> {
+  // A model the request picked is checked here, where every model call passes and auth has settled the key.
+  checkRequestLlm(() => resolveSaved(apiKey));
   const llm = resolve(apiKey);
-  if (llm.own && desktopHeld(llm.openaiKey)) return onDesktop(llm, apiKey, browserId);
-  const stored = llm.own ? credentialOf(llm.openaiKey) : null;
-  if (!stored) return llm;
+  if (savedOwn(llm) && desktopHeld(llm.openaiKey)) return onDesktop(llm, apiKey, browserId);
+  const stored = savedOwn(llm) ? credentialOf(llm.openaiKey) : null;
+  return stored ? withLiveToken(llm, apiKey, stored) : llm;
+}
+
+/** `llm` with a live ChatGPT access token for the `stored` sign-in, and the plan's own endpoint. */
+async function withLiveToken(llm: LlmConfig, apiKey: string, stored: Credential): Promise<LlmConfig> {
   // A hosted deployment never spends a plan, whatever a tenant pasted: OpenAI allows that for approved apps only.
   if (hosted()) return { ...llm, openaiKey: '' };
   const credential = live.get(apiKey)?.client_id === stored.client_id ? live.get(apiKey)! : stored;

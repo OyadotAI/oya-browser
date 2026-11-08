@@ -16,7 +16,7 @@ import {
   SPACE,
   TAB,
 } from './constants.js';
-import type { OyaOptions } from './types/index.js';
+import type { ModelOptions, OyaOptions } from './types/index.js';
 
 /** Where the key and the address came from, so a message names the one to fix. */
 export interface Origin {
@@ -40,6 +40,7 @@ export class Http {
     private readonly timeoutMs: number,
     private readonly fetchImpl: typeof globalThis.fetch,
     readonly origin: Origin = OPTIONS_ORIGIN,
+    private readonly defaults: Record<string, string> = {},
   ) {}
 
   /** Sends one request and returns the parsed answer, or throws an OyaError when it failed. */
@@ -56,7 +57,11 @@ export class Http {
 
   /** The fetch options for one call, with this client's key on them. */
   private init(method: string, body: unknown, timeoutMs: number, headers: Record<string, string>): RequestInit {
-    return requestInit(method, body, timeoutMs, { Authorization: `Bearer ${this.apiKey}`, ...headers });
+    return requestInit(method, body, timeoutMs, {
+      Authorization: `Bearer ${this.apiKey}`,
+      ...this.defaults,
+      ...headers,
+    });
   }
 
   /**
@@ -222,7 +227,7 @@ function deploymentOf(url: string): string {
 
 /** Why there is no key: none anywhere, or a saved one withheld because it is for another deployment. */
 function noKey(saved: SavedConfig, address: string): string {
-  if (!saved.apiKey) return 'No API key. Pass { apiKey }, set OYA_API_KEY, or run `npx @oya-ai/cli login`.';
+  if (!saved.apiKey) return 'No API key. Get one at https://oyabrowser.com, then set OYA_API_KEY or pass { apiKey }.';
   const why = `the key saved in ~/.oya/config.json is for ${saved.baseUrl} and is only sent there`;
   return `No API key for ${address}: ${why}. Pass { apiKey }, set OYA_API_KEY, or run \`npx @oya-ai/cli login --url ${address}\`.`;
 }
@@ -236,7 +241,25 @@ export function createHttp(options: OyaOptions): Http {
   if (!fetchImpl) throw new Error('No fetch available, pass { fetch } or use Node 18+.');
   const origin = { apiKeyFrom: key.from, baseUrlFrom: address.from, savedKey: !!saved.apiKey };
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return new Http(webAddress(address), key.value!, timeout, fetchImpl.bind(globalThis), origin);
+  return new Http(webAddress(address), key.value!, timeout, fetchImpl.bind(globalThis), origin, modelHeaders(options));
+}
+
+/** The fix the server's 400 and a bad header both point to. */
+const MODEL_FIX = 'Check the model option.';
+
+/**
+ * The `model` option as the headers the server reads it from on every call. Headers,
+ * not body fields, so background runs and heals started by any call carry it too.
+ */
+export function modelHeaders({ model }: OyaOptions): Record<string, string> {
+  if (!model) return {};
+  const fields: [keyof ModelOptions, string][] = [
+    ['provider', 'X-Oya-Llm-Provider'],
+    ['name', 'X-Oya-Llm-Model'],
+    ['apiKey', 'X-Oya-Llm-Api-Key'],
+  ];
+  const set = fields.filter(([field]) => model[field]);
+  return Object.fromEntries(set.map(([field, name]) => [name, headerSafe(model[field]!, `model.${field}`, MODEL_FIX)]));
 }
 
 /** A local address, which is served over plain http. */

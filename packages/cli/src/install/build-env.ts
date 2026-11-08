@@ -80,9 +80,10 @@ const FLEETS: Record<string, FleetSettings> = {
   'oya-cloud': oyaCloud,
   'oya-selfhosted': governedDocker,
   k8s: kubernetes,
-  'docker-workers': (v) => {
-    v.OYA_BROWSER_PROVIDER = 'oya-selfhosted';
-  },
+  // Always-on workers dial in on their own, so no provider is named: a bare start()
+  // then borrows a connected worker. Naming oya-selfhosted sent every start to the
+  // managed launcher, which this fleet does not run, and start() failed on a fresh install.
+  'docker-workers': () => {},
 };
 
 /** The fleet's variables. */

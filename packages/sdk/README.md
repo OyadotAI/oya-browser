@@ -25,21 +25,30 @@ import { Oya } from '@oya-ai/browser';
 
 const browser = await new Oya().browser.start();
 await browser.goto('https://news.ycombinator.com');
-console.log(await browser.ask('What are the top 3 stories?'));
+console.log(await browser.ask('What are the top 3 stories and their points?'));
+await browser.stop();
 ```
 
-Two things to have first: an API key from [oyabrowser.com](https://oyabrowser.com)
-(or your own deployment) in `OYA_API_KEY`, and a browser to drive.
+The one thing to have first is an API key from [oyabrowser.com](https://oyabrowser.com)
+(or your own deployment) in `OYA_API_KEY`.
 
-**The fastest browser to have is one you already have.** Open the
-[Oya desktop browser](https://oyabrowser.com) and sign in with the same key: `start()`
-hands over the browser that is already connected when no provider is configured, so the
-five lines above work with nothing else set up. `stop()` leaves a browser you borrowed
-alone, because you did not start it.
+**Which browser `start()` gives you**, when no provider is configured: the
+[Oya desktop browser](https://oyabrowser.com) if it is open and signed in with the same
+key, else a new one in Oya Cloud. `stop()` leaves a browser you borrowed alone, because
+you did not start it. To run browsers somewhere else (your own Docker, Browserbase,
+Steel, Anchor, Browser Use, or a Chrome of your own over CDP), pass `{ provider }` or set
+a default with `npx @oya-ai/cli init`. Your code does not change.
 
-When you would rather it start one for you, run `npx @oya-ai/cli init` and pick where
-browsers run: Oya Cloud, your own Docker, Browserbase, Steel, Anchor, Browser Use, or a
-Chrome of your own over CDP. Your code does not change.
+**Which model `ask()` uses:** the key's saved one, or Oya's when it has none. Pick one in
+code, for this client only and never saved to the key:
+
+```js
+const oya = new Oya({
+  model: { provider: 'anthropic', name: 'claude-sonnet-5', apiKey: process.env.ANTHROPIC_API_KEY },
+});
+```
+
+Without `apiKey`, `name` runs on the credential your key already uses, which must be the same provider.
 
 **Where the key comes from**, in order: `new Oya({ apiKey })`, then `OYA_API_KEY`, then the
 file `oya login` wrote (`~/.oya/config.json`, or `OYA_CONFIG_HOME`), which is read on Node

@@ -59,6 +59,30 @@ describe('Oya construction', () => {
     assert.equal(fake.calls[0].headers.Authorization, 'Bearer k-file');
   });
 
+  it('sends the model option on every call, as the headers the server reads it from', async () => {
+    const fake = fakeFetch({ 'GET /api/browsers': { body: [] } });
+    const model = { provider: 'anthropic' as const, name: 'claude-sonnet-5', apiKey: 'sk-ant' };
+    await new Oya({ apiKey: 'k', baseUrl: BASE, fetch: fake.fetch, model }).browser.list();
+    const { headers } = fake.calls[0];
+    assert.deepEqual(
+      [headers['X-Oya-Llm-Provider'], headers['X-Oya-Llm-Model'], headers['X-Oya-Llm-Api-Key']],
+      ['anthropic', 'claude-sonnet-5', 'sk-ant'],
+    );
+  });
+
+  it('sends no model headers without the model option, so the key’s saved model applies', async () => {
+    const fake = fakeFetch({ 'GET /api/browsers': { body: [] } });
+    await new Oya({ apiKey: 'k', baseUrl: BASE, fetch: fake.fetch }).browser.list();
+    assert.ok(!Object.keys(fake.calls[0].headers).some((h) => h.startsWith('X-Oya-Llm')));
+  });
+
+  it('refuses a model key a header cannot carry, naming the field and never the key', () => {
+    const model = { provider: 'openai' as const, apiKey: 'sk“x' };
+    assert.throws(() => new Oya({ apiKey: 'k', baseUrl: BASE, fetch: fakeFetch().fetch, model }), {
+      message: 'model.apiKey has a character HTTP headers cannot carry at position 3 (U+201C). Check the model option.',
+    });
+  });
+
   it('refuses an address with no scheme before any call, naming where it came from and what to try', () => {
     delete process.env.OYA_BASE_URL;
     assert.throws(() => new Oya({ apiKey: 'k', baseUrl: 'localhost:3000', fetch: fakeFetch().fetch }), {

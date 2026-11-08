@@ -8,8 +8,8 @@ import { lastRun } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { WORKFLOW_SCHEMA } from './constants.ts';
-import { sanitizeSteps } from './sanitize.ts';
+import { MAX_STEPS, WORKFLOW_SCHEMA } from './constants.ts';
+import { replayableAction } from './replay.ts';
 import { namesOf, templateValues } from './variables.ts';
 import { renderPlaywright } from './playwright.ts';
 
@@ -73,14 +73,24 @@ export async function create(apiKey, browserId, name, run = lastRun(browserId)) 
   return describe(pb);
 }
 
-/** The legacy run's supported steps, with unsupported commands removed. */
+/**
+ * The run's steps as recorded, less any action replay has no handler for.
+ *
+ * Not sanitizeSteps(): that is for a recording built in a web page (requests.ts runs
+ * it on those before they get here). The agent's run comes from this server's own
+ * recorder, and passing it through the page sanitizer kept 7 of the actions the
+ * recorder records, so typing into a focused field (keyboard_type), a key chord or a
+ * tab switch vanished on save and the replay "succeeded" without them. Fields are
+ * kept whole too: cutting typed text short would corrupt a playbook just as quietly.
+ */
 function replayableSteps(run) {
   if (!run) return [];
   if (run.schemaVersion === WORKFLOW_SCHEMA) return structuredClone(run.steps || []);
   const steps = Array.isArray(run.steps) ? run.steps : [];
-  if (!steps.some((s) => ['click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll'].includes(s?.action)))
-    return [];
-  return sanitizeSteps(steps);
+  const kept = steps.filter((s) => replayableAction(s?.action));
+  // Refused, not cut: a playbook missing its tail would replay as if it were whole.
+  if (kept.length > MAX_STEPS) throw new HttpError(Status.BAD_REQUEST, `A playbook is limited to ${MAX_STEPS} steps`);
+  return structuredClone(kept);
 }
 
 /** The playbook a run becomes. */

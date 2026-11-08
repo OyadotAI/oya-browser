@@ -130,6 +130,20 @@ describe('forwardHttp, clustered', () => {
     assert.equal(res.body, 'frame');
   });
 
+  it('carries the caller’s model to the owner, so it runs the model the caller picked', async () => {
+    const calls = stubFetch(() => text('', 200));
+    const model = { 'x-oya-llm-provider': 'anthropic', 'x-oya-llm-model': 'claude-x', 'x-oya-llm-api-key': 'sk-a' };
+    const req = request(`/live/${id}`, {
+      originalUrl: `/api/live/${id}?key=${token}`,
+      query: { key: token },
+      headers: model,
+    });
+    const res = response();
+    await forward(req, res);
+    await res.done;
+    for (const [name, value] of Object.entries(model)) assert.equal(calls[0].init.headers[name], value);
+  });
+
   it('sends a JSON body for writes', async () => {
     const calls = stubFetch(() => text('', 200));
     const res = response();

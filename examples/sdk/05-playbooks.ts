@@ -2,7 +2,7 @@
 import { Oya } from '@oya-ai/browser';
 
 const oya = new Oya();
-await using browser = await oya.browser.start({ provider: 'oya-cloud' }); // stopped when the script exits, even on error
+await using browser = await oya.browser.start(); // stopped when the script exits, even on error
 
 // 1. Ask once. The agent reads `data` and types it through {{placeholders}}; `secrets` it never sees.
 await browser.goto('https://httpbin.org/forms/post');
@@ -30,6 +30,6 @@ const run = await browser.submit({ playbook: 'pizza-order' }, {
     console.log(`needs a person (${request.reason}): ${request.message}`, request.liveViewUrl ?? '');
     await request.respond('done'); // after handling it, or your answer when reason is 'agent'
   },
-  onHealed: (result) => console.log(`the form changed; fix saved as ${result.draft}, promote it with oya.playbooks.promote()`),
+  onHealed: (result) => console.log(result.draft ? `the form changed; fix saved as ${result.draft}, promote it with oya.playbooks.promote()` : 'the form changed; the agent fixed the playbook for next time'),
 });
 await run.done.catch(() => {}); // onFailure already reported it

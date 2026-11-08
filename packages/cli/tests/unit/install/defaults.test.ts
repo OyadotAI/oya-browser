@@ -35,4 +35,14 @@ describe('defaultInstall', () => {
     assert.equal(answers.llm.baseUrl, 'https://api.anthropic.com/v1');
     assert.deepEqual(secrets, { OPENAI_API_KEY: 'a' });
   });
+
+  it('falls back to GEMINI_API_KEY against the Gemini endpoint, a key with a free tier', () => {
+    const { answers, secrets } = defaultInstall({ GEMINI_API_KEY: 'g' });
+    assert.deepEqual(answers.llm, {
+      provider: 'gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      model: 'gemini-3.8-flash',
+    });
+    assert.deepEqual(secrets, { OPENAI_API_KEY: 'g' });
+  });
 });

@@ -1,6 +1,7 @@
 /**
  * The options the `Oya` client is constructed with.
  */
+import type { LlmProvider } from './config.js';
 
 /** How to reach the control plane, and as whom. */
 export interface OyaOptions {
@@ -12,6 +13,29 @@ export interface OyaOptions {
   timeoutMs?: number;
   /** A fetch to use instead of the global one, for tests, proxies or old runtimes. */
   fetch?: typeof globalThis.fetch;
+  /**
+   * The model behind `ask()`, `extract()`, runs and healed replays, for this client
+   * only. Left out, the key's saved model is used (`oya init`, the console).
+   */
+  model?: ModelOptions;
+}
+
+/**
+ * A model picked in code, sent with every call and never saved to the key, so the
+ * console and the desktop app keep theirs.
+ */
+export interface ModelOptions {
+  /** Whose model. */
+  provider: LlmProvider;
+  /** The model id, e.g. 'claude-sonnet-5'. The provider's default when left out. */
+  name?: string;
+  /**
+   * Your own key for that provider: calls go to the provider's own endpoint and are
+   * billed to you. Without one, `name` runs on the credential your key already uses
+   * (its saved one, else the server's), which must be `provider`'s; the server's own
+   * offers its priced models only.
+   */
+  apiKey?: string;
 }
 
 /** What `Oya.signup()` takes. */

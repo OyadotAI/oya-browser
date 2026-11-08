@@ -77,6 +77,12 @@ if docker image inspect "$GOVERNED_IMAGE" >/dev/null 2>&1; then
   docker build --platform linux/amd64 --build-context "native-engine=$OYA_NATIVE_LINUX_DIRECTORY" --quiet -t "$GOVERNED_IMAGE" browser >/dev/null
 fi
 
+# The worker image is pulled, not built, and compose only pulls an image it lacks:
+# without this the server updates and the workers stay on the first image ever pulled.
+if [ "$workers" -gt 0 ]; then
+  say "Pulling the browser image"
+  docker compose pull --quiet browser || say "Could not pull the browser image; keeping the one you have"
+fi
 say "Rebuilding and restarting (browser workers: $workers)"
 docker compose up -d --build --remove-orphans --scale "browser=$workers"
 

@@ -29,6 +29,7 @@ import { router as pairingRoutes } from '../modules/pairing/routes.ts';
 import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
 import { router as configRoutes } from '../modules/config/routes.ts';
+import { requestLlmMiddleware } from '../modules/config/request-llm.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
 import { router as translateRoutes } from '../modules/translate/index.ts';
 import { router as routinesRoutes } from '../modules/routines/routes.ts';
@@ -87,6 +88,9 @@ function routeLabel(req) {
     .replace(/\/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '/:id')
     .replace(/\/[A-Za-z0-9_-]{24,}/g, '/:token');
 }
+
+/** A model the caller picked for this request (`new Oya({ model })`), kept with the request's work and never saved. */
+router.use(requestLlmMiddleware);
 
 // Sign-in attempts are counted per browser so a wrong password cannot be typed
 // until the account locks. A browser that is gone cannot lock anything, and

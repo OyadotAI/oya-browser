@@ -16,7 +16,16 @@ const OWNED = /^\/(?:api\/(?:browsers|live|control\/sessions|gateway\/sessions)|
 /** Collection routes under the same prefixes, which any replica serves. */
 const COLLECTIONS = ['start', 'stop', 'connect', 'provision', 'disconnect-all', 'pool'];
 // MCP streamable HTTP carries its session and resumption state in headers, in both directions.
-const FORWARD_HEADERS = ['accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
+// The X-Oya-Llm-* headers are the caller's model (`new Oya({ model })`): dropped, the owner would run the saved one.
+const FORWARD_HEADERS = [
+  'accept',
+  'mcp-session-id',
+  'mcp-protocol-version',
+  'last-event-id',
+  'x-oya-llm-provider',
+  'x-oya-llm-model',
+  'x-oya-llm-api-key',
+];
 /** Response headers passed back from the owner. */
 const RETURN_HEADERS = [
   'content-type',
