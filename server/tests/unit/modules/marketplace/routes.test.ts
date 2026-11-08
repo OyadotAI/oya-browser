@@ -8,6 +8,7 @@ import { MarketplaceService } from '../../../../src/modules/marketplace/service.
 import { openContext } from '../../../../src/modules/marketplace/continuation.ts';
 import { sessionUsers } from '../../../../src/modules/auth/middleware.ts';
 import { FakeResponse, fakeRequest, routeThrough } from '../../support/auth.ts';
+import { DEFAULT_CONNECT_BURST } from '../../../../src/platform/constants.ts';
 
 process.env.OYA_PROFILE_SECRET = 'marketplace-routes-hermetic-key-only';
 const BUYER = { accountId: '123456789012', licenseArn: 'arn:aws:license:test', productCode: 'p' };
@@ -41,13 +42,18 @@ beforeEach(() => {
 afterEach(() => mock.restoreAll());
 
 /** Runs the real body parser with a stream; records redirect status without opening a socket. */
-function callback(form: string) {
+function callback(form: string, forwardedFor?: string) {
+  const forwarded = forwardedFor ? { 'x-forwarded-for': forwardedFor } : {};
   const req = Object.assign(Readable.from([Buffer.from(form)]), {
     method: 'POST',
     url: '/',
     originalUrl: '/marketplace/aws',
     ip: '127.0.0.1',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', 'content-length': String(Buffer.byteLength(form)) },
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'content-length': String(Buffer.byteLength(form)),
+      ...forwarded,
+    },
   });
   const res = new FakeResponse();
   return new Promise<FakeResponse>((done, reject) => {
@@ -93,6 +99,15 @@ describe('AWS fulfillment callback', () => {
     assert.ok(!JSON.stringify(res).includes('opaque+token'));
     assert.equal(res.headers['Cache-Control'], 'no-store');
     assert.equal(connect.mock.callCount(), 0);
+  });
+
+  it('limits each buyer by their own address, so one flood behind the ingress turns no one else away', async () => {
+    let last;
+    for (let i = 0; i <= DEFAULT_CONNECT_BURST; i++)
+      last = await callback('x-amzn-marketplace-token=junk', '203.0.113.7');
+    assert.match(String(last.location), /setup=unavailable/);
+    const other = await callback('x-amzn-marketplace-token=junk', '198.51.100.9');
+    assert.doesNotMatch(String(other.location), /setup=unavailable/);
   });
 
   it('rejects missing, duplicate, oversized and unknown form data without calling AWS', async () => {

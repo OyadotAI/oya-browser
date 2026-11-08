@@ -23,6 +23,8 @@ function fixture() {
   const deps: any = {
     config,
     electron: {
+      // Not the default browser, so the sign-in opens in the default one; as the default it opens elsewhere.
+      app: { isDefaultProtocolClient: () => false },
       shell: {
         openExternal: async (url) => {
           opened.push(url);

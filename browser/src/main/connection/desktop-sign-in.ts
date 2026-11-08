@@ -5,6 +5,7 @@ import type { AppServices } from '../app/services.ts';
 import { pairingServer } from './pairing.ts';
 import { readApiAnswer, serverHttpBase } from './server-api.ts';
 import { desktopCallback } from './desktop-callback.ts';
+import { openOutside } from '../chatgpt/index.ts';
 import * as C from './constants.ts';
 
 /** Authentication owns only these services and cannot import browser data. */
@@ -81,7 +82,9 @@ export class DesktopSignIn {
     const callback = await this.callback(state, attempt.abort.signal);
     try {
       const url = loginUrl(attempt.serverUrl, callback.url, state);
-      await opened(this.deps.electron.shell.openExternal(url), attempt.abort.signal);
+      // Never back into Oya itself: as the default browser it would hide the setup screen
+      // and show the dashboard in a persona with no console session.
+      await opened(openOutside(this.deps, url), attempt.abort.signal);
       return await callback.done;
     } finally {
       callback.close();

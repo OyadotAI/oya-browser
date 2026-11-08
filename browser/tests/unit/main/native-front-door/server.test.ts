@@ -10,6 +10,7 @@ async function fixture(
   execute = async () => ({}),
   resolveRequest?: (target: string, id: string, cancel: boolean) => void,
   passthrough?: (...args: any[]) => Promise<unknown>,
+  refuse = false,
 ) {
   const token = 'x'.repeat(32),
     calls: string[] = [];
@@ -27,6 +28,7 @@ async function fixture(
     },
     beginCommand: () => {
       calls.push('begin');
+      if (refuse) throw new Error('A person is controlling this browser');
       return () => {
         calls.push('finish');
       };
@@ -143,7 +145,7 @@ test('disconnect drops queued work but never releases an in-flight native operat
   assert.equal(f.calls.filter((c) => c === 'finish').length, 1);
 });
 
-test('native request continuation unblocks held work without releasing or reacquiring its gate', async (t) => {
+test('native request continuation unblocks held work without releasing its gate, under its own admission', async (t) => {
   let resume!: () => void, start!: () => void;
   const started = new Promise<void>((r) => {
     start = r;
@@ -162,7 +164,7 @@ test('native request continuation unblocks held work without releasing or reacqu
       assert.equal(target, 'a');
       assert.equal(id, 'held-request');
       assert.equal(cancel, false);
-      assert.deepEqual(f.calls, ['client:1', 'begin']);
+      assert.deepEqual(f.calls, ['client:1', 'begin', 'begin']); // admitted, while the navigation still holds its own
       resume();
     },
   );
@@ -181,7 +183,9 @@ test('native request continuation unblocks held work without releasing or reacqu
   await complete;
   assert.equal(replies.get(1).error, undefined);
   assert.equal(replies.get(2).error, undefined);
-  assert.deepEqual(f.calls, ['client:1', 'begin', 'finish']);
+  // The resolution is admitted like any command, without waiting behind the held navigation.
+  assert.deepEqual(f.calls.filter((c) => c === 'begin').length, 2);
+  assert.deepEqual(f.calls.filter((c) => c === 'finish').length, 2);
   socket.close();
   await once(socket, 'close');
 });
@@ -205,7 +209,7 @@ test('response fulfillment runs while its navigation holds the command gate', as
     async (target, method) => {
       assert.equal(target, 'a');
       assert.equal(method, 'Fetch.fulfillRequest');
-      assert.deepEqual(f.calls, ['client:1', 'begin']);
+      assert.deepEqual(f.calls, ['client:1', 'begin', 'begin']);
       resume();
       return {};
     },
@@ -220,7 +224,35 @@ test('response fulfillment runs while its navigation holds the command gate', as
   });
   assert.equal(fulfilled.error, undefined);
   assert.equal((await pending).error, undefined);
-  assert.deepEqual(f.calls, ['client:1', 'begin', 'finish']);
+  assert.deepEqual(f.calls, ['client:1', 'begin', 'begin', 'finish', 'finish']);
+  socket.close();
+  await once(socket, 'close');
+});
+
+test('a held request cannot be answered while a person controls the browser', async (t) => {
+  let reached = false;
+  const f = await fixture(
+    t,
+    async () => ({}),
+    () => {
+      reached = true;
+    },
+    async () => {
+      reached = true;
+      return {};
+    },
+    true,
+  );
+  const socket = await f.connect();
+  for (const method of ['Fetch.fulfillRequest', 'Fetch.continueRequest', 'Fetch.failRequest']) {
+    const reply = await request(socket, {
+      id: 1,
+      method,
+      params: { requestId: 'held-request', responseCode: 200, errorReason: 'Failed' },
+    });
+    assert.match(String(reply.error?.message), /controlling/, method);
+  }
+  assert.equal(reached, false);
   socket.close();
   await once(socket, 'close');
 });
