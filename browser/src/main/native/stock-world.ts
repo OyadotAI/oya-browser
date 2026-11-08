@@ -148,12 +148,12 @@ function viaPreload<T>(
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const run = new Run(target, { resolve: resolve as (value: unknown) => void, reject });
-    send(run, fallbackOf(resolve, reject), request);
+    dispatchRun(run, fallbackOf(resolve, reject), request);
   });
 }
 
 /** Sends the run to its frame's preload, arming `fallback` for when no acknowledgement comes. */
-function send(run: Run, fallback: (() => void) | null, request: Pick<WorldRun, 'world' | 'code'>): void {
+function dispatchRun(run: Run, fallback: (() => void) | null, request: Pick<WorldRun, 'world' | 'code'>): void {
   if (fallback) run.awaitAck(fallback);
   run.frame.send(STOCK_PERSONA.RUN, { id: run.id, ...request });
 }
