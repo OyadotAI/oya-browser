@@ -126,11 +126,11 @@ Profile Signer** role at the exact profile resource. Its federated credential ac
 `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange` and the exact
 subject `repo:OyadotAI/oya-browser:environment:windows-signing`. CI needs no subscription-wide
 Contributor role or certificate password. The environment permits only `main` for preflight
-and `v*` tags for releases, requires the authorized maintainer as reviewer and disables admin
-bypass. Before approving one specific pending signing deployment, review its immutable SHA,
-workflow/configuration and applicable successful CI; release tags must resolve to that SHA on
-main. Existing release authorization can cover that concrete review and approval. Never approve
-arbitrary pending runs or install an automatic approval workflow.
+and `v*` tags for releases and disables admin bypass. It has no required reviewer, so a release
+signs without waiting for an approval: since 2026-11-08 the branch and tag policy is the gate,
+which makes whoever can push to `main` or a `v*` tag able to get a binary signed as Oya.
+Protect `main` with required pull-request review before relying on that. Release tags must
+resolve to a SHA on main.
 
 The Windows job refuses missing signing inputs and tags outside main, requires SHA-256 timestamped signing and checks
 the installer, packaged executable and a disposable installed executable against the expected
