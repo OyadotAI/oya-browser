@@ -45,6 +45,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:analyzer": "node tests/integration/analyzer-dom.mjs",
+    "test:frames": "node tests/integration/frame-read.mjs",
     "test:recorder": "node tests/integration/recorder-dom.mjs",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit",

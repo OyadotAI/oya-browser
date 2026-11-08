@@ -50,3 +50,10 @@ export const BUTTON_MODIFIERS = [
 export const CAPTURE_VIZ_TRIES = 5;
 /** The wait before the next capture attempt, times the attempt number. */
 export const CAPTURE_VIZ_BACKOFF_MS = 250;
+
+/**
+ * Longest a run in a subframe may take once acknowledged. The tab's disposal events are the
+ * main frame's: a subframe that navigated or was removed mid-run never settled it, and the
+ * agent's whole page read waited on it until the server gave up.
+ */
+export const SUBFRAME_RUN_MS = 15_000;

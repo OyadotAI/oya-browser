@@ -158,15 +158,19 @@ await browser.stop();
 
 ## Examples
 
-| Example | What it shows |
-| :--- | :--- |
-| [`sdk/01-quickstart.ts`](examples/sdk/01-quickstart.ts) | Start a browser and drive it in plain English |
-| [`sdk/05-playbooks.ts`](examples/sdk/05-playbooks.ts) | Record, replay, background runs and auto-heal |
-| [`sdk/03-mfa.ts`](examples/sdk/03-mfa.ts) | Password plus TOTP sign-in the agent never sees (pairs the desktop app) |
-| [`sdk/04-personas.ts`](examples/sdk/04-personas.ts) | Stable device identities you reuse across runs |
-| [`sdk/02-captcha.ts`](examples/sdk/02-captcha.ts) | CAPTCHA detection and solving |
-| [`playwright/reddit/`](examples/playwright/reddit/) | 10 parallel browsers through a residential proxy |
-| [`multi-vendor/`](examples/multi-vendor/01-multi-vendor.ts) | One script on Oya Cloud, Browserbase, Steel, Anchor and Browser Use |
+| Example | What it shows | Runs on |
+| :--- | :--- | :--- |
+| [`sdk/01-quickstart.ts`](examples/sdk/01-quickstart.ts) | Start a browser and drive it in plain English | Local install or Oya Cloud |
+| [`sdk/05-playbooks.ts`](examples/sdk/05-playbooks.ts) | Record, replay, background runs and auto-heal | Local install or Oya Cloud |
+| [`playwright/01-connect.ts`](examples/playwright/01-connect.ts) | Standard Playwright through Oya's CDP endpoint | Local install or Oya Cloud |
+| [`sdk/03-mfa.ts`](examples/sdk/03-mfa.ts) | Password plus TOTP sign-in the agent never sees | The desktop app (it pairs it) |
+| [`sdk/02-captcha.ts`](examples/sdk/02-captcha.ts) | CAPTCHA detection and solving | Oya Cloud, or a solver key in Settings |
+| [`sdk/04-personas.ts`](examples/sdk/04-personas.ts) | Stable device identities you reuse across runs | Oya Cloud |
+| [`playwright/reddit/`](examples/playwright/reddit/) | 10 parallel browsers through a residential proxy | Oya Cloud, with a proxy on the persona |
+| [`multi-vendor/`](examples/multi-vendor/01-multi-vendor.ts) | One script on Oya Cloud, Browserbase, Steel, Anchor and Browser Use | Oya Cloud plus each vendor's key |
+
+The local install runs one Docker browser and no Oya Cloud. For the Oya Cloud rows, use a key from
+[oyabrowser.com](https://oyabrowser.com) and leave `OYA_BASE_URL` unset.
 
 All of them: [examples/](examples/README.md).
 

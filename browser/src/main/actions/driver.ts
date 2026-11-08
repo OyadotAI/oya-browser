@@ -3,7 +3,7 @@
  * and helpers, the keyboard and mouse, waits for loads, finds elements, and
  * dispatches server and dev panel commands through their command maps.
  */
-import type { WebContents } from 'electron';
+import type { WebContents, WebFrameMain } from 'electron';
 import type { NativePage as PageView } from '../native/index.ts';
 import type { Keyboard } from '../input/keyboard.ts';
 import type { Mouse } from '../input/mouse.ts';
@@ -12,6 +12,7 @@ import { findElementJs, actionScript } from './scripts.ts';
 import { renderedAnalysis, type FormatSettings } from './page-format.ts';
 import { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS, EMPTY_ANALYSIS_RETRY_MS } from './constants.ts';
 import { PAGE_COMMANDS } from './page-commands.ts';
+import { frameDriver, frameRefusal, targetOf, withFrames, type FrameTarget } from './frame-scope.ts';
 import { DEV_COMMANDS, UNGUARDED_DEV_COMMANDS } from './dev-commands.ts';
 import type { AnalysisData, CommandId, CommandParams, Located, ScriptResult } from './types.ts';
 
@@ -43,8 +44,8 @@ export interface PageDriverDeps extends FormatSettings {
   pullCookiesFor(url: string): Promise<unknown>;
   /** Loads the analyzer into the page, if it is not there yet. */
   injectScripts(view: PageView): Promise<unknown>;
-  /** Evaluates an expression in the analyzer's isolated world and answers its value. */
-  worldEval<T = unknown>(view: PageView, expression: string): Promise<T>;
+  /** Evaluates an expression in the analyzer's isolated world, of `frame` when given (a cross-origin iframe), and answers its value. */
+  worldEval<T = unknown>(view: PageView, expression: string, frame?: WebFrameMain): Promise<T>;
   /** Answers a server command: success, its data, the error and the error's code. */
   sendResult(id: CommandId, ok: boolean, data?: unknown, error?: string, code?: string): void;
   /** Opens a tab on `url`, active when `activate`; answers its number. */
@@ -75,6 +76,9 @@ export interface PageDriverInput extends PageDriverDeps {
 
 /** A dev panel answer, given by return value. */
 export type DevAnswer = ScriptResult | null;
+
+/** A subframe element an action names, or why its frame is gone. */
+type Target = FrameTarget | string;
 
 /** The events that end a load, successful or not. */
 const LOAD_END_EVENTS = ['did-finish-load', 'did-fail-load'] as const;
@@ -168,7 +172,21 @@ export class PageDriver {
     if (!Object.hasOwn(PAGE_COMMANDS, action)) return this.runInjected(id, action, params, view);
     // Said on the shield while the action runs; the agent never waits for it.
     this.deps.narrate?.(view, action, params);
+    const target = await targetOf(this, view, action, params);
+    if (target) return this.runInFrame(id, action, params, view, target);
     await PAGE_COMMANDS[action](this, id, params, view);
+  }
+
+  /**
+   * A command on an element inside another site's frame, run by a driver scoped to that
+   * frame; refused for a frame that has gone, and for a command whose input the frame
+   * driver cannot keep inside the frame.
+   */
+  async runInFrame(id: CommandId, action: string, params: CommandParams | undefined, view: PageView, target: Target) {
+    const refused = frameRefusal(target, action);
+    if (refused) return this.deps.sendResult(id, false, null, ...refused);
+    const { frame, selector } = target as FrameTarget;
+    await PAGE_COMMANDS[action](await frameDriver(this, view, frame), id, { ...params, selector }, view);
   }
 
   /**
@@ -183,7 +201,7 @@ export class PageDriver {
     if (action === 'analyze') this.deps.analysisStarted(view);
     const raw = await this.analysed(action, params, view);
     if (action === 'analyze') this.deps.analysisFinished(view, raw);
-    const result = action === 'analyze' ? renderedAnalysis(this.deps, raw, params) : raw;
+    const result = action === 'analyze' ? await this.readable(view, raw, params) : raw;
     this.deps.sendResult(id, result?.ok ?? true, result?.data, result?.error);
   }
 
@@ -192,6 +210,16 @@ export class PageDriver {
    * more after a pause: an app that answered before it drew anything is still
    * loading, and an empty page would tell the agent the site is broken.
    */
+  /**
+   * The analysis as the agent reads it, with each cross-origin iframe read in place. Done
+   * after the recorder has the page's own elements: a subframe's ids are not ones it replays.
+   */
+  async readable(view: PageView, raw: unknown, params: CommandParams | undefined): Promise<ScriptResult | null> {
+    const script = actionScript('analyze', params) ?? '';
+    return renderedAnalysis(this.deps, await withFrames(this, view, raw, script), params);
+  }
+
+  /** Runs the action's script; an analysis that found no elements is read once more after a pause. */
   async analysed(action: string, params: CommandParams | undefined, view: PageView): Promise<ScriptResult | null> {
     const script = (): string => actionScript(action, params) ?? '';
     const raw = await this.deps.worldEval<ScriptResult<AnalysisData> | null>(view, script());

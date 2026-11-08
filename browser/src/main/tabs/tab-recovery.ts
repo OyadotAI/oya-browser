@@ -33,7 +33,7 @@ export function alive(contents: WebContents, wait = TAB_PROBE_MS): Promise<boole
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), wait);
     const answered = (): void => (clearTimeout(timer), resolve(true));
-    runInWorld(contents, ANALYZER_WORLD_ID, '1', true).then(answered, answered);
+    runInWorld(contents, ANALYZER_WORLD_ID, '1', { preloadOnly: true }).then(answered, answered);
   });
 }
 

@@ -5,9 +5,9 @@
  * preload runs the code in the page's process at once. It runs only after main accepts
  * its acknowledgement, so a late one is refused and the stock fallback never runs twice.
  */
-import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
+import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent, WebContents, WebFrameMain } from 'electron';
 import { STOCK_PERSONA } from '../../shared/stock-persona.ts';
-import { STOCK_WORLD_ACK_MS } from './constants.ts';
+import { STOCK_WORLD_ACK_MS, SUBFRAME_RUN_MS } from './constants.ts';
 /** A preload's reply. */
 interface Reply {
   /** The request it answers. */
@@ -16,6 +16,34 @@ interface Reply {
   value?: unknown;
   /** The code's error message. */
   error?: string;
+}
+/** Where a run goes: a tab and one of its frames. */
+interface Target {
+  /** The tab. */
+  contents: WebContents;
+  /** The frame in it. */
+  frame: WebFrameMain;
+}
+/** How a run settles. */
+interface Settle {
+  /** With the code's value. */
+  resolve: (value: unknown) => void;
+  /** With an error. */
+  reject: (error: Error) => void;
+}
+/** What the preload is asked to run, besides the request id. */
+interface WorldRun {
+  /** The isolated world. */
+  world: number;
+  /** Trusted browser code. */
+  code: string;
+}
+/** How a run is sent. */
+export interface RunOptions {
+  /** Never fall back to the stock API, which waits for the page to load. */
+  preloadOnly?: boolean;
+  /** A subframe instead of the tab's main frame. */
+  frame?: WebFrameMain;
 }
 /** Every run in flight, by id. */
 const pending = new Map<number, Run>();
@@ -29,20 +57,28 @@ class Run {
   readonly id = ++nextId;
   /** The tab it was sent to; replies from any other renderer are ignored. */
   readonly contents: WebContents;
+  /** The exact frame it was sent to; a reply from any other frame of the tab is ignored. */
+  readonly frame: WebFrameMain;
   /** Settles with the preload's value. */
   private readonly resolve: (value: unknown) => void;
   /** Settles with an error. */
   private readonly reject: (error: Error) => void;
   /** Falls back to the stock API when no acknowledgement arrives. */
   private timer?: ReturnType<typeof setTimeout>;
+  /** A subframe run's end: the tab's disposal events do not cover a frame that navigated or went away. */
+  private deadline?: ReturnType<typeof setTimeout>;
+  /** Fails a subframe run that outlived its deadline. */
+  private readonly late = () => this.fail(new Error('The frame did not finish'));
   /** The disposal listener, removed once the run settles. */
   private readonly gone = () => this.fail(new Error('Render frame was disposed before the run finished'));
   /** Arms the disposal listeners on the tab. */
-  constructor(contents: WebContents, resolve: (value: unknown) => void, reject: (error: Error) => void) {
-    this.contents = contents;
+  constructor(target: Target, { resolve, reject }: Settle) {
+    this.contents = target.contents;
+    this.frame = target.frame;
     this.resolve = resolve;
     this.reject = reject;
-    for (const name of DISPOSING) contents.on(name as 'destroyed', this.gone);
+    for (const name of DISPOSING) this.contents.on(name as 'destroyed', this.gone);
+    if (this.frame !== this.contents.mainFrame) this.deadline = setTimeout(this.late, SUBFRAME_RUN_MS);
     pending.set(this.id, this);
   }
   /** Calls `fallback` unless the preload acknowledges first. */
@@ -68,6 +104,7 @@ class Run {
   /** Forgets the run and its listeners. */
   private release(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.deadline);
     for (const name of DISPOSING) this.contents.removeListener(name as 'destroyed', this.gone);
     pending.delete(this.id);
   }
@@ -80,23 +117,57 @@ export function useStockWorld(ipc: Pick<IpcMain, 'on' | 'handle'>): void {
   ipc.on(STOCK_PERSONA.RESULT, (event: IpcMainEvent, reply: Reply) => from(event, reply?.id)?.answer(reply));
   installed = true;
 }
-/** The run `id`, only when the reply came from the main frame of the tab it was sent to, never a subframe. */
+/** The run `id`, only when the reply came from the exact frame of the tab it was sent to: a sibling or the parent cannot answer for it. */
 function from(event: IpcMainEvent | IpcMainInvokeEvent, id: number): Run | undefined {
   const run = pending.get(id);
-  return run && run.contents === event.sender && event.senderFrame === run.contents.mainFrame ? run : undefined;
+  return run && run.contents === event.sender && event.senderFrame === run.frame ? run : undefined;
 }
 /**
- * Runs `code` in isolated world `world` of the tab's main frame without waiting for
- * the page to finish loading. `preloadOnly` never falls back to the stock API, which
- * waits for the load: a caller asking whether the renderer answers at all (the
- * Reload probe, tabs/tab-recovery.ts) must not mistake a slow load for silence.
+ * Runs `code` in isolated world `world` of one frame of the tab (its main frame unless
+ * `frame` names a subframe) without waiting for the page to finish loading. `preloadOnly`
+ * never falls back to the stock API, which waits for the load: a caller asking whether
+ * the renderer answers at all (the Reload probe, tabs/tab-recovery.ts) must not mistake
+ * a slow load for silence. A subframe is always preload-only: the stock API reaches the
+ * main frame alone, so a fallback there would run the code in the wrong document.
  */
-export function runInWorld<T>(contents: WebContents, world: number, code: string, preloadOnly = false): Promise<T> {
-  const stock = () => contents.executeJavaScriptInIsolatedWorld(world, [{ code }]) as Promise<T>;
-  if (!installed) return stock();
+export function runInWorld<T>(contents: WebContents, world: number, code: string, opts: RunOptions = {}): Promise<T> {
+  const frame = opts.frame ?? contents.mainFrame;
+  const main = frame === contents.mainFrame;
+  const stock = (): Promise<T> => contents.executeJavaScriptInIsolatedWorld(world, [{ code }]);
+  if (!installed) return main ? stock() : Promise.reject(new Error(SUBFRAME_UNAVAILABLE));
+  return viaPreload<T>({ contents, frame }, { world, code }, (resolve, reject) =>
+    fallbackFor(main, opts, () => void stock().then(resolve, reject), reject),
+  );
+}
+
+/** A run through the frame's preload; `fallbackOf` says what happens when the preload stays silent. */
+function viaPreload<T>(
+  target: Target,
+  request: Pick<WorldRun, 'world' | 'code'>,
+  fallbackOf: (resolve: (value: T) => void, reject: (e: Error) => void) => (() => void) | null,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const run = new Run(contents, resolve as (value: unknown) => void, reject);
-    if (!preloadOnly) run.awaitAck(() => void stock().then(resolve, reject));
-    contents.mainFrame.send(STOCK_PERSONA.RUN, { id: run.id, world, code });
+    const run = new Run(target, { resolve: resolve as (value: unknown) => void, reject });
+    send(run, fallbackOf(resolve, reject), request);
   });
 }
+
+/** Sends the run to its frame's preload, arming `fallback` for when no acknowledgement comes. */
+function send(run: Run, fallback: (() => void) | null, request: Pick<WorldRun, 'world' | 'code'>): void {
+  if (fallback) run.awaitAck(fallback);
+  run.frame.send(STOCK_PERSONA.RUN, { id: run.id, ...request });
+}
+
+/**
+ * What happens when the preload does not acknowledge: the main frame retries through the
+ * stock API (unless `preloadOnly`), a subframe fails, since the stock API cannot reach it.
+ */
+function fallbackFor(main: boolean, opts: RunOptions, retry: () => void, reject: (e: Error) => void) {
+  if (!main) return () => reject(new Error(SILENT));
+  return opts.preloadOnly ? null : retry;
+}
+
+/** Why a subframe run cannot start: the preload channel is not wired yet. */
+const SUBFRAME_UNAVAILABLE = 'This frame cannot be read before the tab preload is ready';
+/** Why a run with no fallback failed: its frame never acknowledged it. */
+const SILENT = 'The frame did not answer';

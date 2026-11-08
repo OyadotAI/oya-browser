@@ -12,7 +12,7 @@
  * wires Electron's events to them. See ARCHITECTURE.md.
  */
 import { announceBookmarks } from './shell/bookmarks-bar.ts';
-import electron, { type BrowserView } from 'electron';
+import electron, { type BrowserView, type WebFrameMain } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -274,7 +274,8 @@ ctx.actions = new PageDriver({
   getActiveView: () => ctx.agentTab.view(),
   pullCookiesFor: (url) => ctx.cookies.pullCookiesFor(url),
   injectScripts: (view) => ctx.protection.injectScripts(view),
-  worldEval: <T>(view: Parameters<World['evaluate']>[0], expression: string) => ctx.world.evaluate<T>(view, expression),
+  worldEval: <T>(view: Parameters<World['evaluate']>[0], expression: string, frame?: WebFrameMain) =>
+    ctx.world.evaluate<T>(view, expression, { frame }),
   sendResult: (id, ok, data, error, code) => ctx.commands.sendResult(id, ok, data, error, code),
   createTab: (url, activate) => ctx.agentTab.opened(ctx.tabs.createTab(url, activate && ctx.agentTab.following())),
   closeTab: (id) => ctx.tabs.closeTab(id),
