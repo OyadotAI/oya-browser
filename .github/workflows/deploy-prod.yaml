@@ -116,7 +116,7 @@ jobs:
 
     - name: Build NSIS installer (self-signed)
       if: steps.signing.outputs.mode == 'self'
-      run: cd browser && npm run dist:win -- --x64 -c.win.verifyUpdateCodeSignature=false
+      run: cd browser && npm run dist:win -- --x64 --config.win.verifyUpdateCodeSignature=false
 
     - name: Verify packaged and installed Windows signatures
       if: steps.signing.outputs.mode == 'managed'
