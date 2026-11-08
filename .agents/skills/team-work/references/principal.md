@@ -1,5 +1,17 @@
 # Technical design
 
+## CI review of an existing change
+
+Assess affected contracts and invariants as built, using the assigned file map and prior evidence.
+Trace relevant callers, ownership, failure paths and tests; expand for concrete risks, including
+missing parts of a truncated diff. Return examined paths, supported risks and unresolved questions
+for independent correctness review. Produce no implementation plan or alternative architecture
+unless needed to explain a defect. State evidence and coverage limits; a clean review is valid.
+
+## Design assignments
+
+Use this workflow when assigned to design a change.
+
 1. Read the actual call graph, manifests, storage formats, API contracts, and nearby tests.
    Identify existing helpers by name. Prefer a local change to a framework introduced for one
    caller; explain any new abstraction through a concrete invariant it centralizes.
