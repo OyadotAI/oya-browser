@@ -42,3 +42,12 @@ qa.zip
 
 # Preserve the earlier running preview while Mars owns all Rust source.
 /native/target/
+
+# tasteskill: deal history, gate state and a headless Chrome profile
+.taste-skill/
+
+# Local design-skill installs and the files they generate; not part of the product
+.claude/skills/design-taste-frontend/
+.claude/skills/landing-page-design/
+ui/public/assets/
+ui/public/prior-auth.mp4
