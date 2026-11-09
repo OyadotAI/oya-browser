@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- New version-free download addresses, oyabrowser.com/download/mac and /download/windows, always serve the newest installer.
+- llms.txt, the install guide and the skill tell an agent to install the desktop app itself and ask the person only for the Connect click.
+
 ## [1.0.223](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.223) · 2026-11-09
 
 ### Changed

@@ -11,7 +11,23 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-Prefer the SDK (Node 22.3+). It needs nothing from the user but their email:
+On the user's own computer, install the Oya desktop app yourself and use it as your browser; the user's only step is one click. The two addresses always point at the current installer.
+
+macOS:
+
+```sh
+curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac
+hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
+cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
+hdiutil detach /Volumes/Oya
+open -a "Oya Browser"
+```
+
+Windows (PowerShell): `curl.exe -L -o $env:TEMP\Oya.exe https://oyabrowser.com/download/windows; Start-Process -Wait "$env:TEMP\Oya.exe" -ArgumentList '/S'; Start-Process "$env:LOCALAPPDATA\Programs\Oya Browser\Oya Browser.exe"`.
+
+Then ask the user to click Connect next to your name in the Oya window footer. That writes an MCP server named `oya-browser` at `http://127.0.0.1:47321/mcp` into your config, with the token in the OS keychain; start a new session and use those tools for every web task. If the tools are configured but nothing answers on port 47321, the app is closed: open it and retry.
+
+Without a person's computer (a server, a container, CI), use the SDK (Node 22.3+). It needs nothing from the user but their email:
 
 ```ts
 import { Oya } from "@oya-ai/browser"; // npm install @oya-ai/browser
