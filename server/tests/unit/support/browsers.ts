@@ -117,8 +117,12 @@ export function driveBrowser(browserId: string, answer: (action: string, params:
 
 /** One tool or resource registered on a FakeMcpServer. */
 type Registered = {
+  /** The name a person sees. */
+  title: string;
   /** What the model is told. */
   description: string;
+  /** Its read-only, destructive and open-world hints. */
+  annotations: Record<string, unknown>;
   /** The zod shape of its arguments. */
   schema: unknown;
   /** Its handler. */
@@ -132,9 +136,10 @@ export class FakeMcpServer {
   /** Registered resources by name. */
   resources = new Map<string, { uri: string; read: () => Promise<any> }>();
 
-  /** Registers a tool, as McpServer.tool does. */
-  tool(name: string, description: string, schema: unknown, handler: (args?: any) => Promise<any>) {
-    this.tools.set(name, { description, schema, handler });
+  /** Registers a tool, as McpServer.registerTool does; the config's title and hints are kept for the tests that check them. */
+  registerTool(name: string, config: any, handler: (args?: any) => Promise<any>) {
+    const { title, description, inputSchema: schema, annotations } = config;
+    this.tools.set(name, { title, description, schema, annotations, handler });
   }
 
   /** Registers a resource, as McpServer.resource does. */

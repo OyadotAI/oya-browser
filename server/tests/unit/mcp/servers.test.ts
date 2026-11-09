@@ -40,6 +40,13 @@ function resultOf(res: FakeResponse) {
   return JSON.parse(stream.split('data: ')[1]).result;
 }
 
+/** A listed tool carries a non-empty title and boolean read-only and destructive hints. */
+function assertAnnotated(tool: { name: string; title?: string; annotations?: Record<string, unknown> }) {
+  assert.ok(tool.title, `${tool.name} has no title`);
+  assert.equal(typeof tool.annotations?.readOnlyHint, 'boolean', `${tool.name} has no readOnlyHint`);
+  assert.equal(typeof tool.annotations?.destructiveHint, 'boolean', `${tool.name} has no destructiveHint`);
+}
+
 /** Makes every credential an operator on `key`. */
 const operatorOn = (key: string) => stubControl({ authenticate: async () => ({ key, role: 'operator' }) });
 
@@ -66,6 +73,12 @@ describe('per-browser MCP endpoint', () => {
     const names = resultOf(await call(handleMcpRequest)).tools.map((t) => t.name);
     assert.ok(names.includes('list_tabs'));
     assert.ok(!names.includes('start_browser'));
+  });
+
+  it('gives every tool a title and read-only and destructive hints', async () => {
+    operatorOn('k-mine');
+    connectBrowser(B, 'k-mine');
+    for (const tool of resultOf(await call(handleMcpRequest)).tools) assertAnnotated(tool);
   });
 
   it('reads the current page as a resource', async () => {
@@ -129,6 +142,11 @@ describe('pool MCP endpoint', () => {
     const names = resultOf(await call(handlePoolMcpRequest)).tools.map((t) => t.name);
     assert.ok(names.includes('start_browser') && names.includes('pool_status') && names.includes('navigate'));
     assert.ok(!names.includes('list_tabs'));
+  });
+
+  it('gives every pool tool a title and read-only and destructive hints', async () => {
+    operatorOn('k-pool');
+    for (const tool of resultOf(await call(handlePoolMcpRequest)).tools) assertAnnotated(tool);
   });
 
   it('reads the pool’s status as a JSON resource', async () => {
