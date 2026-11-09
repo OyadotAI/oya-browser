@@ -16,8 +16,8 @@ const TRY_PROMPTS: [string, string, string, string][] = [
   [
     'Prompt 1 \u00b7 any agent',
     'Works with the desktop app connected or the cloud endpoint configured.',
-    'Read https://oyabrowser.com/llms.txt and set yourself up to browse the web through Oya instead of Chrome. Tell me exactly what to click, then once I have done it, open https://news.ycombinator.com in Oya and read me the top three titles.',
-    'Expected: setup steps for your agent, then the three Hacker News titles read from Oya.',
+    'Read https://oyabrowser.com/llms.txt, install Oya on this computer and set yourself up to browse the web through it instead of Chrome. Tell me when you need me to click Connect, then open https://news.ycombinator.com in Oya and read me the top three titles.',
+    'Expected: the agent installs and opens Oya, asks you for the Connect click, then reads the three Hacker News titles from Oya.',
   ],
   [
     'Prompt 2 \u00b7 connector, no key',
