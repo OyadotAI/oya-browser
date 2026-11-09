@@ -66,11 +66,12 @@ SDK (Node 22.3+). It signs up for a key and starts cloud browsers;
 
 `oya.desktop.connect()` returns at once when the desktop app is already
 connected. Otherwise it opens a pairing link and waits up to five minutes while
-you tell the person: "Click Connect in the Oya window, and leave 'Also import my
-logins' ticked." That import brings their Chrome (or Arc, Brave, Edge, Firefox)
-cookies over, so sites are already signed in. On macOS they will also be asked
-to allow access to "Chrome Safe Storage"; that is the import reading Chrome's
-cookies, and it needs Allow. If the app is not installed, the error says where
+you tell the person: "Click Connect in the Oya window, and leave the login
+import ticked." The import copies the cookies of their usual browser (Chrome,
+Arc, Brave, Edge, Firefox or Safari) into the Oya app on the same computer, so
+sites are already signed in; nothing is sent anywhere. On macOS the OS asks
+once before Oya may read Chrome's cookie store, and it needs Allow. If the app
+is not installed, the error says where
 to download it (https://oyabrowser.com/#download): ask the person to install
 it, then call `connect()` again.
 

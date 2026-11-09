@@ -23,7 +23,7 @@ const oya = new Oya();
 const browser = await oya.desktop.connect(); // the user's own browser, with their logins
 ```
 
-`desktop.connect()` pairs the Oya desktop app when it is not connected yet: tell the user to click Connect in the Oya window and keep "Also import my logins" ticked (on macOS, allow "Chrome Safe Storage"). If the app is missing, the error gives the download link. `claimUrl` matters only for Oya Cloud browsers: send it to the user then.
+`desktop.connect()` pairs the Oya desktop app when it is not connected yet: tell the user to click Connect in the Oya window and keep the login import ticked. The import copies the cookies of the user's usual browser into the Oya app on the same computer, so sites are already signed in; nothing is sent anywhere. On macOS the OS asks once before Oya may read Chrome's cookie store. If the app is missing, the error gives the download link. `claimUrl` matters only for Oya Cloud browsers: send it to the user then.
 
 MCP tools, when the user already set them up, work too:
 `claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`. The CLI is `npm install -g @oya-ai/cli`.
