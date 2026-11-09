@@ -6,6 +6,12 @@
 export const MCP_VERSION = '1.0.0';
 /** The Authorization scheme a caller's key arrives under. */
 export const BEARER = 'Bearer ';
+/**
+ * JSON-RPC methods the pool endpoint answers without a key: registries and
+ * clients read the tool list before signing up. None of them reaches a browser
+ * or needs a key; tool calls, resources and streams stay behind sign-in.
+ */
+export const PUBLIC_METHODS = new Set(['initialize', 'notifications/initialized', 'ping', 'tools/list']);
 /** Navigation waits on slow sites. */
 export const NAVIGATE_TIMEOUT_MS = 90_000;
 /** A scroll that re-analyzes the page it lands on needs longer than a plain command. */
