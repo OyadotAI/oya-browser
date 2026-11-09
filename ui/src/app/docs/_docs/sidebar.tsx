@@ -74,9 +74,12 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'MCP',
     links: [
       ['mcp-setup', 'Setup'],
+      ['desktop-app', 'Desktop app'],
       ['cursor', 'Cursor'],
-      ['claude-desktop', 'Claude Desktop'],
       ['claude-code', 'Claude Code'],
+      ['codex', 'Codex'],
+      ['claude-ai', 'claude.ai and Claude Desktop'],
+      ['try-it', 'Try it'],
     ],
   },
   {
@@ -92,6 +95,7 @@ const NAV_GROUPS: NavGroup[] = [
       ['scroll', 'scroll'],
       ['tabs', 'Tab management'],
       ['wait', 'wait'],
+      ['more-tools', 'More tools'],
     ],
   },
   {
@@ -205,10 +209,10 @@ function NavLink({ id, children }: NavLinkProps) {
 function SwaggerLink() {
   return (
     <a
-      href="/swagger"
+      href="/openapi.json"
       className="flex items-center gap-1 text-[13px] text-text-muted hover:text-text py-1 transition-colors"
     >
-      Swagger UI <ExternalLink className="w-3 h-3" />
+      OpenAPI spec <ExternalLink className="w-3 h-3" />
     </a>
   );
 }

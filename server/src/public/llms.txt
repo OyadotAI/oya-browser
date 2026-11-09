@@ -575,7 +575,7 @@ different API keys are fully isolated from each other.
 All endpoints require Authorization: Bearer API_KEY header (except /health and
 agent self-signup). API keys are created via the dashboard after sign-in
 (POST /auth/keys), or by an agent for itself (see Agent self-signup).
-Interactive API testing (Swagger UI): GET /swagger
+The OpenAPI 3.0 description: GET /openapi.json
 
     GET  /health                    Server status + browser count
     POST /auth/signup               Create user account (web console; captcha on hosted)

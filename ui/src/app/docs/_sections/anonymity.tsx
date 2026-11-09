@@ -17,7 +17,7 @@ function Anonymity() {
       <p className="mb-3 text-[15px] leading-relaxed">
         Create and manage browser profiles with unique fingerprints, proxy routing, and isolated cookie stores. Each
         profile is a complete identity, different canvas hash, WebGL renderer, navigator properties, and session
-        storage. Switch identities with a single MCP call.
+        storage.
       </p>
       <NoteBox>
         Every browser runs as a persona: a fingerprint, cookie jar and proxy bound together and stable for its life.

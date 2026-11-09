@@ -26,6 +26,14 @@ describe('GET /docs/<slug>.md', () => {
     });
   }
 
+  it('carries the try-it prompts in the MCP page as fenced code', async () => {
+    serveDocsHtml();
+    const body = await (await get('mcp.md')).text();
+    const fences = body.match(/```[\s\S]*?```/g) ?? [];
+    expect(fences.some((fence) => fence.includes('instead of Chrome'))).toBe(true);
+    expect(body).toContain('### Try it');
+  });
+
   it('cuts each part from its own section only', async () => {
     serveDocsHtml();
     const sdk = await (await get('sdk.md')).text();

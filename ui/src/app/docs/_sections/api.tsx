@@ -9,13 +9,6 @@ import { CodeBlock, InlineCode, SectionHeading, Table } from '../_docs/blocks';
 /** Rows of a table in the REST API section. */
 const REST_API_ROWS_1: ReactNode[][] = [
   [<InlineCode key="m1">GET</InlineCode>, <InlineCode key="e1">/health</InlineCode>, 'Server status + browser count'],
-  [
-    <InlineCode key="m2">POST</InlineCode>,
-    <InlineCode key="e2">/register-key</InlineCode>,
-    <span key="d2">
-      Register a new API key (<InlineCode>{`{ "key": "..." }`}</InlineCode>)
-    </span>,
-  ],
   [<InlineCode key="m3">GET</InlineCode>, <InlineCode key="e3">/browsers</InlineCode>, 'List your connected browsers'],
   [
     <InlineCode key="ms">POST</InlineCode>,
@@ -226,10 +219,17 @@ function RestApi() {
       {/* ============ REST API ============ */}
       <SectionHeading id="rest-api">REST API</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
-        All endpoints require <InlineCode>Authorization: Bearer YOUR_API_KEY</InlineCode> header (except health and
-        register). Interactive API testing available at{' '}
-        <a href="/swagger" className="text-accent hover:text-accent-hover transition-colors">
-          /swagger
+        Every route lives under <InlineCode>/api</InlineCode> and needs an{' '}
+        <InlineCode>Authorization: Bearer YOUR_API_KEY</InlineCode> header; only <InlineCode>/api/health</InlineCode>{' '}
+        and agent self-signup answer without one. The table leaves the prefix off:{' '}
+        <InlineCode>GET /browsers</InlineCode> means <InlineCode>GET https://oyabrowser.com/api/browsers</InlineCode>.
+        The machine-readable description is at{' '}
+        <a href="/openapi.json" className="text-accent hover:text-accent-hover transition-colors">
+          /openapi.json
+        </a>
+        . For the full route list, including auth, pool, cookies and admin config, read the REST API section of{' '}
+        <a href="/llms.txt" className="text-accent hover:text-accent-hover transition-colors">
+          oyabrowser.com/llms.txt
         </a>
         .
       </p>
@@ -239,8 +239,8 @@ function RestApi() {
         Command API Reference
       </h3>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Send commands via <InlineCode>POST /browsers/:id/command</InlineCode>. Each action uses only specific params,
-        the rest are ignored.
+        Send commands via <InlineCode>POST /api/browsers/:id/command</InlineCode>. Each action uses only specific
+        params, the rest are ignored.
       </p>
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">Navigation Actions</h3>

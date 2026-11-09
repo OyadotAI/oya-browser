@@ -50,12 +50,6 @@ const DOWNLOAD_ROWS_1: ReactNode[][] = [
 ];
 
 /** Rows of a table in the Connect section. */
-const CONNECT_ROWS_1: ReactNode[][] = [
-  ['Server URL', <InlineCode key="url">wss://oyabrowser.com/ws</InlineCode>],
-  ['API Key', 'The key you generated in the dashboard'],
-  ['Browser Name', 'Optional, how it shows in the dashboard'],
-];
-
 /** The first run: do a task once with the model, save it, replay it without. */
 const FIRST_RUN = `import { Oya } from "@oya-ai/browser";
 
@@ -296,12 +290,48 @@ function Connect() {
     <>
       {/* ============ CONNECT ============ */}
       <SectionHeading id="connect">Connect a desktop browser</SectionHeading>
-      <p className="mb-3 text-[15px] leading-relaxed">Open Oya Browser. The setup screen appears on first launch.</p>
-      <Table headers={['Field', 'Value']} rows={CONNECT_ROWS_1} />
-      <p className="mb-3 text-[15px] leading-relaxed">
-        Click <strong>Connect</strong>. The green dot in the toolbar confirms the connection. Your browser now appears
-        in the <InlineLink href="/dashboard">dashboard</InlineLink>.
-      </p>
+      <p className="mb-3 text-[15px] leading-relaxed">Open Oya Browser. The first screen asks how you want to start.</p>
+      <Step n={1} title="Pick a starting point">
+        <p className="mb-3 text-[15px] leading-relaxed">
+          <strong>Technical</strong>: sign in with Oya, connect a local agent (Claude Code, Codex, Cursor or VS Code) or
+          paste a model API key. <strong>Non-technical</strong>: connect the assistant you already pay for, ChatGPT or
+          Claude, and type tasks in Oya&apos;s Ask panel. <strong>AI expert</strong>: sign in to your Oya workspace and
+          walk through the control plane; a server URL and Oya key is still there as the second button.
+        </p>
+      </Step>
+      <ConnectSteps />
+    </>
+  );
+}
+
+/** The Connect section's remaining steps: the footer button, logins, a new session. */
+function ConnectSteps() {
+  return (
+    <>
+      <Step n={2} title="Connect your agent from the footer">
+        <p className="mb-3 text-[15px] leading-relaxed">
+          Every coding agent installed on this computer gets a <strong>Connect</strong> button in the Oya window footer.
+          One click writes an MCP server named <InlineCode>oya-browser</InlineCode> at{' '}
+          <InlineCode>http://127.0.0.1:47321/mcp</InlineCode> into that agent&apos;s config, with the token kept in the
+          OS keychain. Click again to remove it.
+        </p>
+      </Step>
+      <Step n={3} title="Bring your logins">
+        <p className="mb-3 text-[15px] leading-relaxed">
+          Accept <strong>Bring your logins</strong> to import saved logins from Chrome, Arc, Brave, Edge, Firefox or
+          Safari, so sites are already signed in. Bookmarks and history are a separate, optional step you can skip.
+        </p>
+      </Step>
+      <Step n={4} title="Start a new session">
+        <p className="mb-3 text-[15px] leading-relaxed">
+          Restart your agent&apos;s session so the <InlineCode>oya-browser</InlineCode> tools appear. Each session
+          drives its own tab, marked in the tab strip; you keep every other tab and can take control at any time.
+        </p>
+      </Step>
+      <NoteBox>
+        If you signed in with Oya, the browser also appears in the <InlineLink href="/dashboard">dashboard</InlineLink>.
+        Local agents connected from the footer need no account and no key.
+      </NoteBox>
     </>
   );
 }

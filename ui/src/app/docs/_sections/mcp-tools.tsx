@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react';
 import { CodeBlock, InlineCode, NoteBox, SectionHeading, Table } from '../_docs/blocks';
+import { MoreTools } from './mcp-tools-more';
 
 /** Rows of a table in the scroll section. */
 const SCROLL_ROWS_1: ReactNode[][] = [
@@ -25,13 +26,13 @@ function AnalyzePage() {
       {/* ============ TOOLS ============ */}
       <SectionHeading id="analyze_page">analyze_page</SectionHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Analyzes the current page. Returns the full page with every interactive element numbered, as markdown (the
-        default), TOON or JSONL. The default is the one picked in the Oya Browser&apos;s settings, unless the
-        server&apos;s <InlineCode>OYA_PAGE_FORMAT</InlineCode> pins one.
+        Analyzes the current page. Returns the full page with every interactive element numbered, written as TOON (the
+        default), markdown or JSONL. Left out, <InlineCode>format</InlineCode> falls back to the server&apos;s{' '}
+        <InlineCode>OYA_PAGE_FORMAT</InlineCode>, which is <InlineCode>toon</InlineCode> unless set.
       </p>
-      <CodeBlock>{`analyze_page()                  // markdown
-analyze_page({ format: 'toon' }) // TOON: fewer tokens
-analyze_page({ format: 'jsonl' }) // one JSON object per line`}</CodeBlock>
+      <CodeBlock>{`analyze_page()                      // TOON, the default: fewer tokens
+analyze_page({ format: 'markdown' }) // markdown
+analyze_page({ format: 'jsonl' })    // one JSON object per line`}</CodeBlock>
       <p className="mb-3 text-[15px] leading-relaxed">Returns:</p>
       <ul className="list-disc list-inside space-y-1 mb-4 text-[15px] leading-relaxed">
         <li>Page metadata, URL, title, viewport size, scroll position</li>
@@ -106,9 +107,9 @@ function PressKey() {
       </p>
       <CodeBlock>{'press_key({ key: "Enter" })'}</CodeBlock>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Supported keys: <InlineCode>Enter</InlineCode>, <InlineCode>Escape</InlineCode>, <InlineCode>Tab</InlineCode>,{' '}
-        <InlineCode>Backspace</InlineCode>, <InlineCode>ArrowDown</InlineCode>, <InlineCode>ArrowUp</InlineCode>, or any
-        character.
+        Allowed keys: Enter, Escape, Tab, Backspace, Delete, Space, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home,
+        End, PageUp, PageDown. No modifiers and no F-keys; the desktop app&apos;s local port and the cloud allow the
+        same list. For a combination such as Shift+Tab use <InlineCode>key_chord</InlineCode>.
       </p>
     </>
   );
@@ -142,6 +143,13 @@ function Tabs() {
   return (
     <>
       <SectionHeading id="tabs">Tab Management</SectionHeading>
+      <NoteBox>
+        Per-browser endpoint only: <InlineCode>list_tabs</InlineCode>, <InlineCode>open_tab</InlineCode>,{' '}
+        <InlineCode>switch_tab</InlineCode> and <InlineCode>close_tab</InlineCode>, along with{' '}
+        <InlineCode>read_elements</InlineCode>, <InlineCode>read_console</InlineCode>,{' '}
+        <InlineCode>read_network</InlineCode> and the rows marked per-browser under More tools, are not served by{' '}
+        <InlineCode>/mcp/pool</InlineCode>.
+      </NoteBox>
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">list_tabs</h3>
       <p className="mb-3 text-[15px] leading-relaxed">List all open tabs with ID, title, URL, and which is active.</p>
@@ -153,12 +161,16 @@ function Tabs() {
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">switch_tab</h3>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Switch to a tab by ID (from <InlineCode>list_tabs</InlineCode>).
+        Switch to one of your own tabs; <InlineCode>list_tabs</InlineCode> marks them yours. Tabs the person or another
+        agent is using are refused; use <InlineCode>open_tab</InlineCode> instead.
       </p>
       <CodeBlock>{'switch_tab({ tab_id: 2 })'}</CodeBlock>
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">close_tab</h3>
-      <p className="mb-3 text-[15px] leading-relaxed">Close a tab. Closes the active tab if no ID specified.</p>
+      <p className="mb-3 text-[15px] leading-relaxed">
+        Close a tab you opened with <InlineCode>open_tab</InlineCode> (default: your current tab). Tabs the person or
+        another agent opened are refused; leave them open.
+      </p>
       <CodeBlock>{'close_tab({ tab_id: 3 })'}</CodeBlock>
     </>
   );
@@ -190,6 +202,7 @@ export function McpToolsDocs() {
       <Scroll />
       <Tabs />
       <Wait />
+      <MoreTools />
     </>
   );
 }

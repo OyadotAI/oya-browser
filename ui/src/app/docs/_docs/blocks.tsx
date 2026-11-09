@@ -32,6 +32,21 @@ export function SectionHeading({ id, children, first }: HeadingProps) {
   );
 }
 
+/** A sub-heading's props. */
+interface SubHeadingProps extends PropsWithChildren {
+  /** The anchor the sidebar and search jump to. */
+  id: string;
+}
+
+/** A section's h3, with the anchor the sidebar and search jump to. */
+export function SubHeading({ id, children }: SubHeadingProps) {
+  return (
+    <h3 id={id} className="text-base font-semibold mt-6 mb-2 text-text scroll-mt-28">
+      {children}
+    </h3>
+  );
+}
+
 /** Code inside a sentence. */
 export function InlineCode({ children }: PropsWithChildren) {
   return <code className="bg-bg-elevated px-1.5 py-0.5 rounded text-sm font-mono text-text-muted">{children}</code>;
@@ -43,10 +58,12 @@ interface CodeBlockProps {
   children: string;
   /** What it is, shown above it: a file name, a language, "Terminal". */
   label?: string;
+  /** Prose to paste, such as a prompt: shown as written, not highlighted as code. */
+  plain?: boolean;
 }
 
 /** A highlighted example with a copy button, and a manual fallback when the clipboard is refused. */
-export function CodeBlock({ children, label = 'Example' }: CodeBlockProps) {
+export function CodeBlock({ children, label = 'Example', plain }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(false);
   /** Copies the code; "Copied" shows for a moment. */
@@ -68,7 +85,7 @@ export function CodeBlock({ children, label = 'Example' }: CodeBlockProps) {
         </button>
       </div>
       <pre className="overflow-x-auto p-5 text-[13.5px] font-mono leading-[1.75]">
-        <SyntaxCode code={children} />
+        <SyntaxCode code={children} language={plain ? 'plain' : undefined} />
       </pre>
       {error && (
         <p role="status" className="px-5 pb-3 text-xs text-text-muted">

@@ -32,7 +32,12 @@ const SECTIONS = [
   'cli',
   'download',
   'mcp-setup',
+  'desktop-app',
   'cursor',
+  'codex',
+  'claude-ai',
+  'try-it',
+  'more-tools',
   'tabs',
   'personas',
   'self-hosting',
@@ -45,6 +50,28 @@ describe('DocsPage', () => {
     for (const id of [...SECTIONS, 'rotation', 'onboarding', 'command-api', 'websocket']) {
       expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
     }
+  });
+
+  it('states the pool serves thirty-two tools and lists them without a key', () => {
+    render(<DocsPage />);
+    const setup = document.getElementById('mcp-setup')!.parentElement!;
+    expect(setup.textContent).toContain('Thirty-two tools');
+    expect(setup.textContent).toContain('without a key');
+    expect(setup.textContent).toContain('http://127.0.0.1:47321/mcp');
+  });
+
+  it('shows three prompts to try, each with its expected result', () => {
+    render(<DocsPage />);
+    const tryIt = document.getElementById('try-it')!;
+    const section = tryIt.parentElement!;
+    const prompts = [...section.querySelectorAll('pre')].filter(
+      (pre) => tryIt.compareDocumentPosition(pre) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(prompts).toHaveLength(3);
+    for (const pre of prompts) expect(pre.querySelector('code')?.getAttribute('data-language')).toBe('plain');
+    expect(prompts[0].textContent).toContain('instead of Chrome');
+    expect(prompts[2].textContent).toContain('hand the tab back');
+    expect(section.textContent).toContain('Expected: all 32 tools listed without signing in');
   });
 
   it('opens on the quickstart, ahead of the architecture', () => {

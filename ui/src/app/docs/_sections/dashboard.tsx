@@ -8,7 +8,7 @@ import { CodeBlock, InlineCode, InlineLink, NoteBox, SectionHeading, Table } fro
 
 /** Rows of a table in the Dashboard section. */
 const DASHBOARD_OVERVIEW_ROWS_1: ReactNode[][] = [
-  ['⌘/Ctrl 1 · 2 · 3', 'Browsers · Personas · Control'],
+  ['⌘/Ctrl 1 · 2 · 3 · 4 · 5', 'Browsers · Personas · Control · Playbooks · Routines'],
   ['n', 'Start a browser'],
   ['/', 'Filter the fleet'],
   ['↑ ↓ or j k', 'Move the selection'],
@@ -38,23 +38,7 @@ function DashboardOverview() {
       <p className="mb-3 text-[15px] leading-relaxed">
         Built to hold a thousand browsers and let you act on any one of them:
       </p>
-      <ul className="list-disc list-inside space-y-1 mb-4 text-[15px] leading-relaxed">
-        <li>
-          <strong>Browsers</strong>: a health strip (every number is a filter) over a dense table: health, persona,
-          provider, current page, commands · errors, seen, uptime. Select a row to open the panel: URL bar, a bounded{' '}
-          <em>interactive</em> live view, screenshot, elements, stats, and the activity log, what that browser has been
-          doing, newest first.
-        </li>
-        <li>
-          <strong>Personas</strong>: one identity each. Create with a chosen device and a live fingerprint preview; edit
-          name, cap, proxy pin and MFA; the device itself is locked, with <em>Clone</em> for when you want a different
-          one.
-        </li>
-        <li>
-          <strong>Control</strong>: health, gateway sessions, providers and routing, per-key usage, the audit trail,
-          recordings.
-        </li>
-      </ul>
+      <DashboardTabs />
       <DashboardOverviewPart2 />
       <DashboardOverviewPart3 />
       <DashboardOverviewPart4 />
@@ -64,6 +48,35 @@ function DashboardOverview() {
       <DashboardOverviewPart8 />
       <DashboardOverviewPart9 />
     </>
+  );
+}
+
+/** The console's tabs, one line each. */
+function DashboardTabs() {
+  return (
+    <ul className="list-disc list-inside space-y-1 mb-4 text-[15px] leading-relaxed">
+      <li>
+        <strong>Browsers</strong>: a health strip (every number is a filter) over a dense table: health, persona,
+        provider, current page, commands · errors, seen, uptime. Select a row to open the panel: URL bar, a bounded{' '}
+        <em>interactive</em> live view, screenshot, elements, stats, and the activity log, what that browser has been
+        doing, newest first.
+      </li>
+      <li>
+        <strong>Personas</strong>: one identity each. Create with a chosen device and a live fingerprint preview; edit
+        name, cap, proxy pin and MFA; the device itself is locked, with <em>Clone</em> for when you want a different
+        one.
+      </li>
+      <li>
+        <strong>Control</strong>: health, gateway sessions, providers and routing, per-key usage, the audit trail,
+        recordings.
+      </li>
+      <li>
+        <strong>Playbooks</strong>: every saved playbook on the key, its variables, and a Run button.
+      </li>
+      <li>
+        <strong>Routines</strong>: playbooks on a schedule, with the last run and the next one.
+      </li>
+    </ul>
   );
 }
 
@@ -131,8 +144,9 @@ function DashboardOverviewPart4() {
   return (
     <>
       <p className="mb-3 text-[15px] leading-relaxed">
-        Only CDP-backed browsers (Browserbase, Steel, Anchor, your own Chrome) have an endpoint to attach to; an Oya
-        client is driven over its own socket, so use the SDK, CLI or MCP for those.
+        Any browser that exposes a CDP endpoint has a <InlineCode>cdpUrl</InlineCode>: Browserbase, Steel, Anchor, your
+        own Chrome, and Oya browsers through their CDP front door. Playwright and Puppeteer attach the same way to each;
+        the SDK, CLI and MCP work too.
       </p>
 
       <h3 className="text-base font-semibold mt-6 mb-2 text-text">Stop means stop</h3>
@@ -193,25 +207,33 @@ function DashboardOverviewPart6() {
 function DashboardOverviewPart7() {
   return (
     <>
-      <h3 className="text-base font-semibold mt-6 mb-2 text-text">Dev Panel (Desktop App)</h3>
+      <h3 className="text-base font-semibold mt-6 mb-2 text-text">Agent panel (desktop app)</h3>
       <p className="mb-3 text-[15px] leading-relaxed">
-        The desktop app&apos;s dev panel (<InlineCode>{'{}'}</InlineCode> button in the toolbar) has four tabs:
+        The desktop app&apos;s agent panel (the <strong>Open Assistant</strong> button in the toolbar, ⌘/Ctrl Shift D)
+        has five tabs, and Inspect holds three more:
       </p>
       <ul className="list-disc list-inside space-y-1 mb-4 text-[15px] leading-relaxed">
         <li>
-          <strong>Chat</strong>: natural language browser control with formatted responses and tool badges
+          <strong>Ask</strong>: type a task, watch it run, with tool badges
         </li>
         <li>
-          <strong>Actions</strong>: quick-fire buttons and input fields for every command: analyze, screenshot,
-          navigate, click by element #, type, press keys, hover, scroll, wait, tab management
+          <strong>Record</strong>: the studio; do a task once and save it as a playbook
         </li>
         <li>
-          <strong>Network</strong>: live WebSocket traffic with IN/OUT badges, expandable payloads, filter by direction
-          or type (All, In, Out, Commands, Results)
+          <strong>Playbooks</strong>: the playbooks on this key, replay with new values
         </li>
         <li>
-          <strong>Source</strong>: view the page as AI sees it: toggle between Markdown (analyzePage output) and HTML
-          source, refresh on demand
+          <strong>Routines</strong>: scheduled playbooks and their runs
+        </li>
+        <li>
+          <strong>Inspect → Actions</strong>: a button for every command: analyze, screenshot, navigate, click by id,
+          type, keys, hover, scroll, wait, tabs
+        </li>
+        <li>
+          <strong>Inspect → Activity</strong>: live traffic, in and out, with payloads and a direction filter
+        </li>
+        <li>
+          <strong>Inspect → Source</strong>: the page as the agent sees it, TOON or markdown, beside the HTML
         </li>
       </ul>
     </>
