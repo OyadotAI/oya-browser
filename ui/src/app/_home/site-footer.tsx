@@ -3,7 +3,7 @@
  */
 import Link from 'next/link';
 import { OyaWordmark } from '@/components/oya-logo';
-import { discord, foundersCall, repository } from './content';
+import { COMPLIANCE_LINE, discord, foundersCall, repository } from './content';
 import styles from '../page.module.css';
 
 /** Wordmark and footer links. */
@@ -11,6 +11,9 @@ export function SiteFooter() {
   return (
     <footer className={styles.footer}>
       <OyaWordmark />
+      <Link href="/trust" className={styles.complianceLine}>
+        {COMPLIANCE_LINE}
+      </Link>
       <nav aria-label="Footer navigation">
         <a href={`${repository}/tree/main/packages/sdk`}>SDK</a>
         <Link href="/docs#download">Desktop</Link>

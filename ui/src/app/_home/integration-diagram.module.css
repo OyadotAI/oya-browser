@@ -1,0 +1,101 @@
+/** Quiet connection lines make the agent-to-portal relationship clear without motion. */
+.diagram {
+  display: grid;
+  grid-template-columns: 1fr 80px 1fr;
+  align-items: center;
+  gap: 20px;
+  min-height: 320px;
+}
+.column {
+  display: grid;
+  gap: 14px;
+  position: relative;
+}
+.column::after {
+  content: '';
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  width: 12px;
+  right: -12px;
+  border: 1px solid var(--line);
+  border-left: 0;
+}
+.column:last-child::after {
+  right: auto;
+  left: -12px;
+  border-left: 1px solid var(--line);
+  border-right: 0;
+}
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: #fff;
+  font-size: 14px;
+}
+.mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  background: var(--surface);
+  border-radius: 6px;
+  color: var(--muted);
+  font:
+    400 11px var(--font-mono),
+    monospace;
+}
+.hub {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  position: relative;
+  padding-block: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-window);
+  background: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 8px 24px -16px #18201b50;
+}
+.hub::before,
+.hub::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--line);
+}
+.hub::before {
+  right: 100%;
+}
+.hub::after {
+  left: 100%;
+}
+@media (max-width: 479px) {
+  .diagram {
+    grid-template-columns: minmax(0, 1fr) 52px minmax(0, 1fr);
+    gap: 14px;
+  }
+  .endpoint {
+    flex-direction: column;
+    gap: 6px;
+    min-height: 72px;
+    padding: 10px 5px;
+    text-align: center;
+  }
+  .hub svg {
+    width: 28px;
+    height: 28px;
+  }
+  .hub {
+    font-size: 12px;
+  }
+}

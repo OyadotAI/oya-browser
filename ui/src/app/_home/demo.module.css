@@ -1,0 +1,418 @@
+/** The product carries the explanation: a deep-green stage, one portal and its connected outcome. */
+.demo {
+  margin-top: 0;
+  scroll-margin-top: 96px;
+}
+.demoHeading {
+  margin-bottom: 24px;
+  text-align: center;
+  scroll-margin-top: 96px;
+}
+.demo .demoHeading h2 {
+  font-size: 22px;
+  letter-spacing: -0.025em;
+}
+.demo .demoHeading p {
+  max-width: 650px;
+  margin: 12px auto 0;
+  color: var(--ink);
+  font-size: 17px;
+}
+.taskTabs {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.taskTabs button {
+  min-height: 46px;
+  padding: 10px 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.taskTabs button[aria-selected='true'] {
+  border-color: #cfdbce;
+  background: #eaf1e6;
+  color: #173d25;
+}
+.taskTabs button:hover {
+  background: #f0f4ec;
+}
+.scene {
+  overflow: hidden;
+  border: 1px solid #ced7cb;
+  border-radius: 20px;
+  background: #fff;
+  text-align: left;
+  box-shadow: 0 28px 80px -48px #173f24a0;
+}
+.sceneBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 6px 28px;
+  border-bottom: 1px solid #ffffff14;
+  background: #173d2b;
+  color: #edf7e9;
+  font-size: 13px;
+}
+.sceneBar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.sceneBar i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c0e5a3;
+}
+.sceneBar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding-inline: 10px;
+  border: 1px solid #ffffff30;
+  border-radius: 7px;
+  background: #ffffff08;
+  color: #fff;
+  font-size: 13px;
+}
+.sceneBar button:focus-visible {
+  outline-color: #d9f3b6;
+}
+.stage {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 72px;
+  padding: 48px 64px;
+  background: #173d2b;
+}
+.stage::before,
+.stage::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 550px;
+  height: 550px;
+  border: 72px solid #ffffff05;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.stage::before {
+  top: -120px;
+  left: -230px;
+}
+.stage::after {
+  right: -130px;
+  bottom: -230px;
+  border-color: #c7eea508;
+}
+.portalShell {
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid #d6e1d1;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 24px 48px -24px #061e18b0;
+}
+.portalBar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 42px;
+  padding-inline: 20px;
+  border-bottom: 1px solid #e3e9df;
+  background: #f9fbf7;
+  color: #354438;
+  font-size: 12px;
+}
+.windowDots {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 2px;
+  color: #c8d3c3;
+}
+.process {
+  display: grid;
+  gap: 32px;
+  color: #fff;
+  scroll-margin-top: 96px;
+}
+.processStep {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+.processStep:not(:nth-last-child(2))::after {
+  content: '';
+  position: absolute;
+  top: 44px;
+  bottom: -32px;
+  left: 21px;
+  width: 1px;
+  background: #c8e4bb40;
+}
+.processIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #c8e4bb50;
+  border-radius: 12px;
+  background: #ffffff08;
+  color: #e3f4d6;
+}
+.processStep h3 {
+  font-size: 18px;
+  line-height: 1.25;
+}
+.processStep p {
+  margin-top: 8px;
+  color: #e0eddf;
+  font-size: 15px;
+  line-height: 1.5;
+}
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid #c8e4bb50;
+  border-radius: 10px;
+  background: #b9dfa012;
+  color: #f3ffe9;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.result svg {
+  flex: none;
+  margin-top: 1px;
+}
+.details {
+  background: #fff;
+}
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 12px 28px;
+}
+.detailActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: #193d29;
+  font-size: 14px;
+  font-weight: 500;
+}
+.detailActions button[aria-expanded='true'] {
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+.detailActions > span {
+  margin-left: auto;
+  color: #354438;
+  font-size: 12px;
+}
+.drawer {
+  position: relative;
+  border-top: 1px solid #dfe4df;
+  background: #17201b;
+}
+.drawer > [role='region'] {
+  outline-offset: -3px;
+}
+.close {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: #17201b;
+  color: #fff;
+}
+@media (max-width: 1023px) {
+  .stage {
+    gap: 36px;
+    padding: 36px;
+  }
+}
+@media (max-width: 767px) {
+  .demo {
+    margin-top: 0;
+  }
+  .demo .demoHeading h2 {
+    font-size: 20px;
+  }
+  .taskTabs {
+    justify-content: flex-start;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .taskTabs button {
+    padding-inline: 14px;
+    font-size: 14px;
+  }
+  .scene {
+    border-radius: 14px;
+  }
+  .sceneBar {
+    padding-inline: 16px;
+  }
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    padding: 24px 20px;
+  }
+  .process {
+    gap: 24px;
+  }
+  .processStep p {
+    font-size: 14px;
+  }
+  .processStep:not(:nth-last-child(2))::after {
+    bottom: -24px;
+  }
+  .detailActions {
+    padding: 10px 16px;
+    gap: 4px 20px;
+  }
+  .detailActions > span {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/** Ownership controls describe a simulation, never a live session. */
+.handoff {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #f3f7ed;
+  color: var(--ink);
+}
+.handoffBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.handoffBar > span,
+.handoffBar > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.handoffBar > span {
+  font-size: 15px;
+  font-weight: 500;
+}
+.handoffBar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid #c7d5be;
+  border-radius: 7px;
+  background: #fff;
+  color: #173d2b;
+  font-size: 14px;
+}
+.handoffBar button:first-child {
+  border-color: #173d2b;
+  background: #173d2b;
+  color: #fff;
+}
+.ownershipEvents {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid #d7e2cd;
+  font-size: 14px;
+}
+@media (max-width: 767px) {
+  .handoff {
+    padding-inline: 16px;
+  }
+}
+
+/* The request and reusable artifact stay visible alongside the selected example. */
+.prompt {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcf8;
+  color: var(--ink);
+}
+.prompt > span {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+.prompt p {
+  font-size: 17px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.artifact {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #c8e4bb50;
+  border-radius: 8px;
+  background: #ffffff08;
+  overflow-wrap: anywhere;
+}
+.processStep .artifact p {
+  margin: 0;
+  color: #f3ffe9;
+  font-size: 16px;
+}
+.artifact code {
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+.artifact span {
+  display: block;
+  margin-top: 10px;
+  color: #e0eddf;
+  font-size: 16px;
+  line-height: 1.6;
+}
+@media (max-width: 767px) {
+  .prompt {
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+  }
+}

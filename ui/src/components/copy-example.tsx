@@ -10,10 +10,12 @@ import { useState } from 'react';
 interface Props {
   /** The text to copy. */
   code: string;
+  /** The button's text when it is not the plain "Copy" of a code sample. */
+  label?: string;
 }
 
 /** Copies `code` and says whether it worked. */
-export default function CopyExample({ code }: Props) {
+export default function CopyExample({ code, label }: Props) {
   const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   /** Writes the code to the clipboard. */
@@ -28,8 +30,8 @@ export default function CopyExample({ code }: Props) {
 
   return (
     <span>
-      <button type="button" onClick={copy} aria-label="Copy example">
-        {status === 'copied' ? 'Copied!' : 'Copy'}
+      <button type="button" onClick={copy} aria-label={label ?? 'Copy example'}>
+        {status === 'copied' ? 'Copied!' : (label ?? 'Copy')}
       </button>
       <span role="status" className="sr-only">
         {status === 'copied'

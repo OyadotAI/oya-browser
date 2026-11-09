@@ -1,0 +1,77 @@
+/** Audit rows remain visible and wrap inside the replay instead of disappearing on phones. */
+.ledger {
+  border-top: 1px solid #ffffff18;
+  background: #111a15;
+  color: #e0e8e2;
+  font:
+    400 13px/1.6 var(--font-mono),
+    monospace;
+}
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #ffffff12;
+  color: #a6b7ab;
+}
+.head > span:first-child {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #bcddae;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.verified[data-shown='true'] {
+  opacity: 1;
+}
+.rows {
+  list-style: none;
+  padding-block: 8px !important;
+}
+.rows li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 4px 20px;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+.rows li[data-shown='true'] {
+  opacity: 1;
+}
+.rows time {
+  color: #a6b7ab;
+}
+.action {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  color: #bcddae;
+}
+@media (max-width: 479px) {
+  .head {
+    padding-inline: 16px;
+  }
+  .rows li {
+    gap: 8px;
+    padding-inline: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .verified,
+  .rows li {
+    transition: none;
+  }
+}

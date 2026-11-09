@@ -1,0 +1,341 @@
+/** The architecture and capability explorer keep enterprise depth visible and motion purposeful. */
+.overview {
+  overflow: hidden;
+  margin-top: 0 !important;
+  border: 1px solid #29513b;
+  border-radius: 20px;
+  background: #123625;
+  color: #f4f9ef;
+  text-align: left;
+  box-shadow: 0 28px 80px -48px #173f24a0;
+  scroll-margin-top: 96px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 64px;
+  padding: 10px 28px;
+  border-bottom: 1px solid #ffffff20;
+  font-size: 15px;
+}
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #ffffff40;
+  border-radius: 7px;
+  background: #ffffff08;
+  color: #fff;
+  font-size: 13px;
+}
+.toolbar button:focus-visible {
+  outline-color: #e1f4bf;
+}
+.architecture {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr 1.35fr 1fr 1fr;
+  align-items: center;
+  gap: 28px;
+  min-height: 380px;
+  padding: 52px 36px;
+}
+.architecture::before,
+.architecture::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 450px;
+  height: 450px;
+  border: 60px solid #c7eea507;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.architecture::before {
+  left: -200px;
+  top: -160px;
+}
+.architecture::after {
+  right: -120px;
+  bottom: -270px;
+}
+.route {
+  position: absolute;
+  top: 28px;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: #cee9bc50;
+}
+.packet {
+  position: absolute;
+  width: 100%;
+  height: 10px;
+  top: -5px;
+  transform: translateX(calc(var(--route-progress) * 100%));
+  transition: transform 800ms ease-in-out;
+}
+.packet::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d9f4a5;
+  box-shadow: 0 0 18px #d9f4a590;
+}
+.packet[data-phase='0'] {
+  transition: none;
+}
+.layer {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 16px;
+  min-width: 0;
+  min-height: 200px;
+  padding: 20px 12px;
+  border: 1px solid #ffffff25;
+  border-radius: 12px;
+  background: #173d2b;
+  text-align: center;
+  transition:
+    transform 400ms ease,
+    border-color 400ms ease;
+}
+.layer[data-active='true'] {
+  border-color: #d9f4a5;
+  transform: translateY(-4px);
+}
+.layer[data-center='true'] {
+  --foreground: #173d2b;
+  --primary: #2c813e;
+  min-height: 260px;
+  border-color: #e0edcf;
+  background: #f4f8ed;
+  color: #173d2b;
+  box-shadow: 0 18px 36px -20px #071e1490;
+}
+.layerIcon {
+  display: grid;
+  place-items: center;
+  height: 44px;
+  color: #d3edbb;
+}
+.overview .layer h3 {
+  font-size: 19px;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+.layer p {
+  color: #e0eddf;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.layer[data-center='true'] p {
+  color: #294531;
+}
+.controlTags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.controlTags span {
+  padding: 4px 7px;
+  border: 1px solid #cfdcc4;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.arrow {
+  position: absolute;
+  top: calc(50% - 9px);
+  right: -24px;
+  color: #daedcb;
+}
+.caption {
+  padding: 16px 28px;
+  border-top: 1px solid #ffffff20;
+  color: #e0eddf;
+  font-size: 13px;
+}
+.sectionHeading {
+  max-width: 700px;
+  margin-bottom: 40px;
+}
+.sectionHeading p {
+  margin-top: 20px;
+  color: var(--ink);
+  font-size: 18px;
+}
+.explorer {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 64px;
+}
+.capabilityTabs {
+  display: grid;
+  align-content: start;
+}
+.capabilityTabs button {
+  display: grid;
+  gap: 10px;
+  min-height: 120px;
+  padding: 24px 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-left: 3px solid transparent;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+.capabilityTabs button:last-child {
+  border-bottom: 1px solid var(--line);
+}
+.capabilityTabs button[aria-selected='true'] {
+  border-left-color: var(--primary);
+  background: #f3f7ed;
+}
+.capabilityTabs button > span:first-child {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+.capabilityTabs button > span:last-child {
+  font-size: 16px;
+}
+.capabilityPanel {
+  align-self: stretch;
+  padding: 32px;
+  border: 1px solid #dce5d4;
+  border-radius: 12px;
+  background: #fbfcf8;
+}
+.panelLead {
+  margin-bottom: 28px !important;
+  font-size: 18px;
+  line-height: 1.6;
+}
+.capabilityPanel ul {
+  display: grid;
+  gap: 24px;
+  margin-bottom: 24px !important;
+}
+.capabilityPanel li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.capabilityPanel li > svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--primary);
+}
+.capabilityPanel h3 {
+  margin-bottom: 7px;
+  font-size: 17px;
+}
+.capabilityPanel li p {
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.65;
+}
+@media (max-width: 1023px) {
+  .architecture {
+    gap: 16px;
+    padding: 32px 20px;
+  }
+  .layer {
+    padding-inline: 10px;
+  }
+  .overview .layer h3 {
+    font-size: 17px;
+  }
+  .arrow {
+    right: -17px;
+    width: 16px;
+  }
+  .explorer {
+    gap: 32px;
+  }
+}
+@media (max-width: 767px) {
+  .overview {
+    margin-top: 0 !important;
+    border-radius: 14px;
+  }
+  .toolbar {
+    padding-inline: 16px;
+    font-size: 13px;
+  }
+  .architecture {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 28px;
+  }
+  .layer,
+  .layer[data-center='true'] {
+    min-height: 160px;
+  }
+  .layer {
+    gap: 10px;
+  }
+  .overview .layer h3 {
+    font-size: 20px;
+  }
+  .arrow {
+    top: auto;
+    bottom: -23px;
+    right: calc(50% - 9px);
+    transform: rotate(90deg);
+  }
+  .route {
+    top: 10%;
+    bottom: 10%;
+    left: 12px;
+    right: auto;
+    width: 1px;
+    height: auto;
+  }
+  .packet {
+    top: 0;
+    left: -5px;
+    width: 10px;
+    height: 100%;
+    transform: translateY(calc(var(--route-progress) * 100%));
+  }
+  .packet::before {
+    left: 0;
+    top: -5px;
+  }
+  .caption {
+    padding-inline: 20px;
+  }
+  .explorer {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .capabilityPanel {
+    padding: 24px 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .packet,
+  .layer {
+    transition: none;
+  }
+  .layer[data-active='true'] {
+    transform: none;
+  }
+}
