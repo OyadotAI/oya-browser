@@ -16,6 +16,7 @@ import * as pageRender from '../../../browser/src/page/render.ts';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
 import { AGENT_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
+import { toolConfig } from './annotations.ts';
 
 /** The keys press_key may press: navigation only, never modifiers or F-keys. */
 const KEYS = [
@@ -312,5 +313,7 @@ function reply(out: Reply, prefix: () => string) {
 /** Register one direct command without duplicating its routing or result encoder. */
 function registerDirectTool(server: McpServer, name: string, routing: Routing): void {
   const tool = TOOLS[name];
-  server.tool(name, tool.description, tool.schema, (args) => runTool(name, tool, args, routing));
+  server.registerTool(name, toolConfig(name, tool.description, tool.schema), (args) =>
+    runTool(name, tool, args, routing),
+  );
 }

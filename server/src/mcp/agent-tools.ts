@@ -24,6 +24,7 @@ import { registry } from '../modules/browsers/registry.ts';
 import { track } from '../modules/telemetry/index.ts';
 import { fail, text, attempt } from './replies.ts';
 import { JSON_INDENT } from './constants.ts';
+import { toolConfig } from './annotations.ts';
 
 /** The agent's browser tools served as they are. */
 const PAGE_TOOLS = [
@@ -216,6 +217,6 @@ export function registerAgentTools(server: McpServer, names: string[], target: T
   const tools = agentTools();
   for (const name of names.filter((n) => Object.hasOwn(tools, n) && runsOn(n, target))) {
     const { description, parameters } = tools[name];
-    server.tool(name, description, shapeOf(parameters), handlerFor(name, target));
+    server.registerTool(name, toolConfig(name, description, shapeOf(parameters)), handlerFor(name, target));
   }
 }

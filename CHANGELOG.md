@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Every MCP tool now carries a title and read-only, destructive and open-world hints, which connector directories require and Claude's tool picker shows.
+
 ## [1.0.222](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.222) · 2026-11-09
 
 ### Changed

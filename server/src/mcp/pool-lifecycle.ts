@@ -10,6 +10,7 @@ import { browserTag, hold, letGo, poolPinned } from './pool-state.ts';
 import { selfApi, type Self } from './self-api.ts';
 import { attempt, fail, text } from './replies.ts';
 import { MAX_NAME, NAVIGATE_TIMEOUT_MS, START_POLL_MS, START_WAIT_MS } from './constants.ts';
+import { toolConfig } from './annotations.ts';
 
 /** Whose pool the tools act on, and how they reach the public API. */
 type Pool = {
@@ -36,11 +37,13 @@ const START_DESCRIPTION =
 
 /** Registers start_browser, stop_browser and pool_status. */
 export function registerLifecycleTools(server: McpServer, pool: Pool) {
-  server.tool('start_browser', START_DESCRIPTION, START_SCHEMA, (args) => startBrowserTool(pool, args));
+  const start = toolConfig('start_browser', START_DESCRIPTION, START_SCHEMA);
+  server.registerTool('start_browser', start, (args) => startBrowserTool(pool, args));
   const stopDescription = 'Stop a browser and release its session. Defaults to the browser the tools are driving.';
-  const stopSchema = { browser_id: z.string().optional() };
-  server.tool('stop_browser', stopDescription, stopSchema, (args) => stopBrowserTool(pool, args));
-  server.tool('pool_status', 'Show pool size and connected browsers.', {}, async () => poolStatus(pool.apiKey));
+  const stop = toolConfig('stop_browser', stopDescription, { browser_id: z.string().optional() });
+  server.registerTool('stop_browser', stop, (args) => stopBrowserTool(pool, args));
+  const status = toolConfig('pool_status', 'Show pool size and connected browsers.', {});
+  server.registerTool('pool_status', status, async () => poolStatus(pool.apiKey));
 }
 
 /** Starts a browser through the API, waits for it to dial in, and holds it. */
