@@ -69,6 +69,7 @@ import { validateApiKey, authReady } from './modules/auth/service.ts';
 import { registry } from './modules/browsers/registry.ts';
 import { pool } from './modules/gateway/routing.ts';
 import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
+import { downloadRoutes } from './modules/downloads/index.ts';
 import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
 import { apiKeyHeader } from './app/http.ts';
@@ -214,6 +215,8 @@ app.get(['/health', '/metrics'], apiRouter);
 app.get(['/downloads', '/downloads/'], (req, res) => res.redirect(Status.FOUND, '/#download'));
 // Counted on the way out (installers, update checks, updates), then served as plain files.
 app.use('/downloads', trackDownloads, express.static(DOWNLOADS_DIR));
+// Version-free addresses agents install from; each redirects to the newest file above.
+app.use('/download', downloadRoutes());
 
 // Sign in with ChatGPT returns here, on the loopback address (config/chatgpt.ts).
 app.get(CHATGPT_CALLBACK_PATH, chatgptCallback);

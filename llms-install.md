@@ -4,15 +4,34 @@ Oya is the browser an agent works in. Two ways to connect, no code to build.
 
 ## On a computer with a person (preferred)
 
-1. The person installs the desktop app from https://oyabrowser.com/#download
-   (macOS .dmg, Windows .exe). On first run it imports their logins from their
-   usual browser, on the same computer; nothing is sent anywhere.
+1. Install it yourself. The two addresses below always point at the current
+   installer; do not send the person to a download page unless you have no
+   shell.
+
+   macOS:
+
+       curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac
+       hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
+       cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
+       hdiutil detach /Volumes/Oya
+       open -a "Oya Browser"
+
+   Windows (PowerShell):
+
+       curl.exe -L -o $env:TEMP\Oya.exe https://oyabrowser.com/download/windows
+       Start-Process -Wait "$env:TEMP\Oya.exe" -ArgumentList '/S'
+       Start-Process "$env:LOCALAPPDATA\Programs\Oya Browser\Oya Browser.exe"
+
 2. The person clicks **Connect** next to your name in the Oya window footer
    (Claude Code, Codex, Cursor and VS Code appear when installed). That writes
    an MCP server named `oya-browser` at `http://127.0.0.1:47321/mcp` into your
-   config, with the token in the OS keychain.
+   config, with the token in the OS keychain. On first run Oya offers to import
+   their logins from their usual browser, on the same computer; nothing is sent
+   anywhere.
 3. Start a new session. Use the `oya-browser` tools for every web task. Each
-   session drives its own tab; the person can take control at any time.
+   session drives its own tab; the person can take control at any time. If the
+   tools are configured but nothing answers on port 47321, the app is closed:
+   open it and retry.
 
 ## Without a desktop (a server, a container, CI)
 
