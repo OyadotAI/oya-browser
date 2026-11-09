@@ -11,7 +11,7 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-On the user's own computer, install the Oya desktop app yourself and use it as your browser; the user's only step is one click. The two addresses always point at the current installer.
+On the user's own computer, YOU install the Oya desktop app with your shell tool and use it as your browser. Do not tell the user to download, drag or open anything; their only step is one click after you have installed and opened it. One command on macOS: `curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open -a "Oya Browser"`. The addresses always point at the current installer. The same steps, one per line:
 
 macOS:
 

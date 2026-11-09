@@ -4,9 +4,13 @@ Oya is the browser an agent works in. Two ways to connect, no code to build.
 
 ## On a computer with a person (preferred)
 
-1. Install it yourself. The two addresses below always point at the current
-   installer; do not send the person to a download page unless you have no
-   shell.
+1. YOU install it with your shell tool. Do not tell the person to download,
+   drag or open anything; their only step is the click in step 2. One command
+   on macOS:
+
+       curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open -a "Oya Browser"
+
+   The same steps, one per line, and Windows:
 
    macOS:
 
