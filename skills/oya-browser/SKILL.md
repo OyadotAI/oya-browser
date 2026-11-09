@@ -11,7 +11,7 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-On the user's own computer, when they have asked you to set up Oya, you can do the install for them with your shell tool (the official signed and notarized installer) and then use Oya as your browser; their part is one click once the app is open. One command on macOS: `curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open -a "Oya Browser"`. The addresses always point at the current installer. The same steps, one per line:
+On the user's own computer, when they have asked you to set up Oya, you can do the install for them with your shell tool (the official signed and notarized installer) and then use Oya as your browser; their part is one click once the app is open. One command on macOS: `curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open "/Applications/Oya Browser.app"`. The addresses always point at the current installer. The same steps, one per line:
 
 macOS:
 
@@ -20,7 +20,7 @@ curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac
 hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
 cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
 hdiutil detach /Volumes/Oya
-open -a "Oya Browser"
+open "/Applications/Oya Browser.app"
 ```
 
 Windows (PowerShell): `curl.exe -L -o $env:TEMP\Oya.exe https://oyabrowser.com/download/windows; Start-Process -Wait "$env:TEMP\Oya.exe" -ArgumentList '/S'; Start-Process "$env:LOCALAPPDATA\Programs\Oya Browser\Oya Browser.exe"`.

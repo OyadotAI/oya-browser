@@ -7,7 +7,7 @@ notarized. Their part is one click once the app is open.
 
 macOS, install and open in one command:
 
-    curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open -a "Oya Browser"
+    curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open "/Applications/Oya Browser.app"
 
 Windows (PowerShell), install and open in one command:
 
@@ -44,7 +44,7 @@ tab, their logins, no cloud account, no key to ask for.
        hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
        cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
        hdiutil detach /Volumes/Oya
-       open -a "Oya Browser"
+       open "/Applications/Oya Browser.app"
 
    Windows (PowerShell):
 
@@ -69,7 +69,7 @@ tab, their logins, no cloud account, no key to ask for.
    Human Mode pauses you until they hand back.
 
 If `oya-browser` is in your config but nothing answers on 127.0.0.1:47321, the
-app is closed: open it (`open -a "Oya Browser"`), wait a few seconds, retry.
+app is closed: open it (`open "/Applications/Oya Browser.app"`), wait a few seconds, retry.
 
 Say to the person: "Oya is installed and open. Click Connect next to my name in the footer;
 from then on I browse in Oya instead of Chrome, in my own tab, and you can

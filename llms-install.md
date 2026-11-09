@@ -8,7 +8,7 @@ Oya is the browser an agent works in. Two ways to connect, no code to build.
    them with your shell tool; it is the official signed and notarized
    installer. Their part is the click in step 2. One command on macOS:
 
-       curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open -a "Oya Browser"
+       curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open "/Applications/Oya Browser.app"
 
    The same steps, one per line, and Windows:
 
@@ -18,7 +18,7 @@ Oya is the browser an agent works in. Two ways to connect, no code to build.
        hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
        cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
        hdiutil detach /Volumes/Oya
-       open -a "Oya Browser"
+       open "/Applications/Oya Browser.app"
 
    Windows (PowerShell):
 
