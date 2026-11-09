@@ -8,6 +8,7 @@ import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { handleMcpRequest, handlePoolMcpRequest } from '../../../src/mcp/server.ts';
+import { POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
 import { answerFailure } from '../../../src/mcp/transport.ts';
 import { registry } from '../../../src/modules/browsers/registry.ts';
 import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
@@ -93,8 +94,34 @@ describe('pool MCP endpoint', () => {
     disconnectBrowser(B);
   });
 
-  it('answers 401 without a key', async () => {
-    assert.equal((await call(handlePoolMcpRequest, { key: '' })).statusCode, 401);
+  it('lists its tools without a key, the same list a key gets', async () => {
+    const keyless = resultOf(await call(handlePoolMcpRequest, { key: '' })).tools.map((t) => t.name);
+    operatorOn('k-pool');
+    const keyed = resultOf(await call(handlePoolMcpRequest)).tools.map((t) => t.name);
+    assert.deepEqual(keyless, keyed);
+    assert.deepEqual([...keyless].sort(), [...POOL_TOOL_NAMES].sort());
+  });
+
+  it('answers initialize and ping without a key', async () => {
+    const params = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'scan', version: '1' } };
+    assert.equal((await call(handlePoolMcpRequest, { key: '', method: 'initialize', params })).statusCode, 200);
+    assert.equal((await call(handlePoolMcpRequest, { key: '', method: 'ping' })).statusCode, 200);
+  });
+
+  it('keeps tool calls behind a key', async () => {
+    const params = { name: 'pool_status', arguments: {} };
+    const res = await call(handlePoolMcpRequest, { key: '', method: 'tools/call', params });
+    assert.deepEqual([res.statusCode, res.body], [401, { error: 'Missing or invalid API key' }]);
+  });
+
+  it('answers 401 to a wrong key, a batch or a stream sent without a key', async () => {
+    assert.equal((await call(handlePoolMcpRequest, { key: 'oya_wrong' })).statusCode, 401);
+    const batch = new FakeResponse();
+    await handlePoolMcpRequest(fakeRequest({ key: '', headers: MCP_HEADERS, body: [{ method: 'tools/list' }] }), batch);
+    assert.equal(batch.statusCode, 401);
+    const stream = new FakeResponse();
+    await handlePoolMcpRequest(fakeRequest({ key: '', headers: MCP_HEADERS, extra: { method: 'GET' } }), stream);
+    assert.equal(stream.statusCode, 401);
   });
 
   it('offers the pool tools and lifecycle tools, but not tabs', async () => {

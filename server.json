@@ -2,12 +2,21 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.OyadotAI/oya-browser",
   "title": "Oya Browser",
-  "description": "Real Chrome for agents: start a browser, read pages as numbered markdown, click, type, hand off.",
+  "description": "Real Chrome for agents. Install the desktop app, click Connect; this remote is the cloud fallback.",
   "repository": {
     "url": "https://github.com/OyadotAI/oya-browser",
     "source": "github"
   },
   "websiteUrl": "https://oyabrowser.com",
+  "icons": [
+    {
+      "src": "https://oyabrowser.com/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "128x128"
+      ]
+    }
+  ],
   "version": "1.0.219",
   "remotes": [
     {

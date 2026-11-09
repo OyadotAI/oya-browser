@@ -173,11 +173,15 @@ await browser.stop();
 
 ### Connecting AI assistants
 
-The [desktop app](https://oyabrowser.com/#download) connects Claude Code, Codex, Cursor and
-VS Code to your own signed-in browser. Agent activity runs in separate tabs, and you can take
-control at any time.
+Install the [desktop app](https://oyabrowser.com/#download), open it and click
+Connect next to your agent (Claude Code, Codex, Cursor, VS Code and others appear
+when installed). That adds an MCP server named `oya-browser` at
+`http://127.0.0.1:47321/mcp` to the agent's config; no account, no key. The agent
+then uses Oya as its browser in place of Chrome: each session gets its own tab,
+you keep yours, and you can take control at any time.
 
-Any MCP client can connect to Oya Cloud. For Claude Code:
+With no desktop (servers, containers, CI), any MCP client can use Oya Cloud. For
+Claude Code:
 
 ```bash
 claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \

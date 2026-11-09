@@ -11,7 +11,7 @@ import { answerFailure, serve } from './transport.ts';
 import { browserTag, pickFor } from './pool-state.ts';
 import { registerLifecycleTools } from './pool-lifecycle.ts';
 import type { Self } from './self-api.ts';
-import { JSON_INDENT, MCP_VERSION } from './constants.ts';
+import { JSON_INDENT, MCP_VERSION, PUBLIC_METHODS } from './constants.ts';
 
 /** Tabs stay per-browser: a pool agent opens pages with navigate instead. */
 const POOL_TOOLS = [
@@ -76,8 +76,19 @@ function poolStatusResource(apiKey) {
 /** Express handler for the pool MCP endpoint. */
 export async function handlePoolMcpRequest(req, res) {
   const header = req.headers.authorization;
+  if (!header && isDiscovery(req)) return servePool('', undefined, req, res);
   const caller = await authorize(req, res);
   if (caller) await servePool(caller.key, header, req, res);
+}
+
+/**
+ * A single public JSON-RPC call (initialize, tools/list) that may be served
+ * keyless. A key that is sent but wrong still gets 401, so a misconfigured
+ * client is told; a batch always authenticates.
+ */
+function isDiscovery(req) {
+  const body = req.body;
+  return req.method === 'POST' && !!body && !Array.isArray(body) && PUBLIC_METHODS.has(body.method);
 }
 
 /** Serves the request from a fresh pool server; a failure is logged and answered 500. */

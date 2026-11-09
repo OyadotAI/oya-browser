@@ -6,6 +6,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- The cloud MCP endpoint answers `initialize` and `tools/list` without an API key, so registries and agents can read the tool list before signing up. Tool calls, resources and streams still need a key.
+- The MCP Registry listing carries an icon and points to the desktop app first.
+- llms.txt and the README tell agents to install the desktop app and connect to it directly, as their browser in place of Chrome, with Oya Cloud as the fallback.
+
 ## [1.0.219](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.219) · 2026-11-09
 
 ### Changed
