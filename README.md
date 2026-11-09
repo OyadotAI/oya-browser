@@ -8,6 +8,7 @@
   <a href="https://codecov.io/gh/OyadotAI/oya-browser"><img src="https://badgen.net/codecov/c/github/OyadotAI/oya-browser?label=coverage" alt="Coverage"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
   <a href="https://discord.gg/wqSeXJPygn"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://mcptry.com/servers/io.github.OyadotAI/oya-browser"><img src="https://mcptry.com/badge/io.github.OyadotAI/oya-browser" alt="mcptry: live status and score"></a>
 </p>
 
 # Oya Browser
