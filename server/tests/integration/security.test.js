@@ -274,13 +274,26 @@ try {
     await wait(150);
   }
 
-  console.log('\n3️⃣  /mcp/pool rejects unvalidated keys');
+  console.log('\n3️⃣  /mcp/pool lists its tools to anyone but runs them only for a validated key');
   {
-    const anon = await request('POST', '/mcp/pool', {
+    // Registries and agents read the tool list before signing up; a call still needs a key.
+    const anonList = await request('POST', '/mcp/pool', {
       body: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
       omitAuth: true,
     });
-    assert(anon.status === 401, `Unauth pool MCP returns 401 (got ${anon.status})`);
+    assert(anonList.status === 200, `Unauth pool MCP tools/list returns 200 (got ${anonList.status})`);
+
+    const anonCall = await request('POST', '/mcp/pool', {
+      body: { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pool_status', arguments: {} } },
+      omitAuth: true,
+    });
+    assert(anonCall.status === 401, `Unauth pool MCP tools/call returns 401 (got ${anonCall.status})`);
+
+    const anonBatch = await request('POST', '/mcp/pool', {
+      body: [{ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }],
+      omitAuth: true,
+    });
+    assert(anonBatch.status === 401, `Unauth pool MCP batch returns 401 (got ${anonBatch.status})`);
 
     const bogus = await request('POST', '/mcp/pool', {
       body: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
