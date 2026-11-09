@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- The docs at oyabrowser.com/docs are brought in line with the product: the first-launch flow and footer Connect, MCP setup for Claude Code, Codex, claude.ai and the desktop app, every MCP tool in a reference table, the console's tabs and shortcuts, and the REST API intro. A test now fails when a tool exists in the code but not in the docs.
+
 ## [1.0.221](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.221) · 2026-11-09
 
 ### Changed

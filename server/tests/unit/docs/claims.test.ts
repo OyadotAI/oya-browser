@@ -58,6 +58,17 @@ describe('public documents', () => {
     assert.deepEqual(phantom, [], `llms.txt documents ${phantom.join(', ')}`);
   });
 
+  it('the docs site names every MCP tool the code serves', () => {
+    const sections = join(ROOT, 'ui/src/app/docs/_sections');
+    const source = readdirSync(sections)
+      .filter((f) => f.startsWith('mcp-tools'))
+      .map((f) => read(`ui/src/app/docs/_sections/${f}`))
+      .join('\n');
+    const every = [...new Set([...BROWSER_TOOL_NAMES, ...POOL_TOOL_NAMES])];
+    const missing = every.filter((name) => !new RegExp(`\\b${name}\\b`).test(source));
+    assert.deepEqual(missing, [], `the docs site omits ${missing.join(', ')}`);
+  });
+
   it('the documents carry no em-dashes', () => {
     const offenders = [...DOCS, 'server/src/public/llms.txt'].filter((doc) => read(doc).includes('—'));
     assert.deepEqual(offenders, [], `em-dash in ${offenders.join(', ')}`);

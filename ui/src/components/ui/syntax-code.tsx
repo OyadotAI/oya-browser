@@ -11,8 +11,8 @@ import 'prismjs/components/prism-json';
 import 'prismjs/components/prism-bash';
 
 Prism.manual = true;
-/** The languages the console highlights. */
-type Language = 'typescript' | 'json' | 'bash';
+/** The languages the console highlights; `plain` leaves prose as it is. */
+export type Language = 'typescript' | 'json' | 'bash' | 'plain';
 
 /** Guesses the language: JSON by its opening bracket, shell by its first command. */
 function detect(code: string): Language {

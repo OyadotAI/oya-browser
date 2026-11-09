@@ -342,6 +342,11 @@ textarea {
   white-space: pre;
   tab-size: 2;
 }
+/* Prose to paste (a prompt) wraps like text instead of scrolling sideways. */
+.syntax-code.language-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .syntax-code .token.comment,
 .syntax-code .token.prolog {
   color: #8d9689;
