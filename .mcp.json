@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "oya-browser": {
+      "type": "http",
+      "url": "https://oyabrowser.com/mcp/pool",
+      "headers": {
+        "Authorization": "Bearer ${OYA_API_KEY}"
+      }
+    }
+  }
+}
