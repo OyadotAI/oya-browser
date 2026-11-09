@@ -6,6 +6,17 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Connected the landing sections into a story from the first task and reusable playbook to reported results, enterprise control and deployment.
+- Replaced the landing hero's technical positioning with plain-language portal automation and reusable-playbook copy.
+- Put the healthcare workflow first, with a task-specific prompt, visible saved playbook and inputs, followed by architecture and enterprise controls.
+- Excluded installed third-party agent skill assets from application linting.
+
+- Clarified how prompts become reusable playbooks and made the customer-reported productivity comparison easier to read.
+
+- Rebuilt the landing page around Oya's enterprise browser control plane, with an animated architecture overview, orchestration/governance/observability details, deployment choices and an interactive healthcare workflow with human takeover. Improved typography and isolated landing styles so navigation no longer restyles sign-in and other pages.
+
 ## [1.0.218](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.218) · 2026-11-08
 
 ### Changed

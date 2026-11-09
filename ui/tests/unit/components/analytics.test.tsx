@@ -9,9 +9,11 @@ let pathname = '/';
 vi.mock('next/navigation', () => ({ usePathname: () => pathname }));
 vi.mock('@/components/auth-provider', () => ({ useAuth: () => ({ user: null }) }));
 const trackedClick = vi.fn();
+/** A pageview proves that the asynchronous analytics-ready render has committed. */
+const trackedPageview = vi.fn();
 vi.mock('@/lib/analytics', () => ({
   init: async () => {},
-  pageview: () => {},
+  pageview: () => trackedPageview(),
   identify: () => {},
   reset: () => {},
   trackedClick: (target: EventTarget | null) => trackedClick(target),
@@ -23,14 +25,16 @@ const { Analytics } = await import('@/components/analytics');
 async function clickOn(path: string) {
   pathname = path;
   const view = render(<Analytics posthogKey="phc_test" host="https://ph.example.test" />);
-  await waitFor(() => Promise.resolve());
-  await new Promise((r) => setTimeout(r, 0));
+  await waitFor(() => expect(trackedPageview).toHaveBeenCalled());
   document.body.click();
   view.unmount();
 }
 
 describe('Analytics', () => {
-  beforeEach(() => trackedClick.mockClear());
+  beforeEach(() => {
+    trackedClick.mockClear();
+    trackedPageview.mockClear();
+  });
 
   it('counts clicks on a public page', async () => {
     await clickOn('/');

@@ -1,0 +1,97 @@
+/** The complete audit window uses one dark surface, with facts set plainly alongside it. */
+.trail {
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #2a352e;
+  border-radius: var(--radius-window);
+  background: #17201b;
+  color: #e0e8e2;
+  font-family: var(--font-mono), monospace;
+}
+.trailHead {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #ffffff18;
+  color: #a6b7ab;
+  font-size: 13px;
+}
+.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #bcddae;
+  white-space: nowrap;
+}
+.rows {
+  list-style: none;
+}
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  padding: 16px;
+  border-bottom: 1px solid #ffffff12;
+  font-size: 13px;
+}
+.row:last-child {
+  border-bottom: 0;
+}
+.row time {
+  color: #a6b7ab;
+}
+.actor {
+  min-width: 0;
+  color: #a9c8e0;
+  overflow-wrap: anywhere;
+}
+.row[data-person] .actor {
+  color: #e4c894;
+}
+.action {
+  grid-column: 2 / -1;
+  grid-row: 2;
+  color: #e0e8e2;
+  font:
+    400 14px/1.5 var(--font-text),
+    sans-serif;
+}
+.hash {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #bcddae;
+}
+.facts {
+  margin: 24px 0 !important;
+  list-style: none;
+}
+.facts li {
+  padding-block: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.facts a {
+  color: var(--primary);
+}
+@media (max-width: 479px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .actor {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .action {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+  .hash {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}

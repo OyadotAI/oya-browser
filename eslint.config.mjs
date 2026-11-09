@@ -11,7 +11,29 @@ import globals from 'globals';
 import { localPlugin, baseRules, designRules, docRules } from './tooling/eslint/index.js';
 
 export default tseslint.config(
-  { ignores: ['**/node_modules', '**/dist', '**/coverage', '.claude/worktrees/**', '.keel/worktrees/**', '.codex/worktrees/**', 'server', 'ui', 'browser', 'examples', 'qa', 'scripts', 'skills', 'k8s', 'supabase', 'docs', 'mars'] },
+  // Installed third-party skill assets are tooling artifacts outside application lint scope.
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/coverage',
+      '.claude/skills/**',
+      '.claude/worktrees/**',
+      '.keel/worktrees/**',
+      '.codex/worktrees/**',
+      'server',
+      'ui',
+      'browser',
+      'examples',
+      'qa',
+      'scripts',
+      'skills',
+      'k8s',
+      'supabase',
+      'docs',
+      'mars',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { languageOptions: { parserOptions: { tsconfigRootDir: import.meta.dirname } } },
@@ -21,7 +43,10 @@ export default tseslint.config(
     plugins: { local: localPlugin, jsdoc },
     rules: {
       ...baseRules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none', ignoreRestSiblings: true }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', caughtErrors: 'none', ignoreRestSiblings: true },
+      ],
     },
   },
   { files: ['compliance/**/*.mjs'], languageOptions: { globals: globals.node } },

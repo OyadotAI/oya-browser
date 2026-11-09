@@ -11,11 +11,10 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://oyabrowser
 /** The product name shown in titles and structured data. */
 export const SITE_NAME = 'Oya Browser';
 
-/** The one-line promise, used in titles. */
-export const SITE_TAGLINE = 'The portal has no API. Your agent still gets in.';
+/** The one-line promise, used in titles: who it is for and what it is, after the name. */
+export const SITE_TAGLINE = 'the browser control plane for healthcare and regulated work';
 
 /** The description every page and card shares unless it has its own. */
 export const SITE_DESCRIPTION =
-  'Browser infrastructure for portal automation. Payer portals, EHRs and registries are built to stop ' +
-  'bots; Oya is a real browser with the automation inside it, so your agents sign in like staff and a run ' +
-  'recorded once replays forever with no model in the loop. Self-hostable, and every playbook exports as Playwright.';
+  'Browser agents for payer portals, EHRs and registries, with every action on a tamper-evident audit trail. ' +
+  'HIPAA compliant. We sign BAAs. Self-host or Oya Cloud.';

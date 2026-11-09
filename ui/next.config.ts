@@ -21,7 +21,7 @@ const SECURITY_HEADERS = [
  * wildcard, free tunnel hostnames rotate, and pinning one means editing this file
  * every restart. Ignored entirely by `next build`.
  */
-const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com"];
+const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com", "host.docker.internal"];
 
 const nextConfig: NextConfig = {
   output: "standalone",
