@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.220](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.220) · 2026-11-09
+
 ### Changed
 
 - The cloud MCP endpoint answers `initialize` and `tools/list` without an API key, so registries and agents can read the tool list before signing up. Tool calls, resources and streams still need a key.
