@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- After signing in with Google in a popup, Gmail now reliably moves into a normal tab instead of sometimes staying in the popup window.
+- Right-clicking an image offers Save Image and Copy Image, plus Open Image in New Tab and Copy Image Address when the image has a web address (Google search results included).
+
 ## [1.0.226](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.226) · 2026-11-09
 
 ### Changed

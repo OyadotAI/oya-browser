@@ -98,11 +98,15 @@ export class GmailPopup {
     if (tabs.activeTabId === tab.id) shell.window?.show();
     this.window.close();
   }
-  /** Re-check both windows after asynchronous protection and loading, including redirects back to sign-in. */
+  /**
+   * Re-check both windows after asynchronous protection and loading, including redirects back to sign-in.
+   * The popup only has to still be on the same app: Gmail rewrites its own address once it loads
+   * (/mail/u/0/ becomes /mail/u/0/#inbox), and an exact match lost that race, so the mailbox stayed in the popup.
+   */
   private canFinish(tab: Tab, source: string): boolean {
     return (
       !this.window.isDestroyed() &&
-      this.window.webContents.getURL() === source &&
+      matchesDestination(this.window.webContents.getURL(), source) &&
       this.deps.tabs.find(tab.id) === tab &&
       tab.protection === 'protected' &&
       !tab.loadError &&
