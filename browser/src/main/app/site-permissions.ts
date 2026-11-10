@@ -1,13 +1,15 @@
 /**
- * Which sites a person allowed a device on, per profile, on disk. Allow is
- * remembered, as Chrome does, so a meeting site asks once, not at every join;
- * Block is never written, so a mis-click never locks someone out of their
- * calls. Grants are keyed by partition, so one profile never answers for another.
+ * Which sites a person allowed a device or notifications on, per profile, on disk.
+ * Allow is remembered, as Chrome does, so a meeting site asks once, not at every join.
+ * A device Block is never written, so a mis-click never locks someone out of their
+ * calls; a notifications Block is, as 'notifications-blocked', or a mail site would
+ * ask on every load. Forgetting the site clears both. Grants are keyed by partition,
+ * so one profile never answers for another.
  */
 import type { JsonFile } from './json-file.ts';
 
-/** What a site can be allowed: the microphone, the camera, or the screen. */
-export type SiteKind = 'audio' | 'video' | 'screen';
+/** What a site can be allowed (the microphone, the camera, the screen, notifications), or refused notifications. */
+export type SiteKind = 'audio' | 'video' | 'screen' | 'notifications' | 'notifications-blocked';
 
 /** Partition, then origin, then what it may use. */
 type Grants = Record<string, Record<string, SiteKind[]>>;

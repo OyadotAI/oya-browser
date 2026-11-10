@@ -23,6 +23,7 @@ type Deps = Pick<
   | 'downloadBubble'
   | 'passkeys'
   | 'mediaPermissions'
+  | 'notificationPermissions'
   | 'externalApps'
   | 'config'
   | 'electron'

@@ -35,6 +35,7 @@
     "test:incognito": "npm run build && node tests/integration/incognito.mjs",
     "test:desktop-library": "node tests/integration/desktop-library.mjs",
     "test:desktop-media": "node tests/integration/desktop-media.mjs && node tests/integration/desktop-media-overlap.mjs",
+    "test:desktop-notifications": "node tests/integration/desktop-notifications.mjs",
     "test:desktop-passkeys": "node tests/integration/desktop-passkeys.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
