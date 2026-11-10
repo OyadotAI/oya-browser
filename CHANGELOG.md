@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.228](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.228) · 2026-11-10
+
 ### Fixed
 
 - macOS: a site asking for a security key or phone passkey (Google's "Use a security key", for example) no longer hangs and blocks every later passkey prompt on the page with "Something went wrong"; it is declined the way a closed passkey dialog is, so Touch ID passkeys and other sign-in options keep working.
