@@ -54,6 +54,8 @@ export interface AppServices {
   passkeys: import('./passkeys.ts').Passkeys;
   /** Explicit microphone and camera permission prompts. */
   mediaPermissions: import('./media-permissions.ts').MediaPermissions;
+  /** Remembered per-site consent for website notifications. */
+  notificationPermissions: import('./notification-permissions.ts').NotificationPermissions;
   /** Asks before a window close or a quit ends a call; owns whether a quit is going through. */
   callGuard: import('./call-guard.ts').CallGuard;
   /** Explicit screen-share prompts, through the same gate. */

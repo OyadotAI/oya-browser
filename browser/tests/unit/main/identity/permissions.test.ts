@@ -85,6 +85,30 @@ it('routes media requests and checks through the explicit consent service', asyn
   assert.equal(await new Promise((resolve) => ses.request(contents, 'media', resolve, details)), false);
 });
 
+it('routes notification requests and checks through the notification consent service', async () => {
+  const ses = fakeSession(),
+    contents = {},
+    calls = [];
+  const notifications = {
+    request: async (...args) => (calls.push(args), true),
+    check: (...args) => (calls.push(args), true),
+  };
+  installPermissions(ses, undefined, undefined, undefined, notifications as any);
+  const granted = await new Promise((resolve) =>
+    ses.request(contents, 'notifications', resolve, { requestingUrl: 'https://mail.test/' }),
+  );
+  assert.equal(granted, true);
+  assert.equal(ses.check(contents, 'notifications', 'https://mail.test/'), true);
+  assert.deepEqual(calls, [
+    [contents, 'https://mail.test/'],
+    [contents, 'https://mail.test/'],
+  ]);
+  notifications.request = async () => {
+    throw new Error('dialog failed');
+  };
+  assert.equal(await new Promise((resolve) => ses.request(contents, 'notifications', resolve, {})), false);
+});
+
 it('permits display capture only after installing the display-media consent handler', async () => {
   const ses = fakeSession();
   const installed = [];

@@ -27,6 +27,7 @@ import { startLocalMcp } from './local-mcp/index.ts';
 /** Signing-bound WebAuthn group embedded by the build, empty for unsigned development. */
 declare const __OYA_WEBAUTHN_GROUP__: string;
 import { MediaPermissions } from './app/media-permissions.ts';
+import { NotificationPermissions } from './app/notification-permissions.ts';
 import { CallGuard } from './app/call-guard.ts';
 import { ScreenShare } from './app/screen-share.ts';
 import { ScreenPicker, ShareIndicator } from './screen-share/index.ts';
@@ -168,6 +169,7 @@ ctx.passkeys = new Passkeys(ctx);
 const userFile = (name: string) => () => path.join(app.getPath('userData'), name);
 ctx.sitePermissions = new SitePermissionStore(new JsonFile(userFile(SITE_PERMISSIONS_FILE)));
 ctx.mediaPermissions = new MediaPermissions(ctx);
+ctx.notificationPermissions = new NotificationPermissions(ctx);
 ctx.callGuard = new CallGuard(ctx);
 ctx.screenPicker = new ScreenPicker(ctx);
 ctx.shareIndicator = new ShareIndicator(ctx);

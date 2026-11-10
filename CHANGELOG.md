@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Website notifications: a site asks once with a Show notifications? box, Allow or Block is remembered per site and profile (forget it under History and bookmarks), and an allowed site notifies from a background tab and from its service worker. Never for a tab an agent drives, a governed browser or incognito.
+
 ## [1.0.228](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.228) · 2026-11-10
 
 ### Fixed

@@ -36,6 +36,18 @@ export function allowDevicesPrompt(origin: string, types: DeviceKind[]): Message
   };
 }
 
+/**
+ * Asks once whether a site may show notifications. Unlike a device, the answer either way is
+ * remembered, so the ending says "your choice"; Escape is Block, and forgetting undoes it.
+ */
+export function notificationsPrompt(origin: string): MessageBoxOptions {
+  return {
+    message: 'Show notifications?',
+    detail: `${origin} wants to show notifications, including from a background tab. Allow only if you trust this site. Your choice is remembered for this site in this profile; forget it any time under History and bookmarks.`,
+    ...BLOCK_OR_ALLOW,
+  };
+}
+
 /** Site consent permits requesting a share; the person still chooses a source for every stream. */
 export function shareScreenPrompt(origin: string): MessageBoxOptions {
   return {

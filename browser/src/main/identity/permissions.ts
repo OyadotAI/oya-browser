@@ -4,7 +4,8 @@
  * the machine's real devices by name, and `navigator.permissions` said
  * "granted" to everything, which no browser does and detectors read in one call.
  *
- * Microphone and camera requests use explicit site and OS consent. Other
+ * Microphone and camera requests use explicit site and OS consent, and notifications
+ * the person's remembered Allow or Block (notification-permissions.ts). Other
  * sensitive permissions remain refused; ordinary unasked permissions are allowed. The page injection
  * reports a refused permission as Chrome's "prompt" (anonymity/stealth.js).
  * External app requests remain denied here, but may be delegated to a separate
@@ -12,6 +13,7 @@
  */
 import type { Session, WebContents, MediaAccessPermissionRequest, PermissionRequest } from 'electron';
 import type { MediaPermissions } from '../app/media-permissions.ts';
+import type { NotificationPermissions } from '../app/notification-permissions.ts';
 import type { ScreenShare } from '../app/screen-share.ts';
 import { UNASKED } from './constants.ts';
 
@@ -25,24 +27,30 @@ export type ExternalAppRequest = (url: string, contents: WebContents) => void;
 type PermissionSession = Pick<Session, 'setPermissionRequestHandler' | 'setPermissionCheckHandler'> &
   Partial<Pick<Session, 'setDisplayMediaRequestHandler'>>;
 
-/** Media and screen share have explicit consent paths; other sensitive permissions remain denied. Governance overrides all. */
+/** The consent services a session has, in order: microphone and camera, screen share, notifications. */
+type ConsentArgs = [media?: MediaPermissions, screenShare?: ScreenShare, notifications?: NotificationPermissions];
+
+/** Media, screen share and notifications have explicit consent paths; other sensitive permissions remain denied. Governance overrides all. */
 export function installPermissions(
   ses: PermissionSession,
   externalApp?: ExternalAppRequest,
-  media?: MediaPermissions,
-  screenShare?: ScreenShare,
+  ...consent: ConsentArgs
 ): void {
+  const [media, screenShare, notifications] = consent;
   const screen = installScreenShare(ses, screenShare) ? screenShare : undefined;
-  ses.setPermissionRequestHandler(permissionRequest({ externalApp, media, screen }));
-  ses.setPermissionCheckHandler(permissionCheck(media));
+  ses.setPermissionRequestHandler(permissionRequest({ externalApp, media, screen, notifications }));
+  ses.setPermissionCheckHandler(permissionCheck(media, notifications));
 }
 
 /** The exact native check callback type. */
 type CheckHandler = NonNullable<Parameters<Session['setPermissionCheckHandler']>[0]>;
-/** Media reads as granted only when this profile remembered it for this site; everything else as Chrome has it. */
-function permissionCheck(media?: MediaPermissions): CheckHandler {
-  return (contents, permission, origin, details) =>
-    permission === 'media' ? !!media?.check(contents, origin, details) : unasked(permission);
+/** Media and notifications read as granted only when this profile remembered it for this site; everything else as Chrome has it. */
+function permissionCheck(media?: MediaPermissions, notifications?: NotificationPermissions): CheckHandler {
+  return (contents, permission, origin, details) => {
+    if (permission === 'media') return !!media?.check(contents, origin, details);
+    if (permission === 'notifications') return !!notifications?.check(contents, origin);
+    return unasked(permission);
+  };
 }
 
 /** Screen share needs the display-media hook, which a bare permission session (tests, dialogs) may not have. */
@@ -74,6 +82,8 @@ interface PermissionServices {
   media?: MediaPermissions;
   /** Screen consent, present only when the native display handler is installed. */
   screen?: ScreenShare;
+  /** Remembered notification consent; absent in private and dialog sessions, which then refuse. */
+  notifications?: NotificationPermissions;
 }
 
 /** Settle every native callback, including unavailable services and failed consent prompts. */
@@ -88,13 +98,29 @@ function offerExternal(services: PermissionServices, contents: WebContents, deta
     services.externalApp?.(details.externalURL, contents);
 }
 
-/** Sensitive media uses explicit consent; display capture passes to the screen-share handler, which asks; all other rules stay unchanged. */
+/** What Electron tells a request handler about the request, the handler's last argument. */
+type RequestDetails = Parameters<RequestHandler> extends [unknown, unknown, unknown, infer D] ? D : never;
+
+/** A permission with a consent path: answers the person's decision, or nothing when the session has no such service. */
+type Consent = (
+  contents: WebContents,
+  details: RequestDetails,
+  services: PermissionServices,
+) => Promise<boolean> | undefined;
+
+/** The permissions that ask the person (or remember what they said); every other one is answered by `unasked`. */
+const CONSENT: Record<string, Consent> = {
+  media: (contents, details, { media, screen }) =>
+    media && requestMedia(contents, details as MediaAccessPermissionRequest, media, screen),
+  'display-capture': (contents, details, { screen }) => screen?.request(contents, details),
+  notifications: (contents, details, { notifications }) => notifications?.request(contents, details?.requestingUrl),
+};
+
+/** Consent permissions go to their service; external apps may be offered to the person; all other rules stay unchanged. */
 function permissionRequest(services: PermissionServices): RequestHandler {
-  const { media, screen } = services;
   return (contents, permission, callback, details) => {
-    if (permission === 'media')
-      return answerPermission(callback, media && requestMedia(contents, details, media, screen));
-    if (permission === 'display-capture') return answerPermission(callback, screen?.request(contents, details));
+    if (Object.hasOwn(CONSENT, permission))
+      return answerPermission(callback, CONSENT[permission](contents, details, services));
     callback(unasked(permission));
     if (permission === 'openExternal') offerExternal(services, contents, details);
   };

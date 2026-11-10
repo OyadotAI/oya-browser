@@ -15,6 +15,7 @@ type Deps = Pick<
   | 'observer'
   | 'governance'
   | 'mediaPermissions'
+  | 'notificationPermissions'
   | 'screenShare'
   | 'externalApps'
   | 'protection'
@@ -72,7 +73,8 @@ export class PersonaSessionSetup {
   /** Keep protocol prompting injected through the persona session boundary. */
   private sessionExtras(): SessionExtras {
     const { nativeBrowsing, observer, governance, mediaPermissions: media, screenShare } = this.deps;
-    return { nativeBrowsing, observer, governance, media, screenShare, externalApp: this.externalApp };
+    const notifications = this.deps.notificationPermissions;
+    return { nativeBrowsing, observer, governance, media, screenShare, notifications, externalApp: this.externalApp };
   }
 
   /** Configure the persistent browser session, user-agent, cookies, privacy. */
