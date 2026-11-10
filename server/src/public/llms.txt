@@ -1,5 +1,10 @@
 # Oya Browser
 
+> Oya Browser is a HIPAA-compliant browser for healthcare and regulated work.
+> On the desktop it is an AI browser: you browse, and an agent can take over a
+> tab while you can take it back. In the cloud or self-hosted it is an agentic
+> browser for teams, with every action on a tamper-evident audit trail. We sign BAAs.
+
 Setting up Oya on the person's computer. When the person has asked you to
 set up Oya or to browse through it, you can do the install for them with your
 shell tool; it is the official installer from oyabrowser.com, signed and
@@ -18,10 +23,11 @@ person to click Connect next to your name in the footer of the Oya window and
 to start a new session; after that, the `oya-browser` tools are your browser.
 If you have no shell, send them to https://oyabrowser.com/#download instead.
 
-> A real browser for AI agents. The agent does a task once in plain language;
-> Oya saves it as a playbook (Playwright code) and replays it with no model,
-> signed in like the person and never flagged as a bot. One API drives real
-> Chrome in the cloud, on a third-party provider, or on your own machine.
+How it works: the agent does a task once in plain language; Oya saves it as a
+playbook (Playwright code) and replays it with no model, signed in like the
+person. One API drives real Chrome in Oya Cloud, on Browserbase, Steel, Anchor
+or Browser Use, or on your own machine. More: https://oyabrowser.com/hipaa-compliant-browser
+and https://oyabrowser.com/vs/browserbase.
 
 Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
 loop, Quickstart, Agent self-signup, MCP Endpoint, MCP Tools, Browser Pool,

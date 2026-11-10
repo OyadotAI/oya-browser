@@ -6,6 +6,15 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- oyabrowser.com/hipaa-compliant-browser and oyabrowser.com/vs/browserbase, each answering its question with a visible FAQ and matching structured data.
+- /llm.txt and /llm-full.txt serve the same files as /llms.txt and /llms-full.txt.
+
+### Changed
+
+- One description of Oya Browser everywhere: the site, llms.txt, the README, npm and the MCP registry now say it is a HIPAA-compliant browser, an AI browser on the desktop and an agentic browser for teams.
+
 ## [1.0.229](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.229) · 2026-11-10
 
 ### Added

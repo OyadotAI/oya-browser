@@ -13,13 +13,15 @@
 
 # Oya Browser
 
-Oya Browser is a browser for AI agents that you can run on your own infrastructure or use as a
-managed service. An agent completes a task once in natural language; Oya records the steps as a
-playbook that replays deterministically, without calling a model, and repairs individual steps
-when a page changes. People can watch any session and take control at any time.
+Oya Browser is a HIPAA-compliant browser for healthcare and regulated work: an AI browser on your
+desktop, and an agentic browser your agents run in the cloud or self-hosted, with every action on a
+tamper-evident audit trail. An agent completes a task once in natural language; Oya records the
+steps as a playbook that replays deterministically, without calling a model, and repairs individual
+steps when a page changes. People can watch any session and take control at any time.
 
 This repository contains the community edition: the browser, the control plane, the web console,
-the TypeScript SDK and the CLI.
+the TypeScript SDK and the CLI. HIPAA compliance and a signed BAA come with Oya Cloud and the
+enterprise edition.
 
 - [Features](#features)
 - [Requirements](#requirements)
