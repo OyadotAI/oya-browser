@@ -16,3 +16,7 @@ paths = [
 [[allowlists]]
 description = "TLS key-share group names in the Mars fingerprint notes read as a generic API key."
 regexes = ['''X25519MLKEM768''']
+
+[[allowlists]]
+description = "The IndexNow key is public by design: the site serves it at /<key>.txt so engines can verify ownership (scripts/indexnow.mjs)."
+regexes = ['''6133278fca7b72df2ea13fab91b68091''']
