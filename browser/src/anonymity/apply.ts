@@ -60,6 +60,8 @@ export interface InjectionOptions {
   nativeWebRTC?: boolean;
   /** The runtime cannot show a passkey dialog. */
   noPasskeyDialog?: boolean;
+  /** The runtime answers this device's passkeys but has no dialog for a security key or a phone. */
+  noRoamingPasskeyDialog?: boolean;
   /** The runtime refuses what Chrome would prompt for. */
   noPermissionPrompt?: boolean;
 }
