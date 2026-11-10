@@ -18,7 +18,8 @@
     "typecheck": "npm run typecheck --prefix server",
     "format:check": "prettier --check packages/*/src packages/*/tests tooling && npm run format:check --prefix server && npm run format:check --prefix ui && npm run format:check --prefix browser",
     "test:packages": "npm run build:sdk && node --test \"packages/*/tests/unit/**/*.test.ts\"",
-    "test:scripts": "node --test scripts/*.test.mjs"
+    "test:scripts": "node --test scripts/*.test.mjs",
+    "indexnow": "node scripts/indexnow.mjs"
   },
   "engines": {
     "node": ">=22.18"

@@ -7,7 +7,21 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import HipaaCompliantBrowser, { metadata as hipaaMetadata } from '@/app/hipaa-compliant-browser/page';
 import VsBrowserbase, { metadata as vsMetadata } from '@/app/vs/browserbase/page';
-import { HIPAA_BROWSER, VS_BROWSERBASE } from '@/app/_answers/content';
+import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
+import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
+import HipaaBrowserAutomation, { metadata as automationMetadata } from '@/app/hipaa-browser-automation/page';
+import PriorAuthorizationAutomation, { metadata as priorAuthMetadata } from '@/app/prior-authorization-automation/page';
+import {
+  AI_BROWSER,
+  ANSWER_PAGES,
+  HEALTHCARE_BROWSER,
+  HIPAA_AUTOMATION,
+  HIPAA_BROWSER,
+  PRIOR_AUTH,
+  VS_BROWSERBASE,
+} from '@/app/_answers/content';
+import { SiteFooter } from '@/app/_home/site-footer';
+import { Closing } from '@/app/_home/closing';
 import { AnswerPage } from '@/app/_answers/answer-page';
 import { SITE_DESCRIPTION, SITE_URL } from '@/lib/site';
 import sitemap from '@/app/sitemap';
@@ -15,6 +29,25 @@ import sitemap from '@/app/sitemap';
 const PAGES = [
   { name: 'hipaa-compliant-browser', Page: HipaaCompliantBrowser, metadata: hipaaMetadata, content: HIPAA_BROWSER },
   { name: 'vs/browserbase', Page: VsBrowserbase, metadata: vsMetadata, content: VS_BROWSERBASE },
+  { name: 'ai-browser', Page: AiBrowser, metadata: aiMetadata, content: AI_BROWSER },
+  {
+    name: 'browser-for-healthcare',
+    Page: BrowserForHealthcare,
+    metadata: healthcareMetadata,
+    content: HEALTHCARE_BROWSER,
+  },
+  {
+    name: 'hipaa-browser-automation',
+    Page: HipaaBrowserAutomation,
+    metadata: automationMetadata,
+    content: HIPAA_AUTOMATION,
+  },
+  {
+    name: 'prior-authorization-automation',
+    Page: PriorAuthorizationAutomation,
+    metadata: priorAuthMetadata,
+    content: PRIOR_AUTH,
+  },
 ];
 
 /** The FAQPage structured data the page rendered. */
@@ -54,8 +87,36 @@ describe.each(PAGES)('/$name', ({ Page, metadata, content }) => {
     expect(metadata.alternates?.canonical).toBe(content.path);
   });
 
+  it('has its own social card, pointing at its own address', () => {
+    expect(metadata.openGraph).toMatchObject({ title: content.title, description: content.lead, url: content.path });
+    expect(metadata.twitter).toMatchObject({ title: content.title, description: content.lead });
+  });
+
   it('is in the sitemap', () => {
     expect(sitemap().map((e) => e.url)).toContain(`${SITE_URL}${content.path}`);
+  });
+
+  it('is linked from the site footer, so crawlers reach it from every page', () => {
+    render(<SiteFooter />);
+    expect(screen.getByRole('link', { name: content.label }).getAttribute('href')).toBe(content.path);
+  });
+
+  it('is linked from the home page footer too, which is not the site footer', () => {
+    render(<Closing />);
+    const answers = screen.getByRole('navigation', { name: 'Answers' });
+    expect(answers.querySelector(`a[href="${content.path}"]`)?.textContent).toBe(content.label);
+  });
+
+  it('never claims HIPAA without naming Oya Cloud or the enterprise edition', () => {
+    const text = [content.lead, ...content.sections.map((s) => s.body), ...content.faq.map((f) => f.a)].join(' ');
+    if (/HIPAA[- ]compliant|sign BAAs/i.test(text)) expect(text).toMatch(/Oya Cloud|enterprise edition/);
+  });
+});
+
+describe('the answer page list', () => {
+  it('has a test row for every page, so a new page cannot skip these rules', () => {
+    expect(PAGES.map((p) => p.content)).toEqual(expect.arrayContaining(ANSWER_PAGES));
+    expect(PAGES.length).toBe(ANSWER_PAGES.length);
   });
 });
 

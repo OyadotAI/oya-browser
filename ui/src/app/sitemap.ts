@@ -4,6 +4,7 @@
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
 import { DOC_PAGES } from './docs/_docs/pages';
+import { ANSWER_PAGES } from './_answers/content';
 
 /** One page of the sitemap. */
 interface Entry {
@@ -27,8 +28,7 @@ const PAGES: Entry[] = [
   ...DOC_PAGES.map(({ slug }): Entry => ({ path: `/docs/${slug}.md`, changeFrequency: 'weekly', priority: 0.6 })),
   { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/trust', changeFrequency: 'monthly', priority: 0.6 },
-  { path: '/hipaa-compliant-browser', changeFrequency: 'monthly', priority: 0.7 },
-  { path: '/vs/browserbase', changeFrequency: 'monthly', priority: 0.7 },
+  ...ANSWER_PAGES.map(({ path }): Entry => ({ path, changeFrequency: 'monthly', priority: 0.7 })),
   { path: '/privacy', changeFrequency: 'monthly', priority: 0.4 },
   { path: '/terms', changeFrequency: 'monthly', priority: 0.4 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },

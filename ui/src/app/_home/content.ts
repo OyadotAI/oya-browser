@@ -118,6 +118,9 @@ export const FROM_AGENT = [
   },
 ];
 
+/** The one throughput claim, said once so the home page and the prior-auth page cannot drift apart. */
+export const THROUGHPUT = 'Customers report 10 to 30 times the throughput of the same work by hand.';
+
 /** How a task becomes code, in the three steps a team takes. */
 export const STEPS = [
   {
@@ -133,7 +136,7 @@ export const STEPS = [
   {
     n: '03',
     title: 'Replay with no model',
-    body: 'One SDK call runs it again with new inputs. Customers report 10 to 30 times the throughput of the same work by hand.',
+    body: `One SDK call runs it again with new inputs. ${THROUGHPUT}`,
   },
 ];
 

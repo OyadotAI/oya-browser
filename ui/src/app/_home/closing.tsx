@@ -2,7 +2,9 @@
  * The page's closing footer: a clean bordered CTA card with a standard primary button,
  * followed by the five-column directory and legal row. Carries the #download anchor.
  */
+import { Fragment } from 'react';
 import Link from 'next/link';
+import { ANSWER_PAGES } from '../_answers/content';
 import { OyaLogo } from '@/components/oya-logo';
 import { browserDownloads } from '@/lib/browser-downloads';
 import { discord, foundersCall, repository } from './content';
@@ -54,6 +56,19 @@ function Downloads() {
   );
 }
 
+/** The answer pages, linked from the home page so crawlers reach them; the grid above is full, so they sit in the legal row. */
+function AnswerLinks() {
+  return (
+    <nav aria-label="Answers">
+      {ANSWER_PAGES.map(({ path, label }) => (
+        <Fragment key={path}>
+          <Link href={path}>{label}</Link> &nbsp;{' '}
+        </Fragment>
+      ))}
+    </nav>
+  );
+}
+
 /** The directory under the close: the mark and lede, the link columns, the downloads and the legal row. */
 function Directory() {
   return (
@@ -86,6 +101,7 @@ function Directory() {
         <span>
           &copy; 2026 Oya &nbsp; <Link href="/privacy">Privacy</Link> &nbsp; <Link href="/terms">Terms</Link>
         </span>
+        <AnswerLinks />
       </div>
     </div>
   );
