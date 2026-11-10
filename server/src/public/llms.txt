@@ -26,8 +26,16 @@ If you have no shell, send them to https://oyabrowser.com/#download instead.
 How it works: the agent does a task once in plain language; Oya saves it as a
 playbook (Playwright code) and replays it with no model, signed in like the
 person. One API drives real Chrome in Oya Cloud, on Browserbase, Steel, Anchor
-or Browser Use, or on your own machine. More: https://oyabrowser.com/hipaa-compliant-browser
-and https://oyabrowser.com/vs/browserbase.
+or Browser Use, or on your own machine.
+
+Answers:
+
+- https://oyabrowser.com/hipaa-compliant-browser: What a HIPAA-compliant browser is, and how Oya is one on Oya Cloud and the enterprise edition.
+- https://oyabrowser.com/browser-for-healthcare: A browser for healthcare on payer portals, EHRs and registries; HIPAA compliant on Oya Cloud and the enterprise edition, and we sign BAAs.
+- https://oyabrowser.com/ai-browser: What an AI browser is; Oya's free AI browser for macOS and Windows, driven by ChatGPT, Claude or your coding agent.
+- https://oyabrowser.com/hipaa-browser-automation: HIPAA-compliant browser automation and AI browser agents under a BAA, with a tamper-evident audit trail.
+- https://oyabrowser.com/prior-authorization-automation: Automating prior authorization on payer portals with no API: an agent files it once, then a playbook replays it with no model.
+- https://oyabrowser.com/vs/browserbase: Oya next to Browserbase, for teams choosing a browser for AI agents.
 
 Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
 loop, Quickstart, Agent self-signup, MCP Endpoint, MCP Tools, Browser Pool,

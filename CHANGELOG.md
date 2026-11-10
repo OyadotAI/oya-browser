@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- oyabrowser.com/ai-browser, /browser-for-healthcare, /hipaa-browser-automation and /prior-authorization-automation, each answering its question with a visible FAQ and matching structured data, in the sitemap and llms.txt.
+- Every answer page is linked from the site footer and the home page footer, and has its own social card.
+- `npm run indexnow` submits the live sitemap to IndexNow (Bing and the engines it shares with) after a site deploy.
+
+### Changed
+
+- HIPAA and BAA claims on the answer pages name Oya Cloud and the enterprise edition.
+
 ## [1.0.230](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.230) · 2026-11-10
 
 ### Added

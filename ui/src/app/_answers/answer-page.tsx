@@ -8,12 +8,26 @@ import styles from '../page.module.css';
 import trust from '../trust/trust.module.css';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
-import { faqJsonLd, type QA } from '@/lib/site';
+import { faqJsonLd, SITE_NAME, type QA } from '@/lib/site';
 import type { AnswerPageContent, AnswerSection } from './content';
 
-/** The page's title, its answer as the description, and its canonical address. */
+/** The card image every page shares; Next replaces openGraph and twitter whole, so it is repeated here. */
+const CARD_IMAGE = '/oya-ask-poster.jpg';
+
+/**
+ * The page's title, its answer as the description, and its canonical address, repeated in the
+ * social cards. Without its own cards a page inherits the home page's, so six pages would share one
+ * card title and an og:url that contradicts each canonical.
+ */
 export function answerMetadata({ title, lead, path }: AnswerPageContent): Metadata {
-  return { title, description: lead, alternates: { canonical: path } };
+  const card = { title, description: lead, images: [CARD_IMAGE] };
+  return {
+    title,
+    description: lead,
+    alternates: { canonical: path },
+    openGraph: { ...card, type: 'article', siteName: SITE_NAME, url: path },
+    twitter: { ...card, card: 'summary_large_image' },
+  };
 }
 
 /** Structured data as script text: `<` escaped, so no string in it can close the script tag. */
