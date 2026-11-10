@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "version": "1.0.229",
-  "description": "AI-controlled browser, your real browser as an MCP server",
+  "description": "Oya Browser: an AI browser and agentic browser for people and AI agents; HIPAA compliant on Oya Cloud and Enterprise.",
   "main": "out/main/index.js",
   "author": "Oya <hello@oya.ai>",
   "scripts": {

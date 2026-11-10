@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.OyadotAI/oya-browser",
   "title": "Oya Browser",
-  "description": "Real Chrome for agents. Install the desktop app, click Connect; this remote is the cloud fallback.",
+  "description": "Oya, the HIPAA-compliant agentic browser, over MCP: browse, run playbooks, hand a tab to a person.",
   "repository": {
     "url": "https://github.com/OyadotAI/oya-browser",
     "source": "github"

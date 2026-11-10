@@ -96,14 +96,20 @@ const STRUCTURED_DATA = {
       name: 'Oya',
       url: SITE_URL,
       logo: `${SITE_URL}/icon.png`,
-      sameAs: ['https://github.com/OyadotAI/oya-browser', 'https://www.npmjs.com/package/@oya-ai/browser'],
+      sameAs: [
+        'https://github.com/OyadotAI/oya-browser',
+        'https://www.npmjs.com/package/@oya-ai/browser',
+        'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.OyadotAI/oya-browser',
+      ],
     },
     {
       '@type': 'SoftwareApplication',
       '@id': `${SITE_URL}/#app`,
       name: SITE_NAME,
-      applicationCategory: 'DeveloperApplication',
-      applicationSubCategory: 'Browser automation',
+      applicationCategory: 'BrowserApplication',
+      applicationSubCategory: 'HIPAA-compliant AI browser and agentic browser',
+      keywords:
+        'HIPAA-compliant browser, AI browser, agentic browser, browser for AI agents, browser automation, healthcare',
       operatingSystem: 'macOS, Windows',
       url: SITE_URL,
       downloadUrl: `${SITE_URL}/docs#download`,
