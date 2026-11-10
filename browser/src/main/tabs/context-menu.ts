@@ -1,5 +1,5 @@
 /**
- * The right-click menu on a page: navigation, clipboard, and the developer
+ * The right-click menu on a page: links, images, navigation, clipboard, and the developer
  * tools (page source and element inspection, shown in the dev panel).
  */
 import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
@@ -20,6 +20,9 @@ type Deps = Pick<
   'tabs' | 'recorder' | 'electron' | 'shell' | 'layout' | 'protection' | 'world' | 'control' | 'config' | 'agentTab'
 > &
   Partial<Pick<AppServices, 'translation'>>;
+
+/** An image a new tab may open and whose address is worth copying; an inline data: image is only saved or copied. */
+const WEB_ADDRESS = /^https?:/i;
 
 /** The clicked point, as the inspector needs it. */
 type Point = Pick<ContextMenuParams, 'x' | 'y'>;
@@ -86,12 +89,12 @@ export class ContextMenu {
   show(view: PageView, params: ContextMenuParams): void {
     const template = [
       ...this.linkItems(params, view),
+      ...this.imageItems(params, view),
       ...this.navigationItems(view),
       ...editItems(params),
       ...this.toolItems(view, params),
     ];
-    const menu = this.deps.electron.Menu.buildFromTemplate(template);
-    menu.popup({ window: this.deps.shell.window ?? undefined });
+    this.deps.electron.Menu.buildFromTemplate(template).popup({ window: this.deps.shell.window ?? undefined });
   }
 
   /** "Open Link in New Tab", when a link was clicked: it opens right of this tab, in the background. */
@@ -104,6 +107,22 @@ export class ContextMenu {
       },
       { type: 'separator' },
     ];
+  }
+
+  /**
+   * Save Image and Copy Image when an image was clicked, plus Open Image in New Tab and Copy Image Address
+   * when it has a web address. Google's results are images, often inline data: ones, which a tab
+   * should not open. The download goes through the session's downloads, so an agent's page still asks with Save As.
+   */
+  private imageItems(params: ContextMenuParams, view: PageView): MenuItemConstructorOptions[] {
+    if (params.mediaType !== 'image' || !params.srcURL) return [];
+    const src = params.srcURL;
+    const web = WEB_ADDRESS.test(src);
+    const open = { label: 'Open Image in New Tab', click: () => openLink(this.deps.tabs, { page: view, url: src }) };
+    const address = { label: 'Copy Image Address', click: () => this.deps.electron.clipboard.writeText(src) };
+    const save = { label: 'Save Image', click: () => view.webContents.downloadURL(src) };
+    const copy = { label: 'Copy Image', click: () => view.webContents.copyImageAt(params.x, params.y) };
+    return [...(web ? [open] : []), save, copy, ...(web ? [address] : []), { type: 'separator' }];
   }
 
   /** Goes back or forward once a recording in progress has the step; an incognito page is never a step. */

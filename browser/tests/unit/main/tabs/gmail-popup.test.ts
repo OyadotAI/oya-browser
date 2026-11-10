@@ -210,3 +210,13 @@ it('ignores the staged blank document and waits for the actual app document', as
   await settle();
   assert.equal(t.closed(), true);
 });
+
+it('still hands off when Gmail rewrites its own address while the new tab loads', async () => {
+  const t = setup();
+  t.load('https://mail.google.com/mail/u/0/');
+  t.load('https://mail.google.com/mail/u/0/#inbox');
+  t.ready.resolve();
+  await settle();
+  assert.equal(t.closed(), true);
+  assert.equal(t.tabs.activeTabId, 2);
+});

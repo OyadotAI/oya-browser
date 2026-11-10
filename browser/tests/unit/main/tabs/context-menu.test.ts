@@ -69,6 +69,43 @@ describe('context menu', () => {
     assert.equal(back, 1);
   });
 
+  it('offers open, save and copy items for an image with a web address', () => {
+    const items = menuFor(ctx, view, { ...PARAMS, mediaType: 'image', srcURL: 'https://img.test/a.png' });
+    assert.deepEqual(
+      items.slice(0, 5).map((i) => i.label || i.type),
+      ['Open Image in New Tab', 'Save Image', 'Copy Image', 'Copy Image Address', 'separator'],
+    );
+  });
+
+  it('offers only save and copy for an inline data: image', () => {
+    const items = menuFor(ctx, view, { ...PARAMS, mediaType: 'image', srcURL: 'data:image/png;base64,AAAA' });
+    assert.deepEqual(
+      items.slice(0, 3).map((i) => i.label || i.type),
+      ['Save Image', 'Copy Image', 'separator'],
+    );
+  });
+
+  it('saves the image through the downloads, copies it at the clicked point, and copies its address', () => {
+    const calls = [];
+    view.webContents.downloadURL = (url) => calls.push(['download', url]);
+    view.webContents.copyImageAt = (x, y) => calls.push(['copy', x, y]);
+    ctx.electron.clipboard = { writeText: (text) => calls.push(['address', text]) };
+    const src = 'https://img.test/a.png';
+    const items = menuFor(ctx, view, { ...PARAMS, mediaType: 'image', srcURL: src });
+    for (const label of ['Save Image', 'Copy Image', 'Copy Image Address'])
+      items.find((i) => i.label === label).click();
+    assert.deepEqual(calls, [
+      ['download', src],
+      ['copy', 10, 20],
+      ['address', src],
+    ]);
+  });
+
+  it('adds no image items when no image was clicked', () => {
+    const labels = menuFor(ctx, view, { ...PARAMS, mediaType: 'none', srcURL: '' }).map((i) => i.label);
+    assert.equal(labels.includes('Save Image'), false);
+  });
+
   it('mirrors the clipboard state', () => {
     const items = menuFor(ctx, view, PARAMS);
     assert.equal(items.find((i) => i.label === 'Copy').enabled, true);
