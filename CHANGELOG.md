@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.232](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.232) · 2026-11-10
+
 ### Fixed
 
 - The secret scan accepts the site's IndexNow key, which is public by design, so v1.0.231's site pages deploy.
