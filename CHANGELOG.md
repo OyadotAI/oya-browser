@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.227](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.227) · 2026-11-10
+
 ### Fixed
 
 - After signing in with Google in a popup, Gmail now reliably moves into a normal tab instead of sometimes staying in the popup window.
