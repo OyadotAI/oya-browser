@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.230](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.230) · 2026-11-10
+
 ### Added
 
 - oyabrowser.com/hipaa-compliant-browser and oyabrowser.com/vs/browserbase, each answering its question with a visible FAQ and matching structured data.
