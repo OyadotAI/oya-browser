@@ -17,15 +17,20 @@ const { buildFingerprintBody, buildWorkerBody } = require('./fingerprint');
  * @param {object|null} profile - anonymity profile, or null for stealth only
  * @param {object} [options]
  * @param {boolean} [options.noPasskeyDialog] - the runtime cannot show a passkey dialog (stealth.js)
+ * @param {boolean} [options.noRoamingPasskeyDialog] - the runtime answers this device's passkeys but has no dialog for a security key or phone (stealth.js)
  * @param {boolean} [options.noPermissionPrompt] - the runtime refuses what Chrome would prompt for (stealth.js)
  * @param {boolean} [options.nativeWebRTC] - keep native ICE only for direct, unmanaged desktop browsing
  * @returns {string} source for Page.addScriptToEvaluateOnNewDocument
  */
-function buildInjectionScript(profile, { noPasskeyDialog = false, noPermissionPrompt = false, nativeWebRTC = false } = {}) {
+function buildInjectionScript(
+  profile,
+  { noPasskeyDialog = false, noRoamingPasskeyDialog = false, noPermissionPrompt = false, nativeWebRTC = false } = {},
+) {
   const parts = [buildMaskPreamble()];
   if (profile) parts.push(buildFingerprintBody(profile, { nativeWebRTC }));
   parts.push(buildStealthBody());
   if (noPasskeyDialog) parts.push(buildPasskeyBody());
+  else if (noRoamingPasskeyDialog) parts.push(buildPasskeyBody({ roamingOnly: true }));
   if (noPermissionPrompt) parts.push(buildPermissionsBody());
   return `(function() {\n'use strict';\n${parts.join('\n')}\n})();`;
 }
