@@ -1,0 +1,11 @@
+{
+  "name": "@oya-ai/extension",
+  "version": "1.0.230",
+  "private": true,
+  "description": "Send the logins for the site you are on to an Oya profile. One Manifest V3 source for Chrome and Firefox.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "pack": "node scripts/pack.mjs"
+  }
+}

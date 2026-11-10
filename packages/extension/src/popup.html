@@ -1,0 +1,27 @@
+<!doctype html>
+<!-- The toolbar popup: pick an Oya profile and send this site's logins to it. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Oya</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="popup">
+    <main>
+      <header>
+        <img src="icon.png" alt="" />
+        <span>Oya</span>
+        <a id="open-settings" href="settings.html" target="_blank" aria-label="Settings">Settings</a>
+      </header>
+      <div id="site" class="site" hidden></div>
+      <label id="profile-field" hidden>
+        Profile
+        <select id="profile"></select>
+      </label>
+      <button id="send" class="primary" type="button" hidden>Send logins for this site</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <button id="action" type="button" hidden></button>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

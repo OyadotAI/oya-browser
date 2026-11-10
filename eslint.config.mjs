@@ -1,5 +1,5 @@
 /**
- * Lint rules for the published packages (packages/sdk, packages/cli): the
+ * Lint rules for the packages (packages/sdk, packages/cli, packages/extension): the
  * project's shared rules (tooling/eslint). The server, ui and browser each
  * have their own config in their folder.
  */
@@ -50,6 +50,11 @@ export default tseslint.config(
     },
   },
   { files: ['compliance/**/*.mjs'], languageOptions: { globals: globals.node } },
-  { files: ['packages/*/src/**/*.ts'], rules: { ...docRules(), ...designRules() } },
+  { files: ['packages/*/src/**/*.ts', 'packages/extension/src/**/*.js'], rules: { ...docRules(), ...designRules() } },
+  // The extension runs in the browser, not Node: plain JS with no build step, so the store reviewers read what runs.
+  {
+    files: ['packages/extension/src/**/*.js'],
+    languageOptions: { globals: { ...globals.browser, ...globals.webextensions } },
+  },
   prettier,
 );

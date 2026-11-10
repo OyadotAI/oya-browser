@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Oya: send logins",
+  "short_name": "Oya",
+  "description": "Send the logins for the site you are on to an Oya profile, so your Oya browsers start signed in.",
+  "homepage_url": "https://oyabrowser.com",
+  "permissions": ["cookies", "storage", "activeTab"],
+  "host_permissions": ["https://oyabrowser.com/*"],
+  "optional_host_permissions": ["*://*/*"],
+  "action": {
+    "default_title": "Send logins to Oya",
+    "default_popup": "popup.html",
+    "default_icon": { "128": "icon.png" }
+  },
+  "options_ui": { "page": "settings.html", "open_in_tab": true },
+  "icons": { "128": "icon.png" }
+}

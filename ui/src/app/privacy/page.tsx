@@ -49,6 +49,12 @@ const SECTIONS: readonly LegalSection[] = [
           Passwords you import from a password manager go to the same sealed sign-in store.
         </li>
         <li>
+          <strong>Logins you send from the browser extension.</strong> When you press Send in the Oya extension for
+          Chrome or Firefox, it reads the cookies of the site you are on, only after you allow that site, and sends them
+          to the profile you picked in your project, over HTTPS to oyabrowser.com and nowhere else. It runs nothing in
+          the background, and your API key stays in that browser.
+        </li>
+        <li>
           <strong>What agents and cloud browsers do.</strong> The pages they visit, the tasks you give them, and, when
           you record, screen recordings of their runs.
         </li>

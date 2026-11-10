@@ -1,0 +1,132 @@
+/* The popup and settings page, in the Oya console's colours (ui/src/app/globals.css). */
+:root {
+  color-scheme: dark;
+  --background: #0c0c0a;
+  --foreground: rgba(255, 255, 255, 0.88);
+  --primary: #39ed35;
+  --primary-foreground: #0c0c0a;
+  --card: #1c1c18;
+  --border: rgba(255, 255, 255, 0.12);
+  --muted: rgba(255, 255, 255, 0.64);
+  --destructive: #ff6b6b;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --background: #f4f3ef;
+    --foreground: #0c0c0a;
+    --primary: #157a13;
+    --primary-foreground: #fff;
+    --card: #fff;
+    --border: rgba(12, 12, 10, 0.14);
+    --muted: #62625a;
+    --destructive: #b91c1c;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font:
+    14px/1.45 'DM Sans',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+body.popup {
+  width: 360px;
+}
+main {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+body.settings main {
+  max-width: 480px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+header img {
+  width: 20px;
+  height: 20px;
+}
+header a {
+  margin-left: auto;
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 400;
+}
+.site {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  color: var(--muted);
+}
+label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+select,
+input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+button {
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  cursor: pointer;
+}
+button.primary {
+  width: 100%;
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.status {
+  min-height: 1.45em;
+  margin: 0;
+}
+.hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+[hidden] {
+  display: none !important;
+}

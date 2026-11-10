@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- The settings page: paste an Oya API key, checked against Oya before it is kept. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Oya settings</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="settings">
+    <main>
+      <header>
+        <img src="icon.png" alt="" />
+        <span>Oya settings</span>
+      </header>
+      <form id="key-form">
+        <label>
+          Oya API key
+          <span class="row">
+            <input id="key" type="password" autocomplete="off" spellcheck="false" required />
+            <button id="show" type="button" aria-pressed="false">Show</button>
+          </span>
+        </label>
+      </form>
+      <button id="save" class="primary" type="submit" form="key-form">Save</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p class="hint">
+        Your key stays in this browser. Create one in the
+        <a href="https://oyabrowser.com/dashboard" target="_blank" rel="noopener">Oya console</a> under Keys.
+      </p>
+    </main>
+    <script type="module" src="settings.js"></script>
+  </body>
+</html>
