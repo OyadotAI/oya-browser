@@ -12,7 +12,9 @@ import { SITE_NAME, SITE_URL } from '@/lib/site';
  * and canonical rather than inheriting the home page's.
  */
 export const metadata: Metadata = {
-  title: 'Docs, API, personas, MCP and self-hosting',
+  // A template as well as a title: this layout sits above the topic pages (/docs/<slug>), and a
+  // layout with a plain string title drops the root's "· Oya Browser" suffix for everything under it.
+  title: { default: 'Docs, API, personas, MCP and self-hosting', template: `%s · ${SITE_NAME}` },
   description:
     `${SITE_NAME} documentation: quickstart, REST and WebSocket APIs, the command surface ` +
     '(navigate, click, type, scroll, wait, screenshot, tabs), personas and fingerprinting, ' +

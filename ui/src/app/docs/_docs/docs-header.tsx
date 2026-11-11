@@ -11,8 +11,8 @@ import ThemeToggle from '@/components/theme-toggle';
 
 /** DocsHeader's props. */
 interface Props {
-  /** Opens the mobile sections menu. */
-  onOpenMenu: () => void;
+  /** Opens the mobile sections menu. A page with no menu (a topic page) leaves it out, and gets no button. */
+  onOpenMenu?: () => void;
 }
 
 /** The top bar. */
@@ -28,9 +28,11 @@ export function DocsHeader({ onOpenMenu }: Props) {
         <Link href="/dashboard" className="btn-ghost h-9 text-[12px]">
           Open console <ArrowUpRight size={14} />
         </Link>
-        <button className="btn-icon lg:hidden" onClick={onOpenMenu} aria-label="Open documentation menu">
-          <Menu size={19} />
-        </button>
+        {onOpenMenu && (
+          <button className="btn-icon lg:hidden" onClick={onOpenMenu} aria-label="Open documentation menu">
+            <Menu size={19} />
+          </button>
+        )}
       </div>
     </header>
   );

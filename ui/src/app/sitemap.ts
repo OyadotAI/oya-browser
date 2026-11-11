@@ -3,7 +3,7 @@
  */
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
-import { DOC_PAGES } from './docs/_docs/pages';
+import { DOC_PAGES, DOC_TOPICS } from './docs/_docs/pages';
 import { ANSWER_PAGES } from './_answers/content';
 
 /** One page of the sitemap. */
@@ -17,13 +17,14 @@ interface Entry {
 }
 
 /**
- * Public pages only, plus the files written for agents: llms.txt and the docs'
+ * Public pages only, each docs topic's own page, plus the files written for agents: llms.txt and the docs'
  * Markdown twins (answer engines cite what they can find). /dashboard and /live/* are per-account and behind auth,
  * so listing them would just advertise redirects.
  */
 const PAGES: Entry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
   { path: '/docs', changeFrequency: 'weekly', priority: 0.9 },
+  ...DOC_TOPICS.map(({ slug }): Entry => ({ path: `/docs/${slug}`, changeFrequency: 'weekly', priority: 0.7 })),
   { path: '/docs.md', changeFrequency: 'weekly', priority: 0.8 },
   ...DOC_PAGES.map(({ slug }): Entry => ({ path: `/docs/${slug}.md`, changeFrequency: 'weekly', priority: 0.6 })),
   { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
