@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.233](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.233) · 2026-11-11
+
 ### Added
 
 - oyabrowser.com/vs/steel, /vs/anchor and /vs/browser-use: Oya next to each provider its API drives, each from a different side of Oya, with a visible FAQ and matching structured data, linked from both footers and in the sitemap.
