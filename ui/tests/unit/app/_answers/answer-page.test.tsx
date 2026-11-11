@@ -1,5 +1,5 @@
 /**
- * Unit tests for the answer pages (/hipaa-compliant-browser and /vs/browserbase), through what a
+ * Unit tests for the answer pages (/hipaa-compliant-browser, /vs/browserbase and the rest), through what a
  * visitor and a crawler see: the answer first, every answer visible, structured data that repeats
  * the visible questions, the canonical address, and a place in the sitemap.
  */
@@ -7,6 +7,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import HipaaCompliantBrowser, { metadata as hipaaMetadata } from '@/app/hipaa-compliant-browser/page';
 import VsBrowserbase, { metadata as vsMetadata } from '@/app/vs/browserbase/page';
+import VsSteel, { metadata as steelMetadata } from '@/app/vs/steel/page';
+import VsAnchor, { metadata as anchorMetadata } from '@/app/vs/anchor/page';
+import VsBrowserUse, { metadata as browserUseMetadata } from '@/app/vs/browser-use/page';
 import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
 import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
 import HipaaBrowserAutomation, { metadata as automationMetadata } from '@/app/hipaa-browser-automation/page';
@@ -18,7 +21,10 @@ import {
   HIPAA_AUTOMATION,
   HIPAA_BROWSER,
   PRIOR_AUTH,
+  VS_ANCHOR,
   VS_BROWSERBASE,
+  VS_BROWSER_USE,
+  VS_STEEL,
 } from '@/app/_answers/content';
 import { SiteFooter } from '@/app/_home/site-footer';
 import { Closing } from '@/app/_home/closing';
@@ -29,6 +35,9 @@ import sitemap from '@/app/sitemap';
 const PAGES = [
   { name: 'hipaa-compliant-browser', Page: HipaaCompliantBrowser, metadata: hipaaMetadata, content: HIPAA_BROWSER },
   { name: 'vs/browserbase', Page: VsBrowserbase, metadata: vsMetadata, content: VS_BROWSERBASE },
+  { name: 'vs/steel', Page: VsSteel, metadata: steelMetadata, content: VS_STEEL },
+  { name: 'vs/anchor', Page: VsAnchor, metadata: anchorMetadata, content: VS_ANCHOR },
+  { name: 'vs/browser-use', Page: VsBrowserUse, metadata: browserUseMetadata, content: VS_BROWSER_USE },
   { name: 'ai-browser', Page: AiBrowser, metadata: aiMetadata, content: AI_BROWSER },
   {
     name: 'browser-for-healthcare',
@@ -117,6 +126,19 @@ describe('the answer page list', () => {
   it('has a test row for every page, so a new page cannot skip these rules', () => {
     expect(PAGES.map((p) => p.content)).toEqual(expect.arrayContaining(ANSWER_PAGES));
     expect(PAGES.length).toBe(ANSWER_PAGES.length);
+  });
+});
+
+describe('the comparison pages', () => {
+  const VS = [VS_BROWSERBASE, VS_STEEL, VS_ANCHOR, VS_BROWSER_USE];
+
+  it('each open with a different answer, so they are not one page with the name swapped', () => {
+    expect(new Set(VS.map((page) => page.lead)).size).toBe(VS.length);
+    expect(new Set(VS.map((page) => page.sections[0].heading)).size).toBe(VS.length);
+  });
+
+  it('sit together at the end of the list, which groups them in both footers', () => {
+    expect(ANSWER_PAGES.slice(-VS.length)).toEqual(VS);
   });
 });
 

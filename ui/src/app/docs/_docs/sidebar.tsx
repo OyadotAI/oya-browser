@@ -37,6 +37,8 @@ interface NavGroup {
   icon: typeof Layers;
   /** The group's heading. */
   label: string;
+  /** The part whose own page (/docs/<topic>) the heading links to; none for a part that has no page. */
+  topic?: string;
   /** Its links, in order. */
   links: NavEntry[];
 }
@@ -46,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Rocket,
     label: 'Get started',
+    topic: 'getting-started',
     links: [
       ['quickstart', 'Quickstart'],
       ['create-key', 'API keys'],
@@ -56,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Repeat,
     label: 'Playbooks',
+    topic: 'playbooks',
     links: [
       ['playbooks', 'Record and replay'],
       ['playbook-variables', 'Variables and secrets'],
@@ -67,11 +71,12 @@ const NAV_GROUPS: NavGroup[] = [
       ['background-runs', 'Background runs'],
     ],
   },
-  { icon: Package, label: 'SDK', links: [['sdk', 'TypeScript SDK']] },
-  { icon: Terminal, label: 'CLI', links: [['cli', 'Commands']] },
+  { icon: Package, label: 'SDK', topic: 'sdk', links: [['sdk', 'TypeScript SDK']] },
+  { icon: Terminal, label: 'CLI', topic: 'cli', links: [['cli', 'Commands']] },
   {
     icon: BookOpen,
     label: 'MCP',
+    topic: 'mcp',
     links: [
       ['mcp-setup', 'Setup'],
       ['desktop-app', 'Desktop app'],
@@ -85,6 +90,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Wrench,
     label: 'MCP tools',
+    topic: 'mcp-tools',
     links: [
       ['analyze_page', 'analyze_page'],
       ['navigate', 'navigate'],
@@ -101,6 +107,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Users,
     label: 'Identity',
+    topic: 'identity',
     links: [
       ['personas', 'Personas'],
       ['rotation', 'Rotation'],
@@ -111,6 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Shield,
     label: 'Stealth',
+    topic: 'anonymity',
     links: [
       ['anonymity', 'Overview'],
       ['fingerprint', 'Fingerprint Spoofing'],
@@ -122,6 +130,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Server,
     label: 'Self-hosting',
+    topic: 'self-hosting',
     links: [
       ['self-hosting', 'Install'],
       ['self-hosting-connect', 'Point your code at it'],
@@ -141,6 +150,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Globe,
     label: 'Console',
+    topic: 'dashboard',
     links: [
       ['dashboard-overview', 'Overview'],
       ['onboarding', 'Onboarding'],
@@ -151,6 +161,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Code,
     label: 'API reference',
+    topic: 'api',
     links: [
       ['rest-api', 'REST API'],
       ['command-api', 'Command Reference'],
@@ -166,15 +177,27 @@ interface NavSectionProps extends PropsWithChildren {
   icon: ReactNode;
   /** The group's heading. */
   label: string;
+  /** The part whose own page the heading links to, when it has one. */
+  topic?: string;
 }
 
-/** A labeled group of links. */
-function NavSection({ icon, label, children }: NavSectionProps) {
+/**
+ * A labeled group of links. The heading links to the part's own page: the sidebar is on every
+ * view of /docs and outside <main>, so it gives the topic pages an inbound link without adding
+ * one to the Markdown, which is cut from <main>.
+ */
+function NavSection({ icon, label, topic, children }: NavSectionProps) {
   return (
     <div className="mb-5">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim mb-2">
         {icon}
-        {label}
+        {topic ? (
+          <Link href={`/docs/${topic}`} className="hover:text-text transition-colors">
+            {label}
+          </Link>
+        ) : (
+          label
+        )}
       </div>
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
@@ -219,8 +242,8 @@ function SwaggerLink() {
 
 /** Every group of section links. */
 function SectionLinks() {
-  return NAV_GROUPS.map(({ icon: Icon, label, links }) => (
-    <NavSection key={label} icon={<Icon className="w-3 h-3" />} label={label}>
+  return NAV_GROUPS.map(({ icon: Icon, label, topic, links }) => (
+    <NavSection key={label} icon={<Icon className="w-3 h-3" />} label={label} topic={topic}>
       {links.map((link) =>
         link === 'swagger' ? (
           <SwaggerLink key="swagger" />

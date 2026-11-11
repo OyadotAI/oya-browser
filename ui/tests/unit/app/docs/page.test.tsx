@@ -8,6 +8,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DocsPage from '@/app/docs/page';
 import { NAV_SCROLL_DELAY_MS, SEARCH_DEBOUNCE_MS } from '@/app/docs/_docs/constants';
+import { DOC_TOPICS } from '@/app/docs/_docs/pages';
 
 const scrolled = vi.fn();
 beforeEach(() => {
@@ -45,6 +46,25 @@ const SECTIONS = [
 ];
 
 describe('DocsPage', () => {
+  it('links each sidebar group heading to its topic page, which is how a crawler on /docs finds them', () => {
+    render(<DocsPage />);
+    const aside = document.querySelector('aside')!;
+    const hrefs = [...aside.querySelectorAll('a[href^="/docs/"]')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(DOC_TOPICS.map(({ slug }) => `/docs/${slug}`));
+  });
+
+  it('leaves the heading of the part with no topic page as plain text', () => {
+    render(<DocsPage />);
+    const aside = document.querySelector('aside')!;
+    expect([...aside.querySelectorAll('a')].some((a) => a.textContent === 'Architecture')).toBe(false);
+    expect(aside.textContent).toContain('Architecture');
+  });
+
+  it('puts no topic-page link inside <main>, which the Markdown twins are cut from', () => {
+    render(<DocsPage />);
+    expect(document.querySelectorAll('main a[href^="/docs/"]:not([href$=".md"])')).toHaveLength(0);
+  });
+
   it('renders every section anchor once', () => {
     render(<DocsPage />);
     for (const id of [...SECTIONS, 'rotation', 'onboarding', 'command-api', 'websocket']) {

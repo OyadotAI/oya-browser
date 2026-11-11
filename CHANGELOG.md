@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- oyabrowser.com/vs/steel, /vs/anchor and /vs/browser-use: Oya next to each provider its API drives, each from a different side of Oya, with a visible FAQ and matching structured data, linked from both footers and in the sitemap.
+- Each docs topic has its own page (oyabrowser.com/docs/sdk, /docs/playbooks, /docs/mcp and eight more) with its own title, description and canonical address, linked from the docs sidebar and in the sitemap. The full /docs page and the Markdown docs are unchanged.
+
 ## [1.0.232](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.232) · 2026-11-10
 
 ### Fixed

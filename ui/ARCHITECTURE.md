@@ -28,6 +28,11 @@ src/
       page.tsx           docs shell: header, sidebar (a dialog on mobile), sections
       _docs/             the machinery: nav.ts (active section, navigate, "/"), search-index.ts,
                          use-docs-search.ts, sidebar.tsx, blocks.tsx (SectionHeading, CodeBlock, Table…)
+                         pages.ts (the parts; one with a `topic` also has its own page),
+                         topic-page.tsx + topic-nav.tsx (the layout and navigation of /docs/<slug>)
+      <slug>/page.tsx    one folder per topic page (/docs/sdk, …): that part alone, with its own title,
+                         description and canonical. Static folders, so they win over [page]/route.ts,
+                         which still serves /docs/<slug>.md and the 404
       _sections/         the content, one file per sidebar group (control plane, getting started, …)
     dashboard/
       layout.tsx         the gate: an account or a working console credential, else /login

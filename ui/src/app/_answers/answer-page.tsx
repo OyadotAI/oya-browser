@@ -19,7 +19,7 @@ const CARD_IMAGE = '/oya-ask-poster.jpg';
  * social cards. Without its own cards a page inherits the home page's, so six pages would share one
  * card title and an og:url that contradicts each canonical.
  */
-export function answerMetadata({ title, lead, path }: AnswerPageContent): Metadata {
+export function answerMetadata({ title, lead, path }: Pick<AnswerPageContent, 'title' | 'lead' | 'path'>): Metadata {
   const card = { title, description: lead, images: [CARD_IMAGE] };
   return {
     title,

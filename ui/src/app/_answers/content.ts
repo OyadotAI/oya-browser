@@ -1,7 +1,9 @@
 /**
  * The words of the pages written to answer what people ask search engines and AI assistants:
  * "What is a HIPAA-compliant browser?", "an AI browser?", "a browser for healthcare?", HIPAA
- * browser automation, prior authorization, and "Oya or Browserbase?". HIPAA and BAAs are always
+ * browser automation, prior authorization, and "Oya or Browserbase, Steel, Anchor or Browser Use?"
+ * (one page per vendor Oya's own API drives, each from a different side of Oya so they are not one
+ * page with the name swapped). HIPAA and BAAs are always
  * scoped to Oya Cloud and the enterprise edition, never the community edition. Every claim is one the site
  * already makes (see _home/content.ts); nothing here describes another company beyond what Oya's
  * own API does with it, because a claim we cannot check would be the first thing quoted wrong.
@@ -44,7 +46,7 @@ const OYA_CONTROLS = [
   'Browsers reach only the hosts you allow.',
 ];
 
-/** The answer to "can we host it ourselves", shared by both pages. */
+/** The answer to "can we host it ourselves", shared by the pages that are asked it. */
 const SELF_HOST: QA = {
   q: 'Can I self-host a HIPAA-compliant agentic browser?',
   a: 'Yes, with the enterprise edition: it runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Write to sales@getoya.ai. The source-available community edition self-hosts too, without the HIPAA offering. Every playbook exports as Playwright code you keep.',
@@ -93,6 +95,9 @@ export const HIPAA_BROWSER: AnswerPageContent = {
   ],
 };
 
+/** Sealed credentials, as the README states it. */
+const SEALED = 'Stored passwords and TOTP seeds are sealed and never shown to the model.';
+
 /** /vs/browserbase: what Oya is next to Browserbase, in facts about Oya only. */
 export const VS_BROWSERBASE: AnswerPageContent = {
   path: '/vs/browserbase',
@@ -135,8 +140,161 @@ export const VS_BROWSERBASE: AnswerPageContent = {
   ],
 };
 
-/** Sealed credentials, as the README states it. */
-const SEALED = 'Stored passwords and TOTP seeds are sealed and never shown to the model.';
+/** /vs/steel: what Oya is next to Steel, in facts about Oya only: where it runs. */
+export const VS_STEEL: AnswerPageContent = {
+  path: '/vs/steel',
+  label: 'Oya vs Steel',
+  title: 'Oya vs Steel',
+  lead: 'Comparing browsers for AI agents? Oya Browser runs agents on Oya Cloud, in your own infrastructure or on your desktop, and saves each finished task as a playbook: Playwright code that replays with no model. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Steel, behind the same API.',
+  sections: [
+    {
+      heading: 'Where Oya runs',
+      body: 'Pick where the browsers live, and keep one API across all of them.',
+      items: [
+        'Oya Cloud: browsers we run for you.',
+        'The enterprise edition: the whole stack in your own infrastructure, on Docker, ECS, GCP or Kubernetes, with a BAA.',
+        'The community edition: source-available and self-hosted, free up to 5 cloud browsers at once, without the HIPAA offering.',
+        'The desktop app for macOS and Windows: free, and signed in as you.',
+      ],
+    },
+    {
+      heading: 'What Oya gives a regulated team',
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+    {
+      heading: 'Use Steel through Oya',
+      body: "Steel is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Anchor, Browser Use and your own Chrome. Add it in the console under Control, Providers with your Steel API key, and set its routing priority. When a connection to one provider fails, Oya sends the session to the next one in priority order. The controls and BAA above cover Oya Cloud and the enterprise edition.",
+    },
+  ],
+  faq: [
+    {
+      q: 'Is Oya a self-hosted alternative to Steel?',
+      a: 'Oya self-hosts in two editions. The source-available community edition runs in your network and is free up to 5 cloud browsers at once. The enterprise edition runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Write to sales@getoya.ai.',
+    },
+    {
+      q: 'Can I use Oya with Steel?',
+      a: "Yes. Steel is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Anchor, Browser Use and your own Chrome. Add it with your Steel API key and your code keeps calling the Oya API.",
+    },
+    {
+      q: 'What happens when a provider is down?',
+      a: 'When a connection to one provider fails, Oya rests that route for a while and sends the session to the next provider in priority order.',
+    },
+    {
+      q: 'Does Oya work with Playwright and Puppeteer?',
+      a: 'Yes. Each Oya browser gives a CDP URL. Point Playwright, Puppeteer, Stagehand or browser-use at it. Every playbook also exports as a readable Playwright module you own.',
+    },
+    {
+      q: 'Is Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Our SOC 2 Type II audit is in progress.',
+    },
+  ],
+};
+
+/** /vs/anchor: what Oya is next to Anchor, in facts about Oya only: agents that work signed in. */
+export const VS_ANCHOR: AnswerPageContent = {
+  path: '/vs/anchor',
+  label: 'Oya vs Anchor',
+  title: 'Oya vs Anchor',
+  lead: 'Looking at browsers for AI agents that have to sign in? In Oya Browser an agent works signed in as your staff: stored passwords and TOTP seeds are sealed and never shown to the model, and a person can take over any session and hand it back. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Anchor, behind the same API.',
+  sections: [
+    {
+      heading: 'Signed in, without showing the model a password',
+      body: 'Most of the work worth automating sits behind a login, so Oya treats the login as part of the browser.',
+      items: [
+        SEALED,
+        'A persona is one identity: a fingerprint, a cookie jar and a proxy, bound together and stable for its life.',
+        'Sign in once in the desktop app to the sites your agents need, and those cookies move to the browsers Oya runs, which keep the same fingerprint as that identity.',
+        'When a sign-in needs a person, such as a text-message code, staff take over the session and hand it back.',
+      ],
+    },
+    {
+      heading: 'A record of every step',
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+    {
+      heading: 'Use Anchor through Oya',
+      body: 'One Oya API drives Oya Cloud, Anchor, Browserbase, Steel, Browser Use or your own Chrome. Keep Anchor as a provider behind that API, set its routing priority and session capacity next to your other providers, and move a workload without changing your code. The controls and BAA above cover Oya Cloud and the enterprise edition.',
+    },
+  ],
+  faq: [
+    {
+      q: 'Is Oya an alternative to Anchor for agents that sign in?',
+      a: 'Oya Browser runs agents signed in as your staff. Stored passwords and TOTP seeds are sealed and never shown to the model, and a person can take over any session. On Oya Cloud and the enterprise edition every action lands on a tamper-evident audit trail, and we sign BAAs.',
+    },
+    {
+      q: 'Can I use Oya with Anchor?',
+      a: "Yes. Anchor is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Steel, Browser Use and your own Chrome.",
+    },
+    { q: 'Does the agent see my passwords?', a: `No. ${SEALED}` },
+    {
+      q: 'What about two-factor codes?',
+      a: 'A persona can hold a TOTP seed, sealed like a password, and Oya completes the code step with it. When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.',
+    },
+    {
+      q: 'Is Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs. Our SOC 2 Type II audit is in progress.',
+    },
+    SELF_HOST,
+  ],
+};
+
+/** /vs/browser-use: what Oya is next to Browser Use, in facts about Oya only: a run becomes code that replays with no model. */
+export const VS_BROWSER_USE: AnswerPageContent = {
+  path: '/vs/browser-use',
+  label: 'Oya vs Browser Use',
+  title: 'Oya vs Browser Use',
+  lead: 'Weighing Oya against Browser Use for AI agents in a browser? In Oya Browser an agent does a task once in plain language, and Oya saves it as a playbook: Playwright code that replays with no model in the loop. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Browser Use, behind the same API.',
+  sections: [
+    {
+      heading: 'Run it once with an agent, then replay it with no model',
+      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the inputs as variables), and the playbook replays with no model calls. When a page changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
+    },
+    {
+      heading: 'Bring the agent you already have',
+      body: 'Oya is the browser. The agent can be yours.',
+      items: [
+        'MCP: Claude Code, Codex, Cursor or any MCP client.',
+        'The Ask panel in the desktop app, on the ChatGPT or Claude plan you already pay for, or a model API key.',
+        'The TypeScript SDK, @oya-ai/browser.',
+        'Playwright, Puppeteer, Stagehand or browser-use, over the CDP URL each browser gives.',
+      ],
+    },
+    {
+      heading: 'For regulated work',
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+    {
+      heading: 'Use Browser Use through Oya',
+      body: "Browser Use is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Steel, Anchor and your own Chrome: add it with your Browser Use API key and Oya starts browsers there behind the same API. It works the other way round too: point the browser-use library at an Oya browser's CDP URL. The controls and BAA above cover Oya Cloud and the enterprise edition.",
+    },
+  ],
+  faq: [
+    {
+      q: 'Is Oya an alternative to Browser Use?',
+      a: 'Oya Browser is a browser for AI agents that takes a task in plain language, or takes your own agent over MCP, the SDK or a CDP URL. What a run leaves behind is a playbook: Playwright code that replays with no model. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs.',
+    },
+    {
+      q: 'Can I use the browser-use library with Oya?',
+      a: 'Yes. Each Oya browser gives a CDP URL. Point browser-use, Playwright, Puppeteer or Stagehand at it.',
+    },
+    {
+      q: 'Can Oya run browsers on Browser Use?',
+      a: "Yes. Browser Use is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Steel, Anchor and your own Chrome.",
+    },
+    {
+      q: 'Does every run need a model?',
+      a: 'No. The first run does. A saved playbook replays with no model calls, and the agent is called again only when a page has changed, to finish the task from the step that moved.',
+    },
+    {
+      q: 'Is there a free way to try it?',
+      a: 'Yes. The desktop app for macOS and Windows is free, and so are 500 agent steps a month.',
+    },
+    SELF_HOST,
+  ],
+};
 
 /** /ai-browser: what an AI browser is, and Oya's free desktop app. */
 export const AI_BROWSER: AnswerPageContent = {
@@ -358,4 +516,7 @@ export const ANSWER_PAGES = [
   HIPAA_AUTOMATION,
   PRIOR_AUTH,
   VS_BROWSERBASE,
+  VS_STEEL,
+  VS_ANCHOR,
+  VS_BROWSER_USE,
 ];
