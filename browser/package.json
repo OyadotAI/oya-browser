@@ -1,6 +1,6 @@
 {
   "name": "oya-browser",
-  "version": "1.0.236",
+  "version": "1.0.237",
   "description": "Oya Browser: an AI browser and agentic browser for people and AI agents; HIPAA compliant on Oya Cloud and Enterprise.",
   "main": "out/main/index.js",
   "author": "Oya <hello@oya.ai>",
