@@ -52,6 +52,10 @@ updates:
     directory: /browser
     schedule:
       interval: weekly
+    ignore:
+      # typescript-eslint supports TypeScript below 6.1 only; lift when it supports 7.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
     groups:
       browser:
         patterns: ['*']
