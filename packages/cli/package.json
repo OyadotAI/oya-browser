@@ -1,6 +1,6 @@
 {
   "name": "@oya-ai/cli",
-  "version": "1.0.235",
+  "version": "1.0.236",
   "description": "Command line for Oya, the HIPAA-compliant agentic browser: start browsers and run playbooks from your terminal.",
   "license": "MIT",
   "homepage": "https://oyabrowser.com",
@@ -50,7 +50,7 @@
     "access": "public"
   },
   "devDependencies": {
-    "@oya-ai/browser": "1.0.235",
+    "@oya-ai/browser": "1.0.236",
     "@types/node": "^20.19.43",
     "tsup": "^9.0.0",
     "typescript": "^6.0.3"
