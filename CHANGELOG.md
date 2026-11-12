@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.234](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.234) · 2026-11-12
+
 ### Changed
 
 - Redesigned the installer around four clear phases, compact completed answers and readable choices, with inline instructions for finding every required and Advanced value. Added narrow-terminal and plain-output fallbacks, and made cancellation and EOF stop setup safely.
