@@ -90,7 +90,7 @@ cmd_deploy() {
   docker pull -q --platform "${OYA_PULL_PLATFORM}" "$(env_get OYA_BROWSER_IMAGE)" >/dev/null
   log "Starting the stack"
   compose up -d --wait
-  log "Oya is up at $(public_url)"
+  log "Control plane deployed at $(public_url); run smoke to verify a browser"
   log "API key: $(env_get API_KEYS | cut -d, -f1)   (./deploy.sh keys shows it again)"
 }
 

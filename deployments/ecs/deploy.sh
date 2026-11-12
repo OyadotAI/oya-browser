@@ -158,11 +158,12 @@ cmd_deploy() {
     SettingsSecretArn="$settings_arn" SettingsVersion="$settings_version" $(secret_overrides)
   log "Waiting for the control plane to be healthy"
   awsr ecs wait services-stable --cluster "$STACK" --services control-plane
-  log "Oya is up at $(stack_output "$STACK" Url)"
+  log "Control plane deployed; load balancer: $(stack_output "$STACK" Url)"
+  [ -z "${OYA_DEPLOY_PUBLIC_URL:-}" ] || log "Point ${OYA_DEPLOY_PUBLIC_URL#https://} at this load balancer before verification"
   log "API key: $(first_key)   (./deploy.sh keys shows it again)"
 }
 
-cmd_smoke() { smoke_test "$(stack_output "$STACK" Url)" "$(first_key)"; }
+cmd_smoke() { smoke_test "${OYA_DEPLOY_PUBLIC_URL:-$(stack_output "$STACK" Url)}" "$(first_key)"; }
 
 cmd_status() {
   log "Stack $STACK: $(awsr cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].StackStatus' --output text)"

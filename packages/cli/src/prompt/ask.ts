@@ -4,7 +4,17 @@
  */
 import { stdin, stdout } from 'node:process';
 import { icon, style } from './style.ts';
-import { inputExhausted, nextLine, setMasked } from './lines.ts';
+import {
+  inputExhausted,
+  nextLine,
+  setMasked,
+  maskedCells,
+  inputInterrupted,
+  lineWasEOF,
+  setLinePrompt,
+} from './lines.ts';
+import { cellWidth } from './layout.ts';
+import type { QuestionPresentation } from './presentation.ts';
 
 /** Thrown when input is rejected and there is no interactive way to retry. */
 export class InputError extends Error {}
@@ -15,6 +25,10 @@ export interface AskOptions {
   validate?: (value: string) => string | void;
   /** Mask what is typed. */
   secret?: boolean;
+  /** Optional setup framing, without changing accepted values. */
+  presentation?: QuestionPresentation;
+  /** A setup default still needs Enter; EOF is not consent to deploy. */
+  requireInput?: boolean;
 }
 
 /** Ends masking, moving past the line the hidden answer was typed on. */
@@ -24,13 +38,23 @@ function unmask(): void {
 }
 
 /** One line, trimmed, or the fallback when blank. Masking ends however the read ends. */
-async function readAnswer(fallback: string, secret: boolean): Promise<string> {
-  setMasked(secret);
+async function readAnswer(fallback: string, options: AskOptions): Promise<string> {
+  setMasked(!!options.secret);
   try {
-    return (await nextLine()).trim() || fallback;
+    const raw = await nextLine();
+    options.presentation?.input(options.secret ? maskedCells() : cellWidth(raw));
+    return acceptedLine(raw, fallback, options);
   } finally {
-    if (secret) unmask();
+    if (options.secret) unmask();
   }
+}
+
+/** Empty input is a valid explicit default, while cancellation and setup EOF are terminal outcomes. */
+function acceptedLine(raw: string, fallback: string, options: AskOptions): string {
+  if (inputInterrupted()) throw new InputError('Cancelled.');
+  if ((options.requireInput || options.presentation) && lineWasEOF())
+    throw new InputError('Input ended before setup was complete. Use --yes or --config for unattended installs.');
+  return raw.trim() || fallback;
 }
 
 /** The answer if it passes validation; otherwise says why, and throws when nothing more can be read. */
@@ -39,7 +63,8 @@ function check(answer: string, options: AskOptions): string | undefined {
   if (!stdin.isTTY && !options.secret) stdout.write(`${answer}\n`);
   const problem = options.validate?.(answer);
   if (!problem) return answer;
-  stdout.write(`  ${icon.fail} ${style.red(problem)}\n`);
+  if (options.presentation) options.presentation.problem(problem);
+  else stdout.write(`  ${icon.fail} ${style.red(problem)}\n`);
   // Re-prompting needs somewhere to read from; a closed pipe has nothing left.
   if (inputExhausted()) throw new InputError(problem);
   return undefined;
@@ -52,23 +77,46 @@ function check(answer: string, options: AskOptions): string | undefined {
 async function readValidated(render: () => void, fallback: string, options: AskOptions): Promise<string> {
   for (;;) {
     render();
-    const accepted = check(await readAnswer(fallback, !!options.secret), options);
-    if (accepted !== undefined) return accepted;
+    const accepted = check(await readAnswer(fallback, options), options);
+    if (accepted !== undefined) {
+      options.presentation?.complete(options.secret ? 'Provided' : accepted);
+      return accepted;
+    }
   }
 }
 
 /** Asks a question; a blank answer takes `fallback`, shown in brackets. */
 export function ask(question: string, fallback = '', options: AskOptions = {}): Promise<string> {
-  return readValidated(
-    () => stdout.write(`  ${style.green('?')} ${question}${fallback ? style.grey(` (${fallback})`) : ''} `),
-    fallback,
-    options,
+  options.presentation?.begin(question, fallback, !!options.secret);
+  return questionResult(() => renderPrompt(question, fallback, options), fallback, options);
+}
+
+/** Cancellation redraws only a presented active question; ordinary errors retain their original explanation. */
+function questionResult(render: () => void, fallback: string, options: AskOptions): Promise<string> {
+  return readValidated(render, fallback, options).catch((err) => {
+    if (inputInterrupted()) options.presentation?.cancel();
+    throw err;
+  });
+}
+
+/** Setup framing and legacy text share the same input/validation loop. */
+function promptText(question: string, fallback: string, options: AskOptions): string {
+  return (
+    options.presentation?.prompt() ??
+    `  ${style.green('?')} ${question}${fallback ? style.grey(` (${fallback})`) : ''} `
   );
+}
+
+/** Keep Readline's cursor geometry aligned with the actual visible input prefix. */
+function renderPrompt(question: string, fallback: string, options: AskOptions): void {
+  const text = promptText(question, fallback, options);
+  setLinePrompt(text, !!options.presentation || !!options.requireInput);
+  stdout.write(text);
 }
 
 /** Same, but the terminal does not echo, for keys and secrets. */
 export function askSecret(question: string, options: AskOptions = {}): Promise<string> {
-  return readValidated(() => stdout.write(`  ${style.green('?')} ${question} `), '', { ...options, secret: true });
+  return ask(question, '', { ...options, secret: true });
 }
 
 /** A yes/no question; anything starting with y is yes. */

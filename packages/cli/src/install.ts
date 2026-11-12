@@ -29,6 +29,7 @@ import { printDone, printDryRun, printPlan, printPreflight } from './install/rep
 import type { Answers, Interview } from './install/types.ts';
 import { INTERVIEW_STEPS, JSON_INDENT } from './install/constants.ts';
 import { defaultInstall } from './install/defaults.ts';
+import { installDeployment } from './install/deployment.ts';
 
 export type { Answers } from './install/types.ts';
 
@@ -167,6 +168,7 @@ async function apply(p: Plan): Promise<void> {
 
 /** `oya install [--yes] [--dry-run] [--config oya-install.json]`. */
 export async function cmdInstall(flags: Record<string, string | boolean>): Promise<void> {
+  if (await installDeployment(flags)) return;
   const configPath = typeof flags.config === 'string' ? flags.config : null;
   const m: RunMode = { configPath, yes: flags.yes === true, dryRun: flags['dry-run'] === true };
   const p = await plan(m);

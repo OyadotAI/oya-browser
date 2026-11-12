@@ -6,6 +6,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Redesigned the installer around four clear phases, compact completed answers and readable choices, with inline instructions for finding every required and Advanced value. Added narrow-terminal and plain-output fallbacks, and made cancellation and EOF stop setup safely.
+
+- Connected the installer to the existing Docker, Kubernetes, Amazon ECS and Google Cloud/GKE deployment examples, with destination-specific questions, preflight, saved plans and recovery commands. Kept the original `--yes` quickstart and version 1 plans compatible.
+- Made installer previews skip checkout updates and deployment writes, and made deployment verification wait for readiness and clean up temporary browsers and port-forwards on failure.
+
 ## [1.0.233](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.233) · 2026-11-11
 
 ### Added

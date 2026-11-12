@@ -14,3 +14,12 @@ export { banner, steps, step, note, success, warn, spinner } from './prompt/fram
 export { closePrompts, answered } from './prompt/lines.ts';
 export { InputError, ask, askSecret, confirm, type AskOptions } from './prompt/ask.ts';
 export { choose, type Option } from './prompt/menu.ts';
+export {
+  presentQuestion,
+  setupIntro,
+  setupPhase,
+  setupSection,
+  setupAnswer,
+  type QuestionHelp,
+  type QuestionPresentation,
+} from './prompt/presentation.ts';

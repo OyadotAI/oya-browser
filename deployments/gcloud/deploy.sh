@@ -201,6 +201,10 @@ parse_globals() {
 case ${1:-} in
   deploy) shift && cmd_deploy "$@" ;;
   destroy) shift && parse_globals "$@" && cmd_destroy ;;
-  smoke | status | keys | logs) command=$1 && shift && parse_globals "$@" && k8s "$command" ;;
+  smoke | status | keys | logs)
+    command=$1 && shift && parse_globals "$@"
+    # Preserve the smoke process's PID so installer cancellation reaches its cleanup trap.
+    exec "$HERE/../k8s/deploy.sh" "$command" --context "$(context)" --namespace "$NAMESPACE"
+    ;;
   *) usage && exit 1 ;;
 esac

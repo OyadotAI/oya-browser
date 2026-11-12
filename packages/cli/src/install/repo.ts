@@ -29,10 +29,16 @@ export function findRepoRoot(from = process.cwd()): string | null {
 }
 
 /** Where a new checkout goes unless the user says otherwise. */
-const DEFAULT_CLONE = () => join(process.cwd(), 'oya-browser');
+const DEFAULT_CLONE = () => process.env.OYA_DIR || join(process.cwd(), 'oya-browser');
 
 /** Where the checkout is cloned from. */
 const REPO_URL = 'https://github.com/OyadotAI/oya-browser.git';
+
+/** A bootstrap destination is exact; a direct CLI call may discover a parent checkout. */
+function selectedRepo(): string | null {
+  const requested = process.env.OYA_DIR;
+  return requested ? (isRepoRoot(requested) ? requested : null) : findRepoRoot();
+}
 
 /**
  * The checkout: found above the working directory, or cloned where the user
@@ -40,7 +46,7 @@ const REPO_URL = 'https://github.com/OyadotAI/oya-browser.git';
  * carries on with the folder that would hold it.
  */
 export async function locateRepo(dryRun = false, yes = false): Promise<string> {
-  const found = findRepoRoot();
+  const found = selectedRepo();
   if (found) return found;
   console.log('\nThis does not look like an oya-browser checkout.');
   const where = yes ? DEFAULT_CLONE() : await ask('Clone it to:', DEFAULT_CLONE());

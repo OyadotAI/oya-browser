@@ -210,3 +210,11 @@ oya start --provider browserbase --persona auto --json
 ## 📄 License
 
 MIT © [Oya](https://getoya.ai)
+
+## Deploy a self-hosted control plane
+
+`oya install` offers Docker, Kubernetes, Amazon ECS and Google Cloud/GKE using
+the repository's existing `deployments/` examples. `--target k8s` skips the target
+menu; `--dry-run` previews without writes. Version 2 plans replay with
+`oya install --config oya-install.json`. Bare `--yes` and version 1 plans keep
+the original SQLite/Docker quickstart. See [the installer guide](../../docs/self-hosting.md).

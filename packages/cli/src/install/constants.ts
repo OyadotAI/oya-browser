@@ -48,3 +48,11 @@ export const Status = {
 } as const;
 /** Explicitly supplied Linux cloud runtime; there is no stock Electron fallback. */
 export const NATIVE_LINUX_DIRECTORY = process.env.OYA_NATIVE_LINUX_DIRECTORY || '';
+/** Read-only tool checks must not hang on unavailable cloud credentials. */
+export const DEPLOY_PROBE_MS = 15_000;
+/** Stop a noisy probe before retaining an unbounded amount of command output. */
+export const DEPLOY_PROBE_BYTES = 65_536;
+/** Allow one bounded HTTP request plus browser cleanup before killing remaining descendants. */
+export const DEPLOY_KILL_MS = 40_000;
+/** The deployment-example replay format, separate from legacy database/fleet answers. */
+export const DEPLOYMENT_PLAN_VERSION = 2;

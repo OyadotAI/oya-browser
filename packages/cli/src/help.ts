@@ -11,8 +11,8 @@ export const HELP = `oya, thousands of browsers, one API
 Usage: oya <command> [arguments] [options]
 
 Set up
-  oya install [--yes] [--dry-run] [--config <file>]
-                                             Stand up a self-hosted control plane;
+  oya install [--target docker|k8s|ecs|gcloud] [--yes] [--dry-run] [--config <file>]
+                                             Deploy using the examples in deployments/;
                                              --yes: SQLite + Docker here, no questions
   oya login [--key <key>] [--url <url>]      Save an API key for this machine
   oya init                                   Set your model, browser provider and sign-ins
