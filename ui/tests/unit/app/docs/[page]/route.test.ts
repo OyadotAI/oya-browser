@@ -41,6 +41,12 @@ describe('GET /docs/<slug>.md', () => {
     expect(sdk).not.toContain('## Quickstart');
   });
 
+  it('points each twin at its own topic page as canonical, or at /docs when it has none', async () => {
+    serveDocsHtml();
+    expect((await get('sdk.md')).headers.get('link')).toBe('<https://oyabrowser.com/docs/sdk>; rel="canonical"');
+    expect((await get('control-plane.md')).headers.get('link')).toBe('<https://oyabrowser.com/docs>; rel="canonical"');
+  });
+
   it('answers an unknown page with a 404, without rendering anything', async () => {
     const fetch = serveDocsHtml();
     expect((await get('nope.md')).status).toBe(404);
