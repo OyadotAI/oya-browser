@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Corrected installer test formatting that blocked v1.0.234's release pipeline, allowing the guided Docker, Kubernetes, Amazon ECS and Google Cloud installer to ship to npm.
+
 ## [1.0.234](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.234) · 2026-11-12
 
 ### Changed

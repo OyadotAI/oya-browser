@@ -236,8 +236,7 @@ describe('deployment installer', () => {
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);
-    for (const name of ['Docker', 'Kubernetes', 'Amazon ECS', 'Google Cloud'])
-      assert.ok(result.stdout.includes(name));
+    for (const name of ['Docker', 'Kubernetes', 'Amazon ECS', 'Google Cloud']) assert.ok(result.stdout.includes(name));
     assert.doesNotMatch(result.stdout, /not in this build|coming soon|Which database|Which LLM/);
   });
 
