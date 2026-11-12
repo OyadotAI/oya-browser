@@ -66,7 +66,8 @@ enterprise edition.
 | Component | Version |
 | :--- | :--- |
 | Node.js | 20 or later |
-| Docker | Docker Desktop or Docker Engine with Compose 2.24 or later (local installation only) |
+| Docker | Docker Desktop or Docker Engine with buildx for all deployment examples; Compose 2.24 or later for Docker deployments |
+| Deployment tools | `kubectl` + `python3` for Kubernetes; AWS CLI v2 for ECS; `gcloud`, `kubectl`, `python3` and `gke-gcloud-auth-plugin` for GKE |
 | Model API key | Anthropic, OpenAI or Gemini, for natural-language tasks |
 
 ## Quickstart
@@ -221,9 +222,36 @@ key from [oyabrowser.com](https://oyabrowser.com) and leave `OYA_BASE_URL` unset
 
 ## Deployment
 
-The quickstart installs a single-node deployment with SQLite and one browser. For production,
-including Postgres, multiple browsers, Amazon ECS, Kubernetes and GKE, see the
-[self-hosting guide](docs/self-hosting.md) and the [deployment templates](deployments/).
+The quickstart above uses `--yes` for SQLite and one Docker browser. For a guided deployment,
+run the installer without `--yes`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
+```
+
+Choose **Docker**, **Kubernetes**, **Amazon ECS** or **Google Cloud / GKE**. The wizard uses the
+existing [`deployments/`](deployments/README.md) examples to deploy the control plane, Postgres
+and browser runtime together. Advanced settings cover image overrides, networking, replicas
+and optional services. Each question explains the value, its format and default, and where to
+find it with a lookup command or console path. Lookup commands are shown for you to run.
+The flow moves through Target, Configure, Deploy and Verify, checks prerequisites, waits for
+readiness, then verifies a browser session before reporting success.
+
+From a checkout, run the current local wizard:
+
+```bash
+make wizard
+make wizard ARGS="--target k8s"     # skip the destination menu
+make wizard ARGS="--target docker --dry-run"   # preview without changing files or resources
+```
+
+Nonsecret answers are saved to `oya-install.json`; `oya install --config oya-install.json`
+repeats that deployment without questions. Existing version 1 plans and bare `--yes` keep the
+original quickstart behavior. Kubernetes and GKE smoke checks use a private port-forward;
+public DNS and TLS may need additional setup. Cloud resources are billable.
+
+See the [self-hosting guide](docs/self-hosting.md) for saved plans, credentials and recovery,
+and the [deployment guides](deployments/README.md) for prerequisites, backups and removal.
 
 ## Security and compliance
 

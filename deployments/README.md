@@ -30,6 +30,21 @@ await using browser = await oya.browser.start(); // a browser container, task or
 await browser.goto('https://example.com');
 ```
 
+## Guided install
+
+From the repository root, `make wizard` asks **Where should Oya run?** and invokes
+these same scripts. `oya install --target k8s` (or `docker`, `ecs`, `gcloud`) skips
+the target menu. Advanced settings expose the existing script options.
+
+A version 2 `oya-install.json` stores nonsecret answers for
+`oya install --config oya-install.json`. Kubernetes managed database credentials
+come from `OYA_DEPLOY_DATABASE_URL`; ECS HTTPS uses the plan's `publicUrl` matching
+the ACM certificate. See [the installer guide](../docs/self-hosting.md).
+
+The wizard runs `deploy`, then `smoke`; it reports success after readiness and an
+Oya browser session pass. Private Kubernetes/GKE checks use a port-forward and do
+not establish public DNS/TLS readiness. Direct script commands below still work.
+
 ## Choosing
 
 - **Trying it out, or one team:** start with [`docker/`](docker/).

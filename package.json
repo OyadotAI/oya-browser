@@ -14,7 +14,7 @@
     "build:sdk": "npm run build --workspace=@oya-ai/browser && npm run build --workspace=@oya-ai/cli",
     "lint": "eslint . && npm run lint --prefix server && npm run lint --prefix ui && npm run lint --prefix browser",
     "test:server": "npm test --prefix server",
-    "test:cli": "npm run build --workspace=@oya-ai/cli && node packages/cli/tests/integration/prompt.mjs && node packages/cli/tests/integration/install.mjs && node packages/cli/tests/integration/init.mjs",
+    "test:cli": "npm run build --workspace=@oya-ai/cli && node packages/cli/tests/integration/prompt.mjs && node packages/cli/tests/integration/setup-prompt.mjs && node packages/cli/tests/integration/install.mjs && node packages/cli/tests/integration/deployment.mjs && node packages/cli/tests/integration/init.mjs",
     "typecheck": "npm run typecheck --prefix server",
     "format:check": "prettier --check packages/*/src packages/*/tests tooling && npm run format:check --prefix server && npm run format:check --prefix ui && npm run format:check --prefix browser",
     "test:packages": "npm run build:sdk && node --test \"packages/*/tests/unit/**/*.test.ts\"",

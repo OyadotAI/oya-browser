@@ -62,6 +62,7 @@ export const VALUE_FLAGS: Record<string, string> = {
   provider: '--provider cdp',
   'queue-ms': '--queue-ms 30000',
   role: '--role operator',
+  target: '--target k8s',
   tz: '--tz Europe/Berlin',
   url: '--url http://127.0.0.1:3100',
   'ws-url': '--ws-url ws://127.0.0.1:9222',
