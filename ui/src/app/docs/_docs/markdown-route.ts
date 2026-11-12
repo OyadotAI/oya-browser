@@ -8,7 +8,7 @@ import { SITE_URL } from '@/lib/site';
 import { Status } from '@/lib/http-status';
 import { MARKDOWN_MAX_AGE_SECONDS, NEXT_DEFAULT_PORT } from './constants';
 import { docsMarkdown, type DocsMarkdown } from './markdown';
-import { docPage } from './pages';
+import { docPage, docTopic } from './pages';
 
 /** The Content-Type of a .md twin. */
 export const MARKDOWN_TYPE = 'text/markdown; charset=utf-8';
@@ -69,5 +69,6 @@ export async function pageResponse(segment: string): Promise<Response> {
   const body = docs?.pages[page.slug];
   if (!body) return unavailable();
   const intro = `# ${page.title}\n\nPart of the Oya Browser docs. All of it: ${SITE_URL}/docs.md\n\n`;
-  return textResponse(intro + body, MARKDOWN_TYPE, '/docs');
+  const canonical = docTopic(page.slug) ? `/docs/${page.slug}` : '/docs';
+  return textResponse(intro + body, MARKDOWN_TYPE, canonical);
 }

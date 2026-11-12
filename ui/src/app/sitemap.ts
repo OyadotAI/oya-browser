@@ -19,7 +19,9 @@ interface Entry {
 /**
  * Public pages only, each docs topic's own page, plus the files written for agents: llms.txt and the docs'
  * Markdown twins (answer engines cite what they can find). /dashboard and /live/* are per-account and behind auth,
- * so listing them would just advertise redirects.
+ * so listing them would just advertise redirects. /login and /signup are left out: they take the home page as
+ * their canonical, and a sitemap URL that names another page canonical is what Search Console reports as
+ * "Alternate page with proper canonical tag".
  */
 const PAGES: Entry[] = [
   { path: '/', changeFrequency: 'weekly', priority: 1 },
@@ -35,8 +37,6 @@ const PAGES: Entry[] = [
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
   { path: '/llms-full.txt', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },
-  { path: '/signup', changeFrequency: 'monthly', priority: 0.5 },
-  { path: '/login', changeFrequency: 'monthly', priority: 0.3 },
 ];
 
 /** Every public page, stamped with now. */
