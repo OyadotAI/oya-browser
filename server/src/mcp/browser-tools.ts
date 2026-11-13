@@ -79,7 +79,8 @@ type Tool = {
 /** Every browser tool, by name. */
 const TOOLS: Record<string, Tool> = {
   analyze_page: {
-    description: `Analyze the current page. Returns its content and every interactive element with an id to use with click/type tools,
+    description: `Analyze the current page. Returns its content and every interactive element with an id to use with click/type tools.
+Ids stay valid until the next analysis or a navigation, so one analysis covers a whole form; each analysis numbers the page afresh.
 plus page facts (url, title, viewport, scroll, and when they apply: panelScroll, modal, covered, truncated) and each element's state (off-screen, disabled, checked, a field's hint).
 format picks how it is written: toon (default; one table of blocks, fewer tokens), markdown or jsonl.`,
     schema: {
@@ -106,7 +107,7 @@ format picks how it is written: toon (default; one table of blocks, fewer tokens
   },
   type: {
     description:
-      'Type text into an input element by its ID number (from analyze_page results). Clears existing content first.',
+      'Type text into an input element by its ID number (from analyze_page results). Clears existing content first. Typing keeps every id valid: fill the next field straight away, without analyzing again.',
     schema: {
       element_id: z.number().describe('The element ID number from analyze_page'),
       text: z.string().describe('The text to type'),
