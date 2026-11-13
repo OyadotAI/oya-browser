@@ -55,7 +55,8 @@ const PAGE_TOOLS: Record<string, LocalTool> = {
     command: ({ element_id }) => ['click', { selector: byId(element_id) }],
   },
   type: {
-    description: 'Type text into a field by its id from analyze_page, replacing what it held.',
+    description:
+      'Type text into a field by its id from analyze_page, replacing what it held. Typing keeps every id valid: type the next field straight away, without analyzing again.',
     inputSchema: object({ ...ELEMENT, text: { type: 'string' } }, ['element_id', 'text']),
     command: ({ element_id, text }) => ['type', { selector: byId(element_id), text }],
   },
