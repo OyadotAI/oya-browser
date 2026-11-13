@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Reading a page with a dialog open now covers the whole dialog, not just its body. On LinkedIn's "comment, react and repost as" picker, agents saw the choices but never the Save button, so they could select an identity and never confirm it. A dialog named by `aria-labelledby` is now reported by its heading text instead of an element id.
+
 ## [1.0.237](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.237) · 2026-11-12
 
 ### Changed

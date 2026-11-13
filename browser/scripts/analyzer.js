@@ -39,6 +39,11 @@
   const MODAL_SELECTOR = '[aria-modal="true"], .artdeco-modal__content, [data-testid="sheetDialog"]';
   const MODAL_MIN_SHARE = 0.5;
 
+  // The whole box a dialog is drawn in. A match that is only the dialog's body
+  // (LinkedIn's .artdeco-modal__content) widens to the nearest of these, so the
+  // header and the footer with Save and Cancel are read with it.
+  const DIALOG_BOX_SELECTOR = '[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"], .artdeco-modal';
+
   // A panel that scrolls its own content (Gmail, Slack, a chat list) is reported
   // when it covers this share of the viewport and has this much more to scroll.
   const PANEL_MIN_SHARE = 0.25;
@@ -198,7 +203,7 @@
         const rect = m.getBoundingClientRect();
         // Must be visible: has size and is not display:none/visibility:hidden
         if (rect.width > 0 && rect.height > 0 && !isHardHidden(m) && isShownOnTop(m, rect) && isModal(m, rect)) {
-          activeModal = m;
+          activeModal = wholeDialog(m);
           break;
         }
       }
@@ -279,7 +284,7 @@
         : '',
       elements: `${elementMap.length} total, ${visibleCount} visible`,
       modal: activeModal
-        ? `${activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed'} (only this dialog was read)`
+        ? `${ariaName(activeModal) || 'unnamed'} (only this dialog was read)`
         : '',
       covered: coveredCount
         ? `${coveredCount} visible elements are behind something drawn over them (close it first)`
@@ -397,6 +402,18 @@
       return false;
     const hit = document.elementFromPoint(x, y);
     return !!hit && (m.contains(hit) || hit.contains(m));
+  }
+
+  /**
+   * The dialog a matched modal belongs to. Matches are walked from the end of the
+   * document, so a dialog's body is found before the dialog around it; reading only
+   * the body hid its footer, and an agent could select an option but never Save it.
+   * A match that is itself a dialog is kept, so a dialog stacked inside another is
+   * not widened to the one beneath it.
+   */
+  function wholeDialog(m) {
+    if (m.matches(DIALOG_BOX_SELECTOR)) return m;
+    return (m.parentElement && m.parentElement.closest(DIALOG_BOX_SELECTOR)) || m;
   }
 
   /** Whether an open dialog blocks the rest of the page, so reading only it is right. */
@@ -1377,18 +1394,27 @@
     return `: ${shown}${texts.length > 8 ? ' | …' : ''}`;
   }
 
-  function getLabel(node, type) {
+  /**
+   * The name an element is given for assistive tech: aria-label, else the text of
+   * what aria-labelledby points at. The raw labelledby value is an id
+   * ("ember123-header") and names nothing, so it is never returned.
+   */
+  function ariaName(node) {
     const aria = node.getAttribute('aria-label');
     if (aria) return aria.trim().slice(0, 80);
-    // aria-labelledby
     const labelledBy = node.getAttribute('aria-labelledby');
-    if (labelledBy) {
-      const parts = labelledBy
-        .split(/\s+/)
-        .map((id) => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
-      if (parts.length) return parts.join(' ').slice(0, 80);
-    }
+    if (!labelledBy) return '';
+    return labelledBy
+      .split(/\s+/)
+      .map((id) => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 80);
+  }
+
+  function getLabel(node, type) {
+    const named = ariaName(node);
+    if (named) return named;
     if (node.id && ['input', 'checkbox', 'radio', 'select', 'textarea'].includes(type)) {
       // The field's own document: a label inside an iframe is not in the top one.
       const l = (node.ownerDocument || document).querySelector(`label[for="${CSS.escape(node.id)}"]`);
