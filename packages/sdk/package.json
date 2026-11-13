@@ -1,6 +1,6 @@
 {
   "name": "@oya-ai/browser",
-  "version": "1.0.238",
+  "version": "1.0.239",
   "description": "TypeScript SDK for Oya, the HIPAA-compliant agentic browser: start cloud browsers, run playbooks, attach Playwright.",
   "license": "MIT",
   "homepage": "https://oyabrowser.com",
