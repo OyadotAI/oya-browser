@@ -35,6 +35,9 @@ Answers:
 - https://oyabrowser.com/ai-browser: What an AI browser is; Oya's free AI browser for macOS and Windows, driven by ChatGPT, Claude or your coding agent.
 - https://oyabrowser.com/hipaa-browser-automation: HIPAA-compliant browser automation and AI browser agents under a BAA, with a tamper-evident audit trail.
 - https://oyabrowser.com/prior-authorization-automation: Automating prior authorization on payer portals with no API: an agent files it once, then a playbook replays it with no model.
+- https://oyabrowser.com/payer-portal-automation: Automating payer portal work with no API (prior auth, eligibility, claim status, denials and appeals) under a BAA on Oya Cloud and the enterprise edition.
+- https://oyabrowser.com/eligibility-verification-automation: Automating insurance eligibility, copay and deductible checks on payer portals: an agent checks one, then a playbook checks the rest with no model.
+- https://oyabrowser.com/claim-status-automation: Automating claim status and remittance checks on payer portals on a schedule, with every read on the audit trail.
 - https://oyabrowser.com/vs/browserbase: Oya next to Browserbase, for teams choosing a browser for AI agents.
 
 Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
