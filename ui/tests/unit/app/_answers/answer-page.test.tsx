@@ -19,11 +19,19 @@ import EligibilityVerificationAutomation, {
   metadata as eligibilityMetadata,
 } from '@/app/eligibility-verification-automation/page';
 import ClaimStatusAutomation, { metadata as claimStatusMetadata } from '@/app/claim-status-automation/page';
+import DenialManagementAutomation, { metadata as denialsMetadata } from '@/app/denial-management-automation/page';
+import ProviderEnrollmentAutomation, {
+  metadata as enrollmentMetadata,
+} from '@/app/provider-enrollment-automation/page';
+import StateRegistryAutomation, { metadata as registriesMetadata } from '@/app/state-registry-automation/page';
 import {
   AI_BROWSER,
   ANSWER_PAGES,
   CLAIM_STATUS,
+  DENIALS,
   ELIGIBILITY,
+  ENROLLMENT,
+  REGISTRIES,
   HEALTHCARE_BROWSER,
   HIPAA_AUTOMATION,
   HIPAA_BROWSER,
@@ -82,6 +90,24 @@ const PAGES = [
     Page: ClaimStatusAutomation,
     metadata: claimStatusMetadata,
     content: CLAIM_STATUS,
+  },
+  {
+    name: 'denial-management-automation',
+    Page: DenialManagementAutomation,
+    metadata: denialsMetadata,
+    content: DENIALS,
+  },
+  {
+    name: 'provider-enrollment-automation',
+    Page: ProviderEnrollmentAutomation,
+    metadata: enrollmentMetadata,
+    content: ENROLLMENT,
+  },
+  {
+    name: 'state-registry-automation',
+    Page: StateRegistryAutomation,
+    metadata: registriesMetadata,
+    content: REGISTRIES,
   },
 ];
 

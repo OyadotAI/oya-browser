@@ -103,8 +103,10 @@ const SEALED = 'Stored passwords and TOTP seeds are sealed and never shown to th
 export const VS_BROWSERBASE: AnswerPageContent = {
   path: '/vs/browserbase',
   label: 'Oya vs Browserbase',
-  title: 'Oya vs Browserbase',
-  lead: 'Choosing a browser for AI agents? Oya is built for healthcare and regulated work: on Oya Cloud and the enterprise edition it is HIPAA compliant, we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Oya can also run browsers on Browserbase, behind the same API.',
+  // The title names "alternative" because that is the search ("browserbase alternative"); the page
+  // ranked for "browserbase hipaa" but not for it.
+  title: 'A HIPAA-compliant Browserbase alternative: Oya vs Browserbase',
+  lead: 'Looking for a Browserbase alternative for healthcare? Oya is built for healthcare and regulated work: on Oya Cloud and the enterprise edition it is HIPAA compliant, we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Oya can also run browsers on Browserbase, behind the same API.',
   sections: [
     {
       heading: 'Where Oya fits',
@@ -649,6 +651,135 @@ export const CLAIM_STATUS: AnswerPageContent = {
   ],
 };
 
+/** /denial-management-automation: working denials and filing appeals on the payer's own form. */
+export const DENIALS: AnswerPageContent = {
+  path: '/denial-management-automation',
+  label: 'Denials and appeals',
+  title: 'How do you automate claim denials and appeals on payer portals?',
+  lead: "Denial management automation collects the denial reason, gathers the records and files the appeal on the payer's own form before the deadline, the way billing staff do by hand. With Oya, an AI agent files one appeal on the portal, signed in as your staff, and Oya saves it as a playbook that files the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  sections: [
+    {
+      heading: 'How it works',
+      body: 'Three steps, the same on every payer portal.',
+      items: [
+        'Run it once: an agent reads the denial reason and files the appeal on the payer form while a person can watch.',
+        'Save it as code: the run becomes a playbook, Playwright code you can read, with the claim number, denial reason and attachment as variables.',
+        'Replay with no model: one SDK call or one MCP request files the next appeal with new inputs.',
+      ],
+    },
+    {
+      heading: 'When the portal changes',
+      body: 'The replay stops at the step that moved, the agent finishes the appeal from there, and its fix becomes the playbook, so the next run makes no model calls again.',
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Can AI file an appeal on a payer portal?',
+      a: 'Yes. An Oya agent fills in the payer form and submits it, signed in as your staff, and every step is a row on the audit trail. A person can watch the session and take over at any point.',
+    },
+    {
+      q: 'Does the payer need an API?',
+      a: 'No. Oya works the portal the way staff do, in a real browser, so it fits payers that have no API.',
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is denial management with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+  ],
+};
+
+/** /provider-enrollment-automation: keeping provider enrollment and payer rosters current. */
+export const ENROLLMENT: AnswerPageContent = {
+  path: '/provider-enrollment-automation',
+  label: 'Provider enrollment',
+  title: 'How do you automate provider enrollment and payer roster updates?',
+  lead: "Provider enrollment automation keeps provider enrollment and payer rosters current on each payer's portal without retyping them, and runs attestations and renewals on their dates. With Oya, an AI agent makes one roster update on the portal, signed in as your staff, and Oya saves it as a playbook that makes the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  sections: [
+    {
+      heading: 'How it works',
+      body: 'Three steps, the same on every payer portal.',
+      items: [
+        'Run it once: an agent updates one provider on the payer roster while a person can watch.',
+        'Save it as code: the run becomes a playbook, Playwright code you can read, with the NPI, practice location and effective date as variables.',
+        'Replay with no model: run it for the next provider, or on the date an attestation or renewal is due.',
+      ],
+    },
+    {
+      heading: 'Signed in as your staff',
+      body: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Does the payer need an API?',
+      a: 'No. Oya works the portal the way staff do, in a real browser, so it fits payers that have no API.',
+    },
+    {
+      q: 'Can staff check what the agent changed?',
+      a: 'Yes. A person can watch any session live, take over and hand it back. Every action by an agent or a person is a row on a hash-chained audit trail, kept for 365 days at least.',
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is provider enrollment automation with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+  ],
+};
+
+/** /state-registry-automation: immunization, licence and sanction lookups on registries with only a login page. */
+export const REGISTRIES: AnswerPageContent = {
+  path: '/state-registry-automation',
+  label: 'State registries',
+  title: 'How do you automate state registry lookups for immunizations, licences and sanctions?',
+  lead: 'State registry automation looks up immunizations, licences and sanctions in state registries that only have a login page, the way staff search them by hand. With Oya, an AI agent runs one search on the registry, signed in as your staff, and Oya saves it as a playbook that runs the next searches with no model, with each result logged with its source. On Oya Cloud and the enterprise edition this runs under a BAA.',
+  sections: [
+    {
+      heading: 'How it works',
+      body: 'Three steps, the same on every registry.',
+      items: [
+        'Run it once: an agent searches the registry for one record while a person can watch.',
+        'Save it as code: the run becomes a playbook, Playwright code you can read, with the name, date of birth and ZIP as variables.',
+        'Replay with no model: one SDK call or one MCP request runs the next search with new inputs.',
+      ],
+    },
+    {
+      heading: 'Results you can trace',
+      body: 'Every result is logged with its source, and every action by an agent or a person is a row on a hash-chained audit trail, kept for 365 days at least.',
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Does the registry need an API?',
+      a: 'No. Oya works the registry the way staff do, in a real browser, so it fits registries that only have a login page.',
+    },
+    {
+      q: 'What about registry logins and two-factor codes?',
+      a: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is state registry automation with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+  ],
+};
+
 /** Every answer page, for the footer links and the tests: one list, so a new page cannot be left unlinked. */
 export const ANSWER_PAGES = [
   HIPAA_BROWSER,
@@ -659,6 +790,9 @@ export const ANSWER_PAGES = [
   PAYER_PORTALS,
   ELIGIBILITY,
   CLAIM_STATUS,
+  DENIALS,
+  ENROLLMENT,
+  REGISTRIES,
   VS_BROWSERBASE,
   VS_STEEL,
   VS_ANCHOR,

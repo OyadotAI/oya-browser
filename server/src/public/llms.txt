@@ -38,7 +38,10 @@ Answers:
 - https://oyabrowser.com/payer-portal-automation: Automating payer portal work with no API (prior auth, eligibility, claim status, denials and appeals) under a BAA on Oya Cloud and the enterprise edition.
 - https://oyabrowser.com/eligibility-verification-automation: Automating insurance eligibility, copay and deductible checks on payer portals: an agent checks one, then a playbook checks the rest with no model.
 - https://oyabrowser.com/claim-status-automation: Automating claim status and remittance checks on payer portals on a schedule, with every read on the audit trail.
-- https://oyabrowser.com/vs/browserbase: Oya next to Browserbase, for teams choosing a browser for AI agents.
+- https://oyabrowser.com/denial-management-automation: Automating claim denials and appeals: the agent files the appeal on the payer's own form once, then a playbook files the next ones with no model.
+- https://oyabrowser.com/provider-enrollment-automation: Keeping provider enrollment and payer rosters current, with attestations and renewals run on their dates.
+- https://oyabrowser.com/state-registry-automation: Immunization, licence and sanction lookups in state registries that only have a login page, each result logged with its source.
+- https://oyabrowser.com/vs/browserbase: A HIPAA-compliant Browserbase alternative: Oya next to Browserbase, for teams choosing a browser for AI agents.
 
 Contents: Agent quickstart, Playbooks, CLI, Overview, Personas, Human in the
 loop, Quickstart, Agent self-signup, MCP Endpoint, MCP Tools, Browser Pool,
