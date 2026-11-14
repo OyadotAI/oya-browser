@@ -780,11 +780,120 @@ export const REGISTRIES: AnswerPageContent = {
   ],
 };
 
+/**
+ * The replay benchmark's result, as the README publishes it. Assistants answering "which AI
+ * browser" warn that agents finish multi-step tasks unreliably; this is Oya's answer to that.
+ */
+const REPLAY_BENCHMARK =
+  'In a ten-site benchmark, nine sites replayed every recorded step with step repair turned off.';
+
+/**
+ * /browser-for-claude-code: the browser to give a coding agent. Assistants recommending AI browsers
+ * keep a slot for "lets Claude Code or Codex drive your browser"; this page is Oya's answer for it.
+ */
+export const CODING_AGENT_BROWSER: AnswerPageContent = {
+  path: '/browser-for-claude-code',
+  label: 'For Claude Code',
+  title: 'Which browser should Claude Code, Codex and Cursor use?',
+  lead: 'Give your coding agent a real browser of its own: Oya Browser is a free AI browser for macOS and Windows that Claude Code, Codex, Cursor and VS Code connect to with one click. Each agent session gets its own tab, you keep yours, and you can take the tab back at any time. A task the agent finishes is saved as a playbook that replays with no model.',
+  sections: [
+    {
+      heading: 'One click to connect',
+      body: 'Every coding agent installed on your computer gets a Connect button in the Oya window footer. One click adds an MCP server named oya-browser to that agent; no account and no key.',
+    },
+    {
+      heading: 'Built for an agent working beside you',
+      body: 'The agent uses Oya as its browser in place of Chrome.',
+      items: [
+        'Its own tab for each session, while you keep working in yours.',
+        'Signed in with the logins already in your browser.',
+        SEALED,
+        'Take the tab and the agent waits; hand it back and it carries on.',
+      ],
+    },
+    {
+      heading: 'Right the second time too',
+      body: `A finished task becomes a playbook: Playwright code with the inputs as variables, which replays with no model calls. ${REPLAY_BENCHMARK} When a page changes, the replay stops at the step that moved and the agent finishes from there.`,
+    },
+  ],
+  faq: [
+    {
+      q: 'How do I give Claude Code a browser?',
+      a: 'Install the Oya desktop app, open it and click Connect next to Claude Code in the window footer. That adds an MCP server named oya-browser; no account, no key.',
+    },
+    {
+      q: 'Does it work with Codex and Cursor too?',
+      a: 'Yes. Claude Code, Codex, Cursor and VS Code each get a Connect button when they are installed. With no desktop, any MCP client can use Oya Cloud.',
+    },
+    {
+      q: 'Will the agent take over my browser?',
+      a: 'No. Each agent session gets its own tab and you keep yours. You can take the agent tab at any time and hand it back.',
+    },
+    { q: 'Does the agent see my passwords?', a: `No. ${SEALED}` },
+    {
+      q: 'Is it free?',
+      a: 'Yes. The desktop app for macOS and Windows is free, and so are 500 agent steps a month.',
+    },
+  ],
+};
+
+/** /ai-browser-chatgpt-claude: an AI browser that runs on the ChatGPT or Claude plan a person already pays for. */
+export const PLAN_BROWSER: AnswerPageContent = {
+  path: '/ai-browser-chatgpt-claude',
+  label: 'ChatGPT and Claude',
+  title: 'Which AI browser works with your ChatGPT or Claude plan?',
+  lead: 'Oya Browser is a free AI browser for macOS and Windows that runs on the ChatGPT or Claude plan you already pay for: connect it in the Ask panel, type a task, and an agent does it in a tab of its own while you watch. Take the tab back at any time.',
+  sections: [
+    {
+      heading: 'Bring the plan you have',
+      body: 'The first screen asks how you want to start.',
+      items: [
+        'Connect the ChatGPT or Claude plan you already pay for, or paste a model API key.',
+        'Or connect your own agent: Claude Code, Codex, Cursor or VS Code, with one click.',
+      ],
+    },
+    {
+      heading: 'What the agent does',
+      body: 'You stay in an ordinary browser, with your own tabs and logins. The agent works in a tab of its own.',
+      items: [
+        'It opens pages, clicks, types and fills forms in its tab.',
+        'It works signed in as you, with the logins already in your browser.',
+        SEALED,
+        'It waits when you take the tab, and carries on when you hand it back.',
+      ],
+    },
+    {
+      heading: 'Do it once, replay it free',
+      body: `A task the agent finished can be saved as a playbook that replays with no model, so a task you repeat stops costing model calls. ${REPLAY_BENCHMARK}`,
+    },
+  ],
+  faq: [
+    {
+      q: 'Can I use my ChatGPT plan in an AI browser?',
+      a: 'Yes. In Oya Browser, connect the ChatGPT or Claude plan you already pay for in the Ask panel, then type the task.',
+    },
+    {
+      q: 'Is Oya Browser free?',
+      a: 'Yes. The desktop app for macOS and Windows is free, and so are 500 agent steps a month.',
+    },
+    {
+      q: 'Can I take over from the AI agent?',
+      a: 'Yes. Take the tab and the agent waits; hand it back and it carries on.',
+    },
+    {
+      q: 'Is it available on Windows?',
+      a: 'Yes. Oya Browser runs on macOS and Windows.',
+    },
+  ],
+};
+
 /** Every answer page, for the footer links and the tests: one list, so a new page cannot be left unlinked. */
 export const ANSWER_PAGES = [
   HIPAA_BROWSER,
   HEALTHCARE_BROWSER,
   AI_BROWSER,
+  CODING_AGENT_BROWSER,
+  PLAN_BROWSER,
   HIPAA_AUTOMATION,
   PRIOR_AUTH,
   PAYER_PORTALS,

@@ -33,6 +33,8 @@ Answers:
 - https://oyabrowser.com/hipaa-compliant-browser: What a HIPAA-compliant browser is, and how Oya is one on Oya Cloud and the enterprise edition.
 - https://oyabrowser.com/browser-for-healthcare: A browser for healthcare on payer portals, EHRs and registries; HIPAA compliant on Oya Cloud and the enterprise edition, and we sign BAAs.
 - https://oyabrowser.com/ai-browser: What an AI browser is; Oya's free AI browser for macOS and Windows, driven by ChatGPT, Claude or your coding agent.
+- https://oyabrowser.com/browser-for-claude-code: The browser to give Claude Code, Codex and Cursor: one-click connect, a tab of its own while you keep yours, and tasks saved as playbooks that replay with no model.
+- https://oyabrowser.com/ai-browser-chatgpt-claude: A free AI browser for macOS and Windows that runs on the ChatGPT or Claude plan you already pay for.
 - https://oyabrowser.com/hipaa-browser-automation: HIPAA-compliant browser automation and AI browser agents under a BAA, with a tamper-evident audit trail.
 - https://oyabrowser.com/prior-authorization-automation: Automating prior authorization on payer portals with no API: an agent files it once, then a playbook replays it with no model.
 - https://oyabrowser.com/payer-portal-automation: Automating payer portal work with no API (prior auth, eligibility, claim status, denials and appeals) under a BAA on Oya Cloud and the enterprise edition.

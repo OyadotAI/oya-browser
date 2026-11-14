@@ -24,9 +24,13 @@ import ProviderEnrollmentAutomation, {
   metadata as enrollmentMetadata,
 } from '@/app/provider-enrollment-automation/page';
 import StateRegistryAutomation, { metadata as registriesMetadata } from '@/app/state-registry-automation/page';
+import BrowserForClaudeCode, { metadata as codingAgentMetadata } from '@/app/browser-for-claude-code/page';
+import AiBrowserChatgptClaude, { metadata as planMetadata } from '@/app/ai-browser-chatgpt-claude/page';
 import {
   AI_BROWSER,
   ANSWER_PAGES,
+  CODING_AGENT_BROWSER,
+  PLAN_BROWSER,
   CLAIM_STATUS,
   DENIALS,
   ELIGIBILITY,
@@ -109,6 +113,13 @@ const PAGES = [
     metadata: registriesMetadata,
     content: REGISTRIES,
   },
+  {
+    name: 'browser-for-claude-code',
+    Page: BrowserForClaudeCode,
+    metadata: codingAgentMetadata,
+    content: CODING_AGENT_BROWSER,
+  },
+  { name: 'ai-browser-chatgpt-claude', Page: AiBrowserChatgptClaude, metadata: planMetadata, content: PLAN_BROWSER },
 ];
 
 /** The FAQPage structured data the page rendered. */
