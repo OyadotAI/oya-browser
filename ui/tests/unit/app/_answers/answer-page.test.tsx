@@ -14,12 +14,20 @@ import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
 import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
 import HipaaBrowserAutomation, { metadata as automationMetadata } from '@/app/hipaa-browser-automation/page';
 import PriorAuthorizationAutomation, { metadata as priorAuthMetadata } from '@/app/prior-authorization-automation/page';
+import PayerPortalAutomation, { metadata as payerPortalsMetadata } from '@/app/payer-portal-automation/page';
+import EligibilityVerificationAutomation, {
+  metadata as eligibilityMetadata,
+} from '@/app/eligibility-verification-automation/page';
+import ClaimStatusAutomation, { metadata as claimStatusMetadata } from '@/app/claim-status-automation/page';
 import {
   AI_BROWSER,
   ANSWER_PAGES,
+  CLAIM_STATUS,
+  ELIGIBILITY,
   HEALTHCARE_BROWSER,
   HIPAA_AUTOMATION,
   HIPAA_BROWSER,
+  PAYER_PORTALS,
   PRIOR_AUTH,
   VS_ANCHOR,
   VS_BROWSERBASE,
@@ -56,6 +64,24 @@ const PAGES = [
     Page: PriorAuthorizationAutomation,
     metadata: priorAuthMetadata,
     content: PRIOR_AUTH,
+  },
+  {
+    name: 'payer-portal-automation',
+    Page: PayerPortalAutomation,
+    metadata: payerPortalsMetadata,
+    content: PAYER_PORTALS,
+  },
+  {
+    name: 'eligibility-verification-automation',
+    Page: EligibilityVerificationAutomation,
+    metadata: eligibilityMetadata,
+    content: ELIGIBILITY,
+  },
+  {
+    name: 'claim-status-automation',
+    Page: ClaimStatusAutomation,
+    metadata: claimStatusMetadata,
+    content: CLAIM_STATUS,
   },
 ];
 

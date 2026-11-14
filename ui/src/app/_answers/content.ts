@@ -1,7 +1,8 @@
 /**
  * The words of the pages written to answer what people ask search engines and AI assistants:
  * "What is a HIPAA-compliant browser?", "an AI browser?", "a browser for healthcare?", HIPAA
- * browser automation, prior authorization, and "Oya or Browserbase, Steel, Anchor or Browser Use?"
+ * browser automation, prior authorization, the payer portal jobs (eligibility, claim status) that
+ * buyers search for by name, and "Oya or Browserbase, Steel, Anchor or Browser Use?"
  * (one page per vendor Oya's own API drives, each from a different side of Oya so they are not one
  * page with the name swapped). HIPAA and BAAs are always
  * scoped to Oya Cloud and the enterprise edition, never the community edition. Every claim is one the site
@@ -508,6 +509,146 @@ export const PRIOR_AUTH: AnswerPageContent = {
   ],
 };
 
+/**
+ * /payer-portal-automation: the umbrella page for the portal work revenue-cycle teams do by hand.
+ * Buyers search for the job ("payer portal automation"), not for "a browser", and those searches
+ * went to other vendors while Oya ranked only for the category name.
+ */
+export const PAYER_PORTALS: AnswerPageContent = {
+  path: '/payer-portal-automation',
+  label: 'Payer portals',
+  title: 'How do you automate work on payer portals with no API?',
+  lead: 'Payer portal automation does the work revenue-cycle staff do by hand on payer websites that have no API: prior authorizations, eligibility checks, claim status, denials and appeals. With Oya, an AI agent does the task once on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.',
+  sections: [
+    {
+      heading: 'The portal work it takes off your team',
+      body: 'The same tasks, on every payer that has a website and no API.',
+      items: [
+        'Filing and tracking prior authorizations.',
+        'Checking eligibility, copays and deductibles before the visit.',
+        'Pulling claim status and remittance detail.',
+        'Working denials and filing appeals on the payer form.',
+        'Keeping provider enrollment and payer rosters current.',
+      ],
+    },
+    {
+      heading: 'Run it once, then replay it with no model',
+      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the member ID and other details as variables), and the playbook replays with no model calls. When a portal changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
+    },
+    {
+      heading: 'Signed in as your staff',
+      body: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Can an AI agent work a payer portal that has no API?',
+      a: 'Yes. Oya works the portal the way staff do, in a real browser, signed in as your staff. A person can watch any session and take over at any point.',
+    },
+    {
+      q: 'Do we pay for a model on every run?',
+      a: 'No. The agent works a task out once; the saved playbook replays it with no model calls. The model comes back only for a step a portal changed.',
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is payer portal automation with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+    SELF_HOST,
+  ],
+};
+
+/** /eligibility-verification-automation: checking coverage on payer portals before the visit. */
+export const ELIGIBILITY: AnswerPageContent = {
+  path: '/eligibility-verification-automation',
+  label: 'Eligibility checks',
+  title: 'How do you automate insurance eligibility verification on payer portals?',
+  lead: "Eligibility verification automation checks a patient's coverage, copay and deductible on the payer's portal before the visit, the way front-desk staff do by hand. With Oya, an AI agent runs one check on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next checks with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  sections: [
+    {
+      heading: 'How it works',
+      body: 'Three steps, the same on every payer portal.',
+      items: [
+        'Run it once: an agent looks up one member on the payer portal while a person can watch.',
+        'Save it as code: the run becomes a playbook, Playwright code you can read, with the member ID and date of birth as variables.',
+        'Replay with no model: one SDK call or one MCP request checks the next patient with new inputs.',
+      ],
+    },
+    {
+      heading: 'When the portal changes',
+      body: 'The replay stops at the step that moved, the agent finishes the check from there, and its fix becomes the playbook, so the next run makes no model calls again.',
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Does the payer need an API?',
+      a: 'No. Oya works the portal the way staff do, in a real browser, so it fits payers that have no API.',
+    },
+    {
+      q: 'What about portal logins and two-factor codes?',
+      a: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is eligibility verification with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+  ],
+};
+
+/** /claim-status-automation: reading claim status and remittance detail from each payer's portal. */
+export const CLAIM_STATUS: AnswerPageContent = {
+  path: '/claim-status-automation',
+  label: 'Claim status',
+  title: 'How do you automate claim status checks on payer portals?',
+  lead: "Claim status automation reads where each claim stands, and its remittance detail, from the payer's portal, the way billing staff check them by hand. With Oya, an AI agent checks one claim on the portal, signed in as your staff, and Oya saves it as a playbook that checks the rest on a schedule with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  sections: [
+    {
+      heading: 'How it works',
+      body: 'Three steps, the same on every payer portal.',
+      items: [
+        'Run it once: an agent finds one claim on the payer portal and reads its status while a person can watch.',
+        'Save it as code: the run becomes a playbook, Playwright code you can read, with the claim number and member ID as variables.',
+        'Replay with no model: run it on a schedule, and every read lands on the audit trail.',
+      ],
+    },
+    {
+      heading: 'From status to denial work',
+      body: 'The same approach works the denials a status check turns up: an agent files the appeal on the payer form once, and the playbook files the next ones.',
+    },
+    {
+      heading: "Under HIPAA's controls",
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: OYA_CONTROLS,
+    },
+  ],
+  faq: [
+    {
+      q: 'Does the payer need an API?',
+      a: 'No. Oya works the portal the way staff do, in a real browser, so it fits payers that have no API.',
+    },
+    {
+      q: 'Can staff check what the agent did?',
+      a: 'Yes. A person can watch any session live, take over and hand it back. Every action by an agent or a person is a row on a hash-chained audit trail, kept for 365 days at least.',
+    },
+    { q: 'How much faster is it?', a: THROUGHPUT },
+    {
+      q: 'Is claim status automation with Oya HIPAA compliant?',
+      a: 'On Oya Cloud and the enterprise edition, yes: Oya is HIPAA compliant and we sign BAAs. Write to sales@getoya.ai.',
+    },
+  ],
+};
+
 /** Every answer page, for the footer links and the tests: one list, so a new page cannot be left unlinked. */
 export const ANSWER_PAGES = [
   HIPAA_BROWSER,
@@ -515,6 +656,9 @@ export const ANSWER_PAGES = [
   AI_BROWSER,
   HIPAA_AUTOMATION,
   PRIOR_AUTH,
+  PAYER_PORTALS,
+  ELIGIBILITY,
+  CLAIM_STATUS,
   VS_BROWSERBASE,
   VS_STEEL,
   VS_ANCHOR,
