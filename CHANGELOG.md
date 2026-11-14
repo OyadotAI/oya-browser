@@ -6,6 +6,18 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- New pages on oyabrowser.com for the payer portal work teams automate with Oya: [payer portal automation](https://oyabrowser.com/payer-portal-automation), [eligibility verification](https://oyabrowser.com/eligibility-verification-automation), [claim status](https://oyabrowser.com/claim-status-automation), [denials and appeals](https://oyabrowser.com/denial-management-automation), [provider enrollment](https://oyabrowser.com/provider-enrollment-automation) and [state registry lookups](https://oyabrowser.com/state-registry-automation).
+
+### Changed
+
+- [Oya vs Browserbase](https://oyabrowser.com/vs/browserbase) now leads with Oya as a HIPAA-compliant Browserbase alternative.
+
+### Fixed
+
+- The plugin manifest's contact and legal links, and the desktop app's author address, pointed at oya.ai, which no longer resolves. They now use sales@getoya.ai and oyabrowser.com/terms.
+
 ## [1.0.239](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.239) · 2026-11-13
 
 ### Changed
