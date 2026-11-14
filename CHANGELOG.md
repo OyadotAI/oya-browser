@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.240](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.240) · 2026-11-14
+
 ### Added
 
 - New pages on oyabrowser.com for the payer portal work teams automate with Oya: [payer portal automation](https://oyabrowser.com/payer-portal-automation), [eligibility verification](https://oyabrowser.com/eligibility-verification-automation), [claim status](https://oyabrowser.com/claim-status-automation), [denials and appeals](https://oyabrowser.com/denial-management-automation), [provider enrollment](https://oyabrowser.com/provider-enrollment-automation) and [state registry lookups](https://oyabrowser.com/state-registry-automation).
