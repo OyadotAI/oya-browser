@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- An [interactive API reference](https://oyabrowser.com/docs/api/reference): every public route, rendered from [/openapi.json](https://oyabrowser.com/openapi.json).
+
+### Changed
+
+- `/openapi.json` now describes the API the SDK uses, each path under its real `/api` prefix, including playbook run history and typed request bodies. Routes only the console, the desktop app or an operator call are left out, and a test keeps the spec and the server's routes in step.
+
 ## [1.0.243](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.243) · 2026-11-17
 
 ### Fixed
