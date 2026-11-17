@@ -159,4 +159,47 @@ describe('RecordDialog', () => {
     view.unmount();
     expect(bodies('/record').at(-1)).toEqual({ mode: 'stop', resume: true });
   });
+  describe('with no browser running', () => {
+    /** Renders the dialog over `fleet`; `rerender` shows a new fleet, as the dashboard's poll would. */
+    async function emptySetup() {
+      const dialog = (fleet: BrowserRow[]) => (
+        <ToastProvider>
+          <RecordDialog apiKey="k" browsers={fleet} onClose={vi.fn()} onSaved={vi.fn()} />
+        </ToastProvider>
+      );
+      const view = render(dialog([]));
+      await act(async () => {});
+      return { rerender: (fleet: BrowserRow[]) => act(async () => view.rerender(dialog(fleet))) };
+    }
+
+    it('says Record will start one, and asks nothing of a browser that does not exist', async () => {
+      serve({ current: false });
+      await emptySetup();
+      expect(screen.getByText('No browser is running. Recording starts one with your project defaults.')).toBeTruthy();
+      expect(bodies('/record')).toEqual([]);
+    });
+
+    it('starts a browser with the project defaults, then records on it once it dials in', async () => {
+      serve({ current: false });
+      apiMock.mockImplementationOnce(async () => ({ id: 'new' }));
+      const { rerender } = await emptySetup();
+      await userEvent.click(screen.getByRole('button', { name: 'Start and record' }));
+      expect(apiMock.mock.calls[0]).toEqual(['/browsers/start', { key: 'k', method: 'POST', body: { persona: '' } }]);
+      expect(screen.getByText('Starting a browser…')).toBeTruthy();
+      await rerender([{ id: 'new', name: 'new' } as BrowserRow]);
+      expect(apiMock.mock.calls.some(([p]) => p === '/control/sessions/new/control')).toBe(true);
+      expect(screen.getByText('Recording')).toBeTruthy();
+    });
+
+    it('keeps a refused start in the dialog, with Try again', async () => {
+      serve({ current: false });
+      apiMock.mockImplementationOnce(async () => {
+        throw new Error('Your plan allows 1 browser');
+      });
+      await emptySetup();
+      await userEvent.click(screen.getByRole('button', { name: 'Start and record' }));
+      expect(screen.getByRole('alert').textContent).toContain("Couldn't start a browser: Your plan allows 1 browser");
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Try again' }));
+    });
+  });
 });

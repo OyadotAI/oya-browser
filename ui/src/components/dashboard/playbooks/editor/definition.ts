@@ -100,3 +100,54 @@ export function withSecret(d: Definition, name: string, secret: boolean): Defini
   const rest = (d.secrets ?? []).filter((n) => n !== name);
   return { ...d, secrets: secret ? [...rest, name] : rest };
 }
+
+/** One step as the visual view reads it: its action and whatever fields it was recorded with. */
+export type Step = Record<string, unknown> & {
+  /** What the step does: navigate, click, type and so on. */
+  action?: unknown;
+  /** The recorded element a click or type finds again; never edited here. */
+  el?: Record<string, unknown>;
+};
+
+/** The steps of a definition as step objects, so a malformed entry still gets a card. */
+export const stepsOf = (d: Definition): Step[] =>
+  (d.steps ?? []).map((s) => (s && typeof s === 'object' ? s : {}) as Step);
+
+/** The field a step's card shows for each action that has one. */
+const SUMMARY_FIELD: Readonly<Record<string, string>> = {
+  navigate: 'url',
+  open_tab: 'url',
+  type: 'text',
+  keyboard_type: 'text',
+  select_option: 'option',
+  upload_file: 'file',
+  press_key: 'key',
+};
+
+/** Element handles that name what a step acts on, best first. */
+const EL_NAMES = ['ariaLabel', 'text', 'name', 'placeholder', 'testId', 'domId'];
+
+/** The recorded element's best name, or '' when it has none. */
+const elementName = (el: Step['el']) => String(EL_NAMES.map((k) => el?.[k]).find((v) => v) ?? '');
+
+/** One line saying what a step does, for its card: its url, text, key, assertion or element. */
+export function stepSummary(step: Step): string {
+  const action = String(step.action ?? '');
+  if (action === 'scroll') return [step.direction, step.amount].filter((v) => v !== undefined).join(' ');
+  if (typeof step.expected === 'string') return step.expected;
+  const field = Object.hasOwn(SUMMARY_FIELD, action) ? SUMMARY_FIELD[action] : '';
+  if (field && step[field] !== undefined) return String(step[field]);
+  return elementName(step.el);
+}
+
+/** The definition with step `i`'s fields replaced by `edits`; every other field and step passes through. */
+export const withStep = (d: Definition, i: number, edits: Record<string, unknown>): Definition => ({
+  ...d,
+  steps: (d.steps ?? []).map((s, j) => (j === i ? { ...(s as Step), ...edits } : s)),
+});
+
+/** The definition without step `i`. */
+export const withoutStep = (d: Definition, i: number): Definition => ({
+  ...d,
+  steps: (d.steps ?? []).filter((_, j) => j !== i),
+});

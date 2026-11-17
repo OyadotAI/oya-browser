@@ -4,9 +4,9 @@
  */
 'use client';
 
-import { Download, FilePen, Pencil, Play, Trash2 } from 'lucide-react';
+import { Download, FilePen, History, Pencil, Play, Trash2 } from 'lucide-react';
 import { ago } from '@/lib/api-client';
-import { DRAFT_SUFFIX } from './constants';
+import { DRAFT_SUFFIX, RUNS_TEXT } from './constants';
 import type { PlaybookBody, PlaybookInfo } from './types';
 
 /** What a row's buttons open or do. */
@@ -35,6 +35,10 @@ interface RowProps {
   now: number;
   /** What the buttons do. */
   on: RowHandlers;
+  /** Its run history is showing. */
+  open?: boolean;
+  /** Shows or hides its run history. */
+  onRuns?: () => void;
 }
 
 /** Props for the variables cell. */
@@ -97,11 +101,28 @@ function DraftCell({ p, now, on }: RowProps) {
   );
 }
 
-/** Export, rename, edit (its code is in the editor), run and delete. */
-function ActionsCell({ p, on }: Omit<RowProps, 'now'>) {
+/** Shows or hides the run history under the row. */
+function RunsToggle({ p, open, onRuns }: Pick<RowProps, 'p' | 'open' | 'onRuns'>) {
+  return (
+    <button
+      className="btn-icon"
+      title={RUNS_TEXT.heading}
+      aria-label={RUNS_TEXT.toggle(p.name)}
+      aria-expanded={!!open}
+      aria-controls={`runs-${p.name}`}
+      onClick={onRuns}
+    >
+      <History className="h-4 w-4" />
+    </button>
+  );
+}
+
+/** Runs, export, rename, edit (its code is in the editor), run and delete. */
+function ActionsCell({ p, on, open, onRuns }: Omit<RowProps, 'now'>) {
   return (
     <td className="px-2 py-3">
       <div className="flex justify-end gap-1">
+        <RunsToggle p={p} open={open} onRuns={onRuns} />
         <button
           className="btn-icon"
           title="Export to move it to another environment"
@@ -133,7 +154,7 @@ function ActionsCell({ p, on }: Omit<RowProps, 'now'>) {
 }
 
 /** One playbook as a table row. */
-export default function PlaybookRow({ p, now, on }: RowProps) {
+export default function PlaybookRow({ p, now, on, open, onRuns }: RowProps) {
   return (
     <tr className="border-b border-border/60 hover:bg-text/[0.035]">
       <td className="px-2 py-3 pl-4">
@@ -146,7 +167,7 @@ export default function PlaybookRow({ p, now, on }: RowProps) {
       <td className="px-2 py-3 text-right num text-text-secondary">{p.steps}</td>
       <DraftCell p={p} now={now} on={on} />
       <td className="px-2 py-3 text-right num text-text-muted">{ago(p.createdAt, now)}</td>
-      <ActionsCell p={p} on={on} />
+      <ActionsCell p={p} on={on} open={open} onRuns={onRuns} />
     </tr>
   );
 }

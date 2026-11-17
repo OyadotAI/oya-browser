@@ -92,6 +92,11 @@ export const TABLES: Record<string, Table> = {
     key: ['owner', 'id'],
     columns: { owner: 'text', id: 'text', value: 'text', version: 'int', updated_at: 'time' },
   },
+  // A playbook's newest finished runs, sealed; version guards every write (see modules/playbooks/history.ts).
+  playbook_runs: {
+    key: ['owner', 'playbook'],
+    columns: { owner: 'text', playbook: 'text', value: 'text', version: 'int', updated_at: 'time' },
+  },
   // A person's paid plan, as Stripe last said, and what of the period's usage has been reported to it.
   subscriptions: {
     key: ['user_id'],

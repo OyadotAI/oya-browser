@@ -54,9 +54,30 @@ router.post(
   },
 );
 
-/** GET /playbooks, the caller's saved playbooks. */
-router.get('/playbooks', authMiddleware, (req, res) => {
-  res.json({ playbooks: playbooks.list(getKey(req)) });
+/**
+ * Each playbook's last run, by name; null when the history cannot be read, so the
+ * list leaves `lastRun` out rather than calling every playbook "never run".
+ */
+async function lastRunsOr(key): Promise<Map<string, playbooks.RunRecord> | null> {
+  return playbooks.lastRuns(fingerprint(key)).catch(() => null);
+}
+
+/** A run as the list shows it: how it ended, and when. */
+const brief = (run?: playbooks.RunRecord) => (run ? { status: run.status, endedAt: run.endedAt } : null);
+
+/** GET /playbooks, the caller's saved playbooks, each with how it last ran (null: never). */
+router.get('/playbooks', authMiddleware, async (req, res) => {
+  const last = await lastRunsOr(getKey(req));
+  const list = playbooks.list(getKey(req));
+  res.json({ playbooks: last ? list.map((pb) => ({ ...pb, lastRun: brief(last.get(pb.name)) })) : list });
+});
+
+/** GET /playbooks/:name/runs, the playbook's newest finished runs, newest first. */
+router.get('/playbooks/:name/runs', authMiddleware, async (req, res) => {
+  const { name } = req.params;
+  if (!playbooks.list(getKey(req)).some((pb) => pb.name === name))
+    return res.status(Status.NOT_FOUND).json({ error: `No playbook named ${name}` });
+  res.json({ runs: await playbooks.runsOf(fingerprint(getKey(req)), name) });
 });
 
 /** DELETE /playbooks/:name, delete a playbook. */

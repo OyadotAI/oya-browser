@@ -4,7 +4,7 @@
  * where the cursor is, for the status bar.
  */
 import { useCallback, useState } from 'react';
-import type { FileId } from './editor-text';
+import type { DefinitionView, FileId } from './editor-text';
 
 /** The open tabs and the one showing; closing it shows the last one left. */
 function useTabs() {
@@ -46,11 +46,12 @@ function usePanels() {
   return { sidebar, panel, toggleSidebar, togglePanel };
 }
 
-/** The tabs, the panels and the cursor. */
+/** The tabs, the panels, the cursor, and whether the definition shows as JSON or as steps. */
 export function useWorkbench() {
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
+  const [view, setView] = useState<DefinitionView>('json');
   const onCursor = useCallback((line: number, col: number) => setCursor({ line, col }), []);
-  return { ...useTabs(), ...usePanels(), cursor, onCursor };
+  return { ...useTabs(), ...usePanels(), cursor, onCursor, view, setView };
 }
 
 /** What the workbench hook gives the views. */

@@ -2,9 +2,11 @@
 import { RendererConstants as C } from '../../../core/constants.ts';
 import { useState } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
-import { Button } from '../../../ui/index.ts';
+import { Button, IconButton } from '../../../ui/index.ts';
 import type { PanelViewModel } from '../../../app/panel/panel-view-model.ts';
 import type { PlaybooksViewModel } from '../view-models/playbooks-view-model.ts';
+import type { Playbook } from '../model/types.ts';
+import { runDot, type RunDotView } from '../model/run-dot.ts';
 import './playbooks.css';
 
 /** Shared library view props. */
@@ -12,26 +14,48 @@ interface Props {
   /** Library state and user intents. */
   vm: PlaybooksViewModel;
 }
+/** The row's last-run dot, with its meaning in words for a screen reader; nothing when unknown. */
+function Dot({ view }: { /** The dot and its words, or null. */ view: RunDotView | null }) {
+  if (!view) return <span className="pb-dot" aria-hidden />;
+  return (
+    <>
+      <span className={`pb-dot ${view.dot}`} aria-hidden />
+      <span className="sr-only">{view.label}</span>
+    </>
+  );
+}
+/** One saved playbook: its dot, its name on one line, and its step count. */
+function Row({ vm, item }: Props & { /** The playbook. */ item: Playbook }) {
+  const state = useViewModel(vm);
+  return (
+    <button
+      className="pb-row"
+      title={item.name}
+      aria-pressed={item.name === state.selected}
+      onClick={() => vm.select(item.name)}
+    >
+      <Dot view={runDot(item, vm.active)} />
+      <strong>{item.name}</strong>
+      <span>{item.steps} steps</span>
+    </button>
+  );
+}
 /** Search and select a saved playbook. */
 function Library({ vm }: Props) {
   const state = useViewModel(vm);
   return (
     <>
-      <label className="pb-field">
-        Search playbooks
-        <input type="search" value={state.query} onChange={(e) => vm.search(e.target.value)} />
-      </label>
+      <input
+        className="pb-search"
+        type="search"
+        placeholder="Search playbooks"
+        aria-label="Search playbooks"
+        value={state.query}
+        onChange={(e) => vm.search(e.target.value)}
+      />
       <div className="pb-list" aria-label="Saved playbooks">
         {vm.matches.map((item) => (
-          <button
-            key={item.name}
-            className="pb-row"
-            aria-pressed={item.name === state.selected}
-            onClick={() => vm.select(item.name)}
-          >
-            <strong>{item.name}</strong>
-            <span>{item.steps} steps</span>
-          </button>
+          <Row key={item.name} vm={vm} item={item} />
         ))}
       </div>
       {!state.loading && !vm.matches.length && (
@@ -160,9 +184,12 @@ export function PlaybooksPane({ vm, panel }: Props & { /** Workspace selection. 
       <div className="pb-body">
         <header className="pb-actions">
           <h2>Playbooks</h2>
-          <Button disabled={state.loading} onClick={() => void vm.refresh()}>
-            Refresh
-          </Button>
+          <IconButton
+            icon="reload"
+            label="Refresh playbooks"
+            disabled={state.loading}
+            onClick={() => void vm.refresh()}
+          />
           <Button disabled={state.busy || vm.running} onClick={() => void vm.manage('import')}>
             Import
           </Button>

@@ -4,6 +4,7 @@ import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { PanelViewModel } from '../../../app/panel/panel-view-model.ts';
 import type { Payload } from '../../../../shared/ipc.ts';
 import type { Playbook, PlaybookRun } from '../model/types.ts';
+import type { ActiveRun } from '../model/run-dot.ts';
 import { RUN_POLL_MS, ENDED } from '../model/constants.ts';
 
 /** Library state, including recoverable errors and the selected input form. */
@@ -28,6 +29,8 @@ export interface PlaybooksState {
   note: string;
   /** Most recent replay. */
   run: PlaybookRun | null;
+  /** The playbook that replay belongs to, so its row can show it running. */
+  runFor: string;
 }
 /** Empty state shared only as an immutable initial snapshot. */
 const INITIAL_STATE: PlaybooksState = {
@@ -41,6 +44,7 @@ const INITIAL_STATE: PlaybooksState = {
   error: '',
   note: '',
   run: null,
+  runFor: '',
 };
 /** Feedback for successful library operations. */
 const SAVED: Record<string, string> = { export: 'Playbook exported.', delete: 'Playbook deleted.' };
@@ -97,6 +101,10 @@ export class PlaybooksViewModel extends ViewModel<PlaybooksState> {
   /** Whether the current run is still active. */
   get running(): boolean {
     return !!this.state.run && !ENDED.includes(this.state.run.status);
+  }
+  /** The run this desktop is following, while it is still going, for its row's dot. */
+  get active(): ActiveRun | null {
+    return this.running && this.state.run ? { name: this.state.runFor, status: this.state.run.status } : null;
   }
   /** Show the library, optionally selecting a newly saved playbook. */
   async open(name = ''): Promise<void> {
@@ -184,7 +192,7 @@ export class PlaybooksViewModel extends ViewModel<PlaybooksState> {
     const { selected: name, values, autoHeal } = this.state;
     await this.perform(async () => {
       const run = await this.call({ action: 'run', name, values, autoHeal });
-      this.set({ run: run as unknown as PlaybookRun });
+      this.set({ run: run as unknown as PlaybookRun, runFor: name });
       this.follow();
     });
   }

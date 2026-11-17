@@ -43,7 +43,42 @@ export const EDITOR_TEXT = {
   saving: 'Saving…',
   unsaved: 'Unsaved changes',
   confirmClose: 'Discard your unsaved changes?',
+  viewLabel: 'How to show the definition',
+  visual: 'Visual',
+  json: 'JSON',
+  stepsLabel: 'Steps',
+  start: 'Start',
+  end: 'End',
+  emptySteps: 'No steps yet. Record a playbook to add some.',
+  fixInJson: 'Fix it in JSON to see the steps.',
+  showJson: 'Open JSON',
+  stepTitle: (n: number, action: string) => `Step ${n} · ${action}`,
+  recordedElement: 'Recorded element',
+  cancel: 'Cancel',
+  confirm: 'Confirm',
+  deleteStep: 'Delete step',
 } as const;
+
+/** The step fields the panel lets a person change, each labelled as the panel shows it. */
+export const STEP_FIELDS = {
+  url: 'URL',
+  text: 'Text',
+  option: 'Option',
+  file: 'File',
+  key: 'Key',
+  direction: 'Direction',
+  amount: 'Amount',
+  expected: 'Expected',
+} as const;
+
+/** A field the panel lets a person change. */
+export type StepField = keyof typeof STEP_FIELDS;
+
+/** The ways a scroll step can go, as replay reads them. */
+export const DIRECTIONS = ['up', 'down', 'left', 'right'] as const;
+
+/** How the definition tab shows the playbook. */
+export type DefinitionView = 'json' | 'visual';
 
 /** The files the explorer lists, in order: what each is called, its language and whether it can be typed in. */
 export const FILES = {

@@ -8,6 +8,7 @@ import { record, save } from './record-actions';
 import { isPlaybookName } from './format';
 import type { RecordForm } from './use-record-form';
 import type { useRecorder } from './use-recorder';
+import type { RecordStart } from './use-record-start';
 
 /** Props for the footer. */
 interface Props {
@@ -19,11 +20,23 @@ interface Props {
   onClose: () => void;
   /** Runs after a save. */
   onDone: () => void;
+  /** Starting a browser when none is running. */
+  auto: RecordStart;
+}
+
+/** No browser to record on: start one, then record on it. */
+function StartAndRecord({ auto }: { /** The start. */ auto: RecordStart }) {
+  return (
+    <button className="btn-primary" onClick={() => void auto.start()} disabled={auto.starting}>
+      {auto.starting ? 'Starting…' : 'Start and record'}
+    </button>
+  );
 }
 
 /** The primary button for where the recording is. */
-function NextStep({ session, form, onDone }: Omit<Props, 'onClose'>) {
+function NextStep({ session, form, onDone, auto }: Omit<Props, 'onClose'>) {
   const { r, recording, steps } = session;
+  if (!r.state && !r.browserId) return <StartAndRecord auto={auto} />;
   if (!r.state)
     return (
       <button
@@ -53,7 +66,7 @@ function NextStep({ session, form, onDone }: Omit<Props, 'onClose'>) {
 }
 
 /** Close, "Start new recording" once stopped, and the next step. */
-export default function RecordFooter({ session, form, onClose, onDone }: Props) {
+export default function RecordFooter({ session, form, onClose, onDone, auto }: Props) {
   const { r, recording } = session;
   return (
     <>
@@ -65,7 +78,7 @@ export default function RecordFooter({ session, form, onClose, onDone }: Props) 
           Start new recording
         </button>
       )}
-      <NextStep session={session} form={form} onDone={onDone} />
+      <NextStep session={session} form={form} onDone={onDone} auto={auto} />
     </>
   );
 }

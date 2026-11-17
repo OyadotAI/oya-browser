@@ -35,6 +35,11 @@ export interface PlaybookInfo extends PlaybookBody {
   promotedAt: string | null;
   /** A healed draft waiting for review, if any. */
   draft: PlaybookDraft | null;
+  /** How it last ran: null if never, absent when the server could not say. */
+  lastRun?: {
+    /** How it ended. */ status: 'succeeded' | 'failed';
+    /** When, as an ISO time. */ endedAt: string;
+  } | null;
 }
 
 /** Why a run stopped for a person. */
@@ -149,4 +154,18 @@ export interface CodedError {
     /** Why, as a code: control_busy, commands_pending… */
     code?: string;
   };
+}
+
+/** One finished replay, as GET /playbooks/:name/runs answers it. */
+export interface PlaybookRunRecord {
+  /** How it ended. */
+  status: 'succeeded' | 'failed';
+  /** When it started, as an ISO time. */
+  startedAt: string;
+  /** When it ended, as an ISO time. */
+  endedAt: string;
+  /** The browser it ran on. */
+  browserId: string;
+  /** Why it failed. Page text can be in it, so it is shown as plain text. */
+  error?: string;
 }
