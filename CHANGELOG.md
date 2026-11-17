@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.241](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.241) · 2026-11-17
+
 ### Added
 
 - [Research](https://oyabrowser.com/research) on oyabrowser.com: dated write-ups with the method and the raw numbers, starting with [how well a recorded run replays](https://oyabrowser.com/research/replay) and [stealth, measured](https://oyabrowser.com/research/stealth).
