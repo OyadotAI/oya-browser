@@ -10,7 +10,6 @@ import {
   Search,
   X,
   ArrowLeft,
-  ExternalLink,
   ChevronRight,
   BookOpen,
   Terminal,
@@ -28,7 +27,7 @@ import {
 import { useDocsNav } from './nav';
 import type { DocsSearch } from './use-docs-search';
 
-/** A sidebar link: [section id, label], or the Swagger UI link. */
+/** A sidebar link: [section id, label], or the link to the interactive API reference. */
 type NavEntry = [string, string] | 'swagger';
 
 /** A group of sidebar links. */
@@ -231,12 +230,12 @@ function NavLink({ id, children }: NavLinkProps) {
 /** The link to the interactive API reference. */
 function SwaggerLink() {
   return (
-    <a
-      href="/openapi.json"
+    <Link
+      href="/docs/api/reference"
       className="flex items-center gap-1 text-[13px] text-text-muted hover:text-text py-1 transition-colors"
     >
-      OpenAPI spec <ExternalLink className="w-3 h-3" />
-    </a>
+      Interactive reference
+    </Link>
   );
 }
 

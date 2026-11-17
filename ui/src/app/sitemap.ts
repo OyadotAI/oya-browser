@@ -40,6 +40,7 @@ const PAGES: Entry[] = [
   { path: '/terms', changeFrequency: 'monthly', priority: 0.4 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
   { path: '/llms-full.txt', changeFrequency: 'weekly', priority: 0.6 },
+  { path: '/docs/api/reference', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },
 ];
 

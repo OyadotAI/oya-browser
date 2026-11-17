@@ -45,12 +45,21 @@ const SECTIONS = [
   'control-plane',
 ];
 
+/** The interactive API reference, the one sidebar link that is not a topic page. */
+const REFERENCE = '/docs/api/reference';
+
 describe('DocsPage', () => {
   it('links each sidebar group heading to its topic page, which is how a crawler on /docs finds them', () => {
     render(<DocsPage />);
     const aside = document.querySelector('aside')!;
     const hrefs = [...aside.querySelectorAll('a[href^="/docs/"]')].map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(DOC_TOPICS.map(({ slug }) => `/docs/${slug}`));
+    expect(hrefs.filter((h) => h !== REFERENCE)).toEqual(DOC_TOPICS.map(({ slug }) => `/docs/${slug}`));
+  });
+
+  it('links the interactive API reference from the API group', () => {
+    render(<DocsPage />);
+    const link = document.querySelector(`aside a[href="${REFERENCE}"]`);
+    expect(link?.textContent).toBe('Interactive reference');
   });
 
   it('leaves the heading of the part with no topic page as plain text', () => {
