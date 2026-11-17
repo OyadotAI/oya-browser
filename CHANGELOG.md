@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.242](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.242) · 2026-11-17
+
 ### Added
 
 - Run history for playbooks. Every replay, from the console, the SDK, the desktop app, MCP or a routine, is kept when it ends: the newest 20 per playbook, sealed per project. The console shows them under a Runs button on each playbook, and `GET /playbooks/:name/runs` returns them. `GET /playbooks` now says how each playbook last ran (`lastRun`, `null` if never).
