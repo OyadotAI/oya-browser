@@ -22,6 +22,7 @@ export { answerField } from './answer.ts';
 export { runsOf, lastRuns, type RunRecord } from './history.ts';
 import { play as replay } from './replay.ts';
 import { record, type RunRecord } from './history.ts';
+import { REDACT_MIN_LENGTH } from './constants.ts';
 import { track } from '../telemetry/index.ts';
 import { fingerprint } from '../../platform/audit.ts';
 import { getPlaybook } from '../config/service.ts';
@@ -50,7 +51,7 @@ interface RunStart {
 interface Finished extends RunStart {
   /** Why it failed, if it did. */
   err?: unknown;
-  /** The values it ran with, so a secret quoted in its error is kept out of the history. */
+  /** The values it ran with (data and secrets), so one quoted in its error is kept out of the history. */
   vars: Record<string, unknown>;
 }
 
@@ -62,22 +63,33 @@ interface Finished extends RunStart {
  */
 function remember(apiKey, pb, done: Finished) {
   if (!pb?.name || pb.transient || !getPlaybook(apiKey, pb.name)) return;
-  void record(fingerprint(apiKey), pb.name, finished(pb, done)).catch((e) =>
+  void record(fingerprint(apiKey), pb.name, finished(done)).catch((e) =>
     console.warn(`[playbooks] run history not saved: ${e.message}`),
   );
 }
 
 /** The run as its history keeps it: how it ended, and why when it failed. */
-function finished(pb, { err, vars, browserId, startedAt }: Finished): RunRecord {
+function finished({ err, vars, browserId, startedAt }: Finished): RunRecord {
   const run = { browserId, startedAt, endedAt: new Date().toISOString() };
   if (!err) return { status: 'succeeded', ...run };
-  return { status: 'failed', ...run, error: withoutSecrets(String((err as Error).message ?? err), pb, vars) };
+  return { status: 'failed', ...run, error: withoutValues(String((err as Error).message ?? err), vars) };
 }
 
-/** The text with every secret value the run was given blanked, since an error can quote what was typed. */
-function withoutSecrets(text: string, pb, vars: Record<string, unknown>) {
-  const secrets = (pb.secrets ?? []).map((name) => vars[name]).filter((v) => typeof v === 'string' && v);
-  return secrets.reduce((out: string, v) => out.split(v as string).join('[secret]'), text);
+/**
+ * The text with every value the run was given blanked. An error can quote what was
+ * typed, and on a healthcare run any of it, a secret or a patient's name, can be
+ * sensitive, so the history never keeps one. The run's secrets arrive merged into
+ * `vars` (jobs.ts), so they are covered whether or not the playbook names them.
+ * Values shorter than REDACT_MIN_LENGTH are left: blanking every "1" would wreck
+ * the message and hide nothing.
+ */
+function withoutValues(text: string, vars: Record<string, unknown>) {
+  const values = Object.values(vars ?? {})
+    .filter((v) => typeof v === 'string' || typeof v === 'number')
+    .map(String)
+    .filter((v) => v.length >= REDACT_MIN_LENGTH)
+    .sort((a, b) => b.length - a.length);
+  return values.reduce((out, v) => out.split(v).join('[redacted]'), text);
 }
 
 /** Replays a playbook, counts the outcome and keeps it in the history, success or failure. */
