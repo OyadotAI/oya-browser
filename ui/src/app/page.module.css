@@ -624,3 +624,10 @@
   outline: 2px solid #16733b;
   outline-offset: 2px;
 }
+
+/* A header link the footer repeats, dropped below laptop width where the header would overflow with it. */
+@media (max-width: 960px) {
+  .wide {
+    display: none;
+  }
+}

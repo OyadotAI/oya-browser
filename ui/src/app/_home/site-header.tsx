@@ -12,6 +12,12 @@ export function SiteHeader() {
     <header className={styles.header}>
       <OyaWordmark />
       <nav aria-label="Main navigation" className={styles.navigation}>
+        <Link href="/vs" className={styles.wide} data-track="cta_clicked" data-track-label="header_compare">
+          Compare
+        </Link>
+        <Link href="/research" className={styles.wide} data-track="cta_clicked" data-track-label="header_research">
+          Research
+        </Link>
         <Link href="/docs" data-track="cta_clicked" data-track-label="header_docs">
           Docs
         </Link>

@@ -3,6 +3,8 @@
 export const WORDS = [
   { word: 'Control plane', href: '#control-plane' },
   { word: 'Workflows', href: '#workflows' },
+  { word: 'Compare', href: '/vs' },
+  { word: 'Research', href: '/research' },
   { word: 'Audit', href: '#audit' },
   { word: 'Docs', href: '/docs' },
   { word: 'Questions', href: '#faq' },
@@ -10,6 +12,14 @@ export const WORDS = [
 
 /** The product menu's original groups, descriptions and links. */
 export const PRODUCT = [
+  {
+    group: 'Browsers',
+    links: [
+      ['AI browser', 'Free desktop app, an agent in a tab', '/ai-browser'],
+      ['Agentic browser', 'Many browsers, run by agents', '/agentic-browser'],
+      ['HIPAA-compliant browser', 'Oya Cloud and enterprise, with a BAA', '/hipaa-compliant-browser'],
+    ],
+  },
   {
     group: 'Playbooks',
     links: [

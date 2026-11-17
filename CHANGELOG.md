@@ -6,6 +6,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- [Research](https://oyabrowser.com/research) on oyabrowser.com: dated write-ups with the method and the raw numbers, starting with [how well a recorded run replays](https://oyabrowser.com/research/replay) and [stealth, measured](https://oyabrowser.com/research/stealth).
+- [Compare](https://oyabrowser.com/vs), one page listing every Oya comparison, linked from the navigation and the footers.
+- [What is an agentic browser?](https://oyabrowser.com/agentic-browser), and a Browsers group in the site menu linking it next to the [AI browser](https://oyabrowser.com/ai-browser) and [HIPAA-compliant browser](https://oyabrowser.com/hipaa-compliant-browser) pages.
+
 ## [1.0.240](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.240) · 2026-11-14
 
 ### Added
