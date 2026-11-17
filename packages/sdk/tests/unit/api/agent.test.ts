@@ -82,6 +82,35 @@ describe('oya.desktop.connect', () => {
     assert.ok(!calls.some((c) => c.path === '/api/pairing'));
   });
 
+  it('names one lane for the whole script on every call, so the desktop gives it one tab', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers': { body: [desktop] },
+      'GET /api/browsers/d1': { body: desktop },
+      'POST /api/browsers/d1/command': { body: { ok: true, data: {} } },
+      'POST /api/browsers/d1/chat': { body: { text: 'done' } },
+    });
+    const browser = await oya.desktop.connect();
+    calls.length = 0;
+    await browser.goto('https://portal.test/');
+    await browser.ask('file it');
+    const lanes = calls.map((c) => c.headers['X-Oya-Agent']);
+    assert.match(lanes[0], /^sdk-[0-9a-f-]{36}$/);
+    assert.deepEqual(lanes, [lanes[0], lanes[0]]);
+  });
+
+  it('ends its lane on stop(), so the desktop closes its tab', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers': { body: [desktop] },
+      'GET /api/browsers/d1': { body: desktop },
+      'POST /api/browsers/d1/lane/end': { body: { ok: true } },
+    });
+    const browser = await oya.desktop.connect();
+    await browser.stop();
+    const end = calls.find((c) => c.path === '/api/browsers/d1/lane/end');
+    assert.ok(end, 'the lane was ended');
+    assert.match(end.headers['X-Oya-Agent'], /^sdk-/);
+  });
+
   it('pairs with the persona and waits until the app connects', async () => {
     const work = { ...desktop, persona: 'p-work', personaName: 'work' };
     const { oya, calls } = client({

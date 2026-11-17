@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- A script driving your Oya desktop app through the SDK (`oya.desktop.connect()`) now works in one tab of its own: it no longer takes over the tab you are looking at, every `goto()`, `ask()`, `play()` and background run stays in that tab, and `stop()` closes it. Before, each run left a second tab open and replaced the page you had open.
+
 ## [1.0.242](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.242) · 2026-11-17
 
 ### Added

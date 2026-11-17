@@ -30,6 +30,7 @@ import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
 import { router as configRoutes } from '../modules/config/routes.ts';
 import { requestLlmMiddleware } from '../modules/config/request-llm.ts';
+import { laneMiddleware } from '../modules/browsers/connection/lane.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
 import { router as translateRoutes } from '../modules/translate/index.ts';
 import { router as routinesRoutes } from '../modules/routines/routes.ts';
@@ -91,6 +92,9 @@ function routeLabel(req) {
 
 /** A model the caller picked for this request (`new Oya({ model })`), kept with the request's work and never saved. */
 router.use(requestLlmMiddleware);
+
+/** The lane the caller named (X-Oya-Agent), kept with the request's work so a desktop gives it one tab. */
+router.use(laneMiddleware);
 
 // Sign-in attempts are counted per browser so a wrong password cannot be typed
 // until the account locks. A browser that is gone cannot lock anything, and

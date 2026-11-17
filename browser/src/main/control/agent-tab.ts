@@ -34,6 +34,12 @@ export function inLane<T>(lane: unknown, work: () => T): T {
 /** The running command's lane. */
 const currentLane = (): string => lanes.getStore() ?? DEFAULT_LANE;
 
+/**
+ * Whether `lane` is an SDK browser's: a script driving the person's desktop names one lane for its
+ * whole life. Its tab is one it opens, never the person's shown tab, and it closes when the lane ends.
+ */
+const sdkLane = (lane: string): boolean => lane.startsWith('sdk-');
+
 /** The agents' tabs while control is scoped to them. */
 export class AgentTab {
   /** Each lane's tab. */
@@ -82,9 +88,21 @@ export class AgentTab {
    */
   start(): void {
     if (!this.scoped() || this.claims.has(currentLane())) return;
+    if (sdkLane(currentLane())) return this.startSdk();
     const { tabs } = this.deps;
     if (this.claims.size) this.opened(tabs.createTab(HOME_URL, false));
     else this.claim(tabs.activeTabId);
+  }
+
+  /**
+   * An SDK lane starts in a tab of its own: the one it had before it went quiet, while it is still
+   * open, else a new one, shown when no other agent runs. The person's shown tab keeps its page.
+   */
+  private startSdk(): void {
+    const lane = currentLane();
+    const kept = [...this.openers].find(([id, opener]) => opener === lane && this.deps.tabs.find(id))?.[0];
+    if (kept !== undefined) return this.claim(kept);
+    this.opened(this.deps.tabs.createTab(HOME_URL, this.claims.size === 0));
   }
 
   /**
@@ -107,9 +125,9 @@ export class AgentTab {
     return shown !== null && (shown === this.claims.get(lane) || this.openers.get(shown) === lane);
   }
 
-  /** Closes every tab lane `lane` opened, but the one it started in, and forgets them. */
+  /** Closes every tab lane `lane` opened, but the one it started in (an SDK lane's too: it opened that one), and forgets them. */
   private closeOpened(lane: string): void {
-    const home = this.homes.get(lane);
+    const home = sdkLane(lane) ? undefined : this.homes.get(lane);
     for (const [id, opener] of [...this.openers]) {
       if (opener !== lane) continue;
       this.openers.delete(id);

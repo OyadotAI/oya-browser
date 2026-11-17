@@ -2,7 +2,7 @@
  * The work a background run does: replay a playbook, or hand a prompt to the
  * agent, with the checkpoint between page-changing steps.
  */
-import { inOwnLane } from '../browsers/connection/lane.ts';
+import { inCallerOrOwnLane } from '../browsers/connection/lane.ts';
 import { runChat } from '../agent/chat.ts';
 import { play } from './service.ts';
 import { checkpointFor, challengesFor } from './checkpoint.ts';
@@ -39,8 +39,8 @@ export interface StepEvent {
 
 /** Runs the job, parking on a person through `requestHuman` when it needs one. */
 export async function runJob(job: Job, requestHuman) {
-  // Each run is its own lane: on an Oya desktop it drives a tab of its own, beside other agents.
-  return inOwnLane(job.browserId, () => {
+  // Each run is its own lane, or its caller's: on an Oya desktop it drives a tab of its own, beside other agents.
+  return inCallerOrOwnLane(job.browserId, () => {
     const checkpoint = checkpointFor(job.key, job.browserId, requestHuman);
     return job.pb ? replayJob(job, checkpoint, requestHuman) : runPrompt(job, checkpoint, requestHuman);
   });

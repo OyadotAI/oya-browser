@@ -43,6 +43,15 @@ export class Http {
     private readonly defaults: Record<string, string> = {},
   ) {}
 
+  /**
+   * The same client with `headers` on every request it sends. A browser that shares a person's
+   * desktop names its lane this way once, so no call it makes can leave the lane out.
+   */
+  withHeaders(headers: Record<string, string>): Http {
+    const merged = { ...this.defaults, ...headers };
+    return new Http(this.baseUrl, this.apiKey, this.timeoutMs, this.fetchImpl, this.origin, merged);
+  }
+
   /** Sends one request and returns the parsed answer, or throws an OyaError when it failed. */
   async request<T>(
     method: string,
