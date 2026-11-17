@@ -21,6 +21,7 @@ import { solveCaptcha, completeMfa } from './http/challenges.ts';
 import { provision, deleteSandbox } from './http/provision.ts';
 import { cloudNeedsPerson } from './http/cloud-gate.ts';
 import { runCommand, chat } from './http/command.ts';
+import { endCallerLane } from './http/lane.ts';
 
 export { startBrowser } from './lifecycle/start.ts';
 export { stopBrowser } from './lifecycle/stop.ts';
@@ -108,6 +109,9 @@ router.get('/live/:browserId', authMiddleware, requireBrowser, liveView);
 
 /** POST /browsers/:browserId/command, runs one action on a browser. Server-internal actions are refused. */
 router.post('/browsers/:browserId/command', authMiddleware, enforce('command'), requireBrowser, runCommand);
+
+/** POST /browsers/:browserId/lane/end, the caller's lane (X-Oya-Agent) is done: a desktop closes the tab it worked in. */
+router.post('/browsers/:browserId/lane/end', authMiddleware, enforce('command'), requireBrowser, endCallerLane);
 
 /** POST /browsers/:browserId/chat, LLM + MCP tools for natural-language browser control. */
 router.post('/browsers/:browserId/chat', authMiddleware, enforce('chat'), requireBrowser, chat);

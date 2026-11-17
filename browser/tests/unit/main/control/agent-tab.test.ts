@@ -222,3 +222,52 @@ it("a finished run closes only its own tabs, never another agent's or the person
   assert.equal(tabs.closed.includes(theirs), false);
   assert.equal(tabs.closed.includes(2), false);
 });
+
+it("an SDK browser's lane opens a tab of its own and leaves the person's shown tab alone", () => {
+  const { agentTab, tabs } = setup();
+  inLane('sdk-script', () => agentTab.drive());
+  assert.equal(tabs.created.length, 1);
+  assert.equal(tabs.created[0].endsWith(' shown'), true);
+  assert.deepEqual(agentTab.claimed(), [3]);
+  assert.equal(agentTab.humanMay(1), true);
+});
+
+it('an SDK lane beside another agent opens its tab in the background', () => {
+  const { agentTab, tabs } = setup();
+  inLane('mcp-agent', () => agentTab.drive());
+  inLane('sdk-script', () => agentTab.drive());
+  assert.equal(tabs.created.length, 1);
+  assert.equal(tabs.created[0].endsWith(' shown'), false);
+});
+
+it('every call of one SDK lane stays in its one tab', () => {
+  const { agentTab, tabs } = setup();
+  inLane('sdk-script', () => agentTab.drive());
+  inLane('sdk-script', () => agentTab.drive());
+  inLane('sdk-script', () => agentTab.drive());
+  assert.equal(tabs.created.length, 1);
+  assert.deepEqual(agentTab.claimed(), [3]);
+});
+
+it('an ended SDK lane closes the tab it worked in', () => {
+  const { agentTab, tabs } = setup();
+  inLane('sdk-script', () => agentTab.drive());
+  inLane('sdk-script', () => agentTab.release());
+  assert.deepEqual(tabs.closed, [3]);
+  assert.deepEqual(agentTab.claimed(), []);
+});
+
+it('an SDK lane that went quiet takes its own tab back, not a second one', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const { agentTab, tabs } = setup();
+    inLane('sdk-script', () => agentTab.drive());
+    mock.timers.tick(LANE_IDLE_MS);
+    assert.deepEqual(agentTab.claimed(), []);
+    inLane('sdk-script', () => agentTab.drive());
+    assert.equal(tabs.created.length, 1);
+    assert.deepEqual(agentTab.claimed(), [3]);
+  } finally {
+    mock.timers.reset();
+  }
+});

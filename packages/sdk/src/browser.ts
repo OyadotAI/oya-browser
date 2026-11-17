@@ -51,6 +51,12 @@ import {
   WAIT_FOR_GRACE_MS,
 } from './constants.js';
 
+/** The header a lane is named in, read by the server for every route. */
+const LANE_HEADER = 'X-Oya-Agent';
+
+/** A lane name of this SDK's own: unique per browser object, and marked so a desktop gives it a fresh tab. */
+const sdkLane = (): string => `sdk-${globalThis.crypto.randomUUID()}`;
+
 /**
  * One running browser.
  *
@@ -74,14 +80,22 @@ export class Browser {
   /** True when `start()` handed over a browser that was already running, such as the desktop app. */
   readonly reused: boolean;
 
-  /** Wraps a started browser; `autoCaptcha` solves CAPTCHAs after every `goto()`. */
+  /** How this browser reaches the API: with its lane on every request when it shares someone's browser. */
+  private readonly http: Http;
+
+  /**
+   * Wraps a started browser; `autoCaptcha` solves CAPTCHAs after every `goto()`. A browser
+   * handed over already running (a person's desktop app) gets one lane for its whole life,
+   * so the desktop gives its goto, ask and play one tab of its own, never the person's.
+   */
   constructor(
-    private readonly http: Http,
+    http: Http,
     info: StartResult,
     private readonly autoCaptcha: boolean,
   ) {
     ({ id: this.id, provider: this.provider, persona: this.persona, cdpUrl: this.cdpUrl } = info);
     this.reused = info.reused === true;
+    this.http = this.reused ? http.withHeaders({ [LANE_HEADER]: sdkLane() }) : http;
   }
 
   /** Runs one browser command; a command that ran and failed throws. */
@@ -312,8 +326,18 @@ export class Browser {
   stop(): Promise<StopResult> {
     // A browser `start()` handed over was not ours to stop: disconnecting
     // someone's desktop browser at the end of a script is not what they meant.
-    if (this.reused) return Promise.resolve({ id: this.id, ok: true, reused: true });
+    // Its tab is ours, though, so the lane ends and the desktop closes it.
+    if (this.reused) return this.endLane();
     return this.http.request<StopResult>('POST', `/api/browsers/${this.id}/stop`, {}, STOP_TIMEOUT_MS);
+  }
+
+  /**
+   * Ends this browser's lane, best effort: a server too old to know lanes, or one out of reach,
+   * leaves the tab to lapse on its own, and `stop()` on someone's browser has never thrown.
+   */
+  private async endLane(): Promise<StopResult> {
+    await this.http.request('POST', `/api/browsers/${this.id}/lane/end`, {}, STOP_TIMEOUT_MS).catch(() => undefined);
+    return { id: this.id, ok: true, reused: true };
   }
 
   /** `await using browser = await oya.browser.start()` stops it however the block exits, errors included. */

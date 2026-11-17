@@ -10,7 +10,7 @@ import { Status } from '../../../platform/http-status.ts';
 import { HttpError, answerFor, sendError } from '../../../platform/errors.ts';
 import * as flow from '../../playbooks/flow-recorder.ts';
 import { getKey, longJson, validData } from '../../../app/http.ts';
-import { inLane, inOwnLane } from '../connection/lane.ts';
+import { inCallerOrOwnLane, inLane } from '../connection/lane.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
 import { CHAT_DRAIN_MS, MAX_SCHEMA_CHARS } from '../constants.ts';
 import { challengesFor, quietCheckpointFor } from '../../playbooks/checkpoint.ts';
@@ -110,7 +110,7 @@ export async function chat(req, res) {
  */
 function inChatLane<T>(req, run: () => Promise<T>): Promise<T> {
   const { lane } = req.body;
-  return lane ? inLane(lane, run) : inOwnLane(req.params.browserId, run);
+  return lane ? inLane(lane, run) : inCallerOrOwnLane(req.params.browserId, run);
 }
 
 /** Chats this replica is answering, so a shutdown lets them finish instead of cutting them off mid-run. */

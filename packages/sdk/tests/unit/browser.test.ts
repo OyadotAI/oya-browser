@@ -227,6 +227,14 @@ describe('Browser links', () => {
   });
 });
 
+describe('Browser lanes', () => {
+  it('names no lane for a browser it started, which no person shares', async () => {
+    const { b, calls } = await browser({ [CMD]: { body: { ok: true, data: {} } } });
+    await b.goto('https://example.test/');
+    assert.equal(calls[0].headers['X-Oya-Agent'], undefined);
+  });
+});
+
 describe('Browser.stop', () => {
   it('stop, close and await-using all stop the browser', async () => {
     const { b, calls } = await browser({ 'POST /api/browsers/b1/stop': { body: { id: 'b1', ok: true } } });

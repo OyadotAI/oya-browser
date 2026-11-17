@@ -29,8 +29,31 @@ export async function inOwnLane<T>(browserId: string, work: () => T): Promise<Aw
   try {
     return await inLane(lane, work);
   } finally {
-    registry.send(browserId, { type: 'lane_end', lane });
+    endLane(browserId, lane);
   }
+}
+
+/**
+ * Runs `work` in the lane already running (one the caller named), or in a lane of its own when
+ * there is none. A caller's lane is the caller's to end; without this, each call of an SDK
+ * browser that named one lane would still get a lane, and on a desktop a tab, of its own.
+ */
+export function inCallerOrOwnLane<T>(browserId: string, work: () => T): Promise<Awaited<T>> {
+  return currentLane() ? Promise.resolve(work()) : inOwnLane(browserId, work);
+}
+
+/** Tells browser `browserId` that lane `lane` has finished, so a desktop gives back its tab. */
+export function endLane(browserId: string, lane: string): void {
+  registry.send(browserId, { type: 'lane_end', lane });
+}
+
+/**
+ * Express middleware: the rest of the request runs in the lane its caller named (X-Oya-Agent or
+ * ?agent=). An SDK browser names one lane for its whole life, so its goto, ask and play all land
+ * in one tab of the person's desktop instead of the shown tab plus a new tab per call.
+ */
+export function laneMiddleware(req, _res, next) {
+  return inLane(laneFrom(req), next);
 }
 
 /** The lane of the work in progress, if any. */
