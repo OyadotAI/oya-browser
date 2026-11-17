@@ -99,6 +99,57 @@ export const HIPAA_BROWSER: AnswerPageContent = {
 /** Sealed credentials, as the README states it. */
 const SEALED = 'Stored passwords and TOTP seeds are sealed and never shown to the model.';
 
+/** /agentic-browser: what an agentic browser is, and how Oya Cloud and the enterprise edition are one for teams. */
+export const AGENTIC_BROWSER: AnswerPageContent = {
+  path: '/agentic-browser',
+  label: 'Agentic browser',
+  title: 'What is an agentic browser?',
+  lead: 'An agentic browser is a browser that AI agents run on their own, many at once, in the cloud or in your own infrastructure, with a person able to watch and take over. Oya Cloud and the enterprise edition are an agentic browser for teams: every action by an agent or a person lands on a tamper-evident audit trail, and on both we sign BAAs.',
+  sections: [
+    {
+      heading: 'An agentic browser and an AI browser',
+      body: 'An AI browser is one you use yourself, with an agent beside you in a tab: that is the free Oya desktop app for macOS and Windows. An agentic browser is one agents run on their own, many browsers at once. That is Oya Cloud, the enterprise edition in your own infrastructure, and the source-available community edition, free up to 5 cloud browsers at once.',
+    },
+    {
+      heading: 'Run it once, then replay it with no model',
+      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the inputs as variables), and the playbook replays with no model calls. When a page changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
+      items: [
+        'MCP: Claude Code, Codex, Cursor or any MCP client.',
+        'The TypeScript SDK, @oya-ai/browser.',
+        'Playwright, Puppeteer, Stagehand or browser-use, over the CDP URL each browser gives.',
+      ],
+    },
+    {
+      heading: 'What it gives a regulated team',
+      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
+      items: [...OYA_CONTROLS, SEALED],
+    },
+  ],
+  faq: [
+    {
+      q: 'What is the difference between an agentic browser and an AI browser?',
+      a: 'An AI browser is one you use yourself, with an agent beside you in a tab. An agentic browser is one agents run on their own, many at once, in the cloud or self-hosted. Oya is both: the desktop app, and Oya Cloud and the enterprise edition.',
+    },
+    {
+      q: 'Is there a HIPAA-compliant agentic browser?',
+      a: 'Yes. On Oya Cloud and the enterprise edition, Oya Browser is HIPAA compliant and we sign BAAs. Every action by an agent or a person lands on a hash-chained audit trail, and a person can take over any session. The community edition and the desktop app are not covered by the HIPAA offering.',
+    },
+    {
+      q: 'Can a person take over from the agent?',
+      a: 'Yes. A person can watch any session live, take over and hand it back.',
+    },
+    {
+      q: 'Does every run need a model?',
+      a: 'No. The first run does. A saved playbook replays with no model calls, and the agent is called again only when a page has changed, to finish the task from the step that moved.',
+    },
+    {
+      q: 'Can Oya run browsers on other providers?',
+      a: 'Yes. One Oya API drives Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome. When a connection to one provider fails, Oya rests that route for a while and sends the session to the next provider in priority order.',
+    },
+    SELF_HOST,
+  ],
+};
+
 /** /vs/browserbase: what Oya is next to Browserbase, in facts about Oya only. */
 export const VS_BROWSERBASE: AnswerPageContent = {
   path: '/vs/browserbase',
@@ -785,6 +836,7 @@ export const ANSWER_PAGES = [
   HIPAA_BROWSER,
   HEALTHCARE_BROWSER,
   AI_BROWSER,
+  AGENTIC_BROWSER,
   HIPAA_AUTOMATION,
   PRIOR_AUTH,
   PAYER_PORTALS,

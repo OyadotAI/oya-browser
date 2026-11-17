@@ -24,6 +24,8 @@ export function SiteFooter() {
             {label}
           </Link>
         ))}
+        <Link href="/vs">Compare</Link>
+        <Link href="/research">Research</Link>
         <Link href="/release-notes">Release notes</Link>
         <Link href="/trust">Trust</Link>
         <Link href="/privacy">Privacy</Link>

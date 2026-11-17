@@ -1,0 +1,15 @@
+/* Research posts: the table's scrolling frame and caption; everything else is the release notes' column. */
+.scroll {
+  margin-top: 24px;
+  overflow-x: auto;
+}
+.caption {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+.date {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
+}

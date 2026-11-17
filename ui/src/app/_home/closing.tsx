@@ -18,6 +18,7 @@ const COLUMNS: [string, [string, string][]][] = [
       ['Playbooks', '#playbooks'],
       ['Workflows', '#workflows'],
       ['Audit trail', '#audit'],
+      ['Research', '/research'],
     ],
   ],
   [
@@ -25,6 +26,7 @@ const COLUMNS: [string, [string, string][]][] = [
     [
       ['Console', '/dashboard'],
       ['Docs', '/docs'],
+      ['Compare', '/vs'],
       ['Book a demo', foundersCall],
     ],
   ],

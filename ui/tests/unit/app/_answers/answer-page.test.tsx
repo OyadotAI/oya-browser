@@ -11,6 +11,7 @@ import VsSteel, { metadata as steelMetadata } from '@/app/vs/steel/page';
 import VsAnchor, { metadata as anchorMetadata } from '@/app/vs/anchor/page';
 import VsBrowserUse, { metadata as browserUseMetadata } from '@/app/vs/browser-use/page';
 import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
+import AgenticBrowser, { metadata as agenticMetadata } from '@/app/agentic-browser/page';
 import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
 import HipaaBrowserAutomation, { metadata as automationMetadata } from '@/app/hipaa-browser-automation/page';
 import PriorAuthorizationAutomation, { metadata as priorAuthMetadata } from '@/app/prior-authorization-automation/page';
@@ -25,6 +26,7 @@ import ProviderEnrollmentAutomation, {
 } from '@/app/provider-enrollment-automation/page';
 import StateRegistryAutomation, { metadata as registriesMetadata } from '@/app/state-registry-automation/page';
 import {
+  AGENTIC_BROWSER,
   AI_BROWSER,
   ANSWER_PAGES,
   CLAIM_STATUS,
@@ -55,6 +57,7 @@ const PAGES = [
   { name: 'vs/anchor', Page: VsAnchor, metadata: anchorMetadata, content: VS_ANCHOR },
   { name: 'vs/browser-use', Page: VsBrowserUse, metadata: browserUseMetadata, content: VS_BROWSER_USE },
   { name: 'ai-browser', Page: AiBrowser, metadata: aiMetadata, content: AI_BROWSER },
+  { name: 'agentic-browser', Page: AgenticBrowser, metadata: agenticMetadata, content: AGENTIC_BROWSER },
   {
     name: 'browser-for-healthcare',
     Page: BrowserForHealthcare,

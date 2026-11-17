@@ -5,6 +5,7 @@ import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
 import { DOC_PAGES, DOC_TOPICS } from './docs/_docs/pages';
 import { ANSWER_PAGES } from './_answers/content';
+import { RESEARCH_POSTS } from './research/posts';
 
 /** One page of the sitemap. */
 interface Entry {
@@ -32,6 +33,9 @@ const PAGES: Entry[] = [
   { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
   { path: '/trust', changeFrequency: 'monthly', priority: 0.6 },
   ...ANSWER_PAGES.map(({ path }): Entry => ({ path, changeFrequency: 'monthly', priority: 0.7 })),
+  { path: '/vs', changeFrequency: 'monthly', priority: 0.7 },
+  { path: '/research', changeFrequency: 'monthly', priority: 0.7 },
+  ...RESEARCH_POSTS.map(({ path }): Entry => ({ path, changeFrequency: 'monthly', priority: 0.6 })),
   { path: '/privacy', changeFrequency: 'monthly', priority: 0.4 },
   { path: '/terms', changeFrequency: 'monthly', priority: 0.4 },
   { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
