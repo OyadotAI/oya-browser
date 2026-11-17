@@ -76,3 +76,5 @@ export const RUN_HISTORY_KEPT = 20;
 export const RUN_HISTORY_TRIES = 3;
 /** The longest error a run's history keeps: page text can end up in an error, so it stays short. */
 export const RUN_ERROR_MAX = 500;
+/** The shortest run value blanked from a stored error; shorter ones would wreck the message and hide nothing. */
+export const REDACT_MIN_LENGTH = 3;

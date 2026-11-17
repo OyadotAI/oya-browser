@@ -127,14 +127,13 @@ describe('play, remembered', () => {
     assert.match(runs[0].error ?? '', /teleport/);
   });
 
-  it('blanks a secret the run was given if its error quotes it', async () => {
-    const secretPb = { ...pb, secrets: ['pw'], steps: [{ action: 'teleport', text: '{{pw}}' }] };
-    await keyConfig.savePlaybook(KEY, 'kept', secretPb);
-    const quoting = { ...secretPb, steps: [{ action: 'teleport-hunter2' }] };
-    await assert.rejects(playbooks.play(KEY, BROWSER, quoting, { pw: 'hunter2' }, { autoHeal: false }));
+  it('blanks every value the run was given from a stored error: a secret the playbook does not name, data, and numbers', async () => {
+    const quoting = { ...pb, steps: [{ action: 'teleport-hunter2-Jane-Roe-40213' }] };
+    const vars = { pw: 'hunter2', patient: 'Jane-Roe', member: 40213, flag: '1' };
+    await assert.rejects(playbooks.play(KEY, BROWSER, quoting, vars, { autoHeal: false }));
     const [failed] = await runsFor('kept');
-    assert.doesNotMatch(failed.error ?? '', /hunter2/);
-    assert.match(failed.error ?? '', /\[secret\]/);
+    assert.doesNotMatch(failed.error ?? '', /hunter2|Jane-Roe|40213/);
+    assert.match(failed.error ?? '', /teleport-\[redacted\]-\[redacted\]-\[redacted\]/);
   });
 
   it('leaves out a run whose playbook was deleted while it ran, so a new one with that name starts clean', async () => {
