@@ -32,7 +32,6 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: Props)
     <div className="workspace-list flex h-full min-h-0 min-w-0 flex-col">
       <TabHeader
         count={(tab.playbooks || []).length}
-        hasBrowsers={browsers.length > 0}
         onRecord={() => tab.dialogs.setRecording(true)}
         onImport={tab.actions.importFile}
       />
@@ -44,7 +43,7 @@ export default function PlaybooksTab({ apiKey, browsers, personas, now }: Props)
           Could not load playbooks: {tab.loadError}
         </div>
       )}
-      <PlaybookTable playbooks={tab.playbooks} now={now} on={tab.on} />
+      <PlaybookTable apiKey={apiKey} playbooks={tab.playbooks} now={now} on={tab.on} />
       <PlaybookDialogs tab={tab} apiKey={apiKey} browsers={browsers} personas={personas} />
     </div>
   );

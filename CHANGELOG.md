@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Run history for playbooks. Every replay, from the console, the SDK, the desktop app, MCP or a routine, is kept when it ends: the newest 20 per playbook, sealed per project. The console shows them under a Runs button on each playbook, and `GET /playbooks/:name/runs` returns them. `GET /playbooks` now says how each playbook last ran (`lastRun`, `null` if never).
+- A visual view of a playbook in the console's editor: Start, one card per step, End. Click a step to edit its fields; the JSON stays the source.
+
+### Changed
+
+- Record a flow in the console no longer needs a running browser. With none running, it starts one with your project defaults and records on it once it connects.
+- The desktop app's Playbooks panel is tighter: one-line search, compact rows, and a dot for how each playbook last ran.
+
 ## [1.0.241](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.241) · 2026-11-17
 
 ### Added

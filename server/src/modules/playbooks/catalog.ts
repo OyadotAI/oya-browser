@@ -12,6 +12,16 @@ import { MAX_STEPS, WORKFLOW_SCHEMA } from './constants.ts';
 import { replayableAction } from './replay.ts';
 import { namesOf, templateValues } from './variables.ts';
 import { renderPlaywright } from './playwright.ts';
+import * as history from './history.ts';
+import { fingerprint } from '../../platform/audit.ts';
+
+/**
+ * Runs a change to a playbook's run history after the playbook itself changed.
+ * The playbook change already happened, so a history the database refused is
+ * logged rather than turned into an error for a request that did what it said.
+ */
+const alongside = (work: Promise<void>) =>
+  work.catch((e) => console.warn(`[playbooks] run history not updated: ${e.message}`));
 
 /** A valid playbook name. */
 const NAME = /^[\w-]{1,64}$/;
@@ -182,9 +192,15 @@ export async function rename(apiKey, name, newName) {
   if (newName === name) return describe(pb);
   checkFree(apiKey, newName);
   await keyConfig.savePlaybook(apiKey, newName, { ...pb, name: newName });
+  await moveRecords(apiKey, name, newName);
+  return describe({ ...pb, name: newName });
+}
+
+/** Moves what hangs off a playbook's name, its healed draft and its run history, then drops the old name. */
+async function moveRecords(apiKey, name, newName) {
   await moveDraft(apiKey, name, newName);
   await keyConfig.deletePlaybook(apiKey, name);
-  return describe({ ...pb, name: newName });
+  await alongside(history.move(fingerprint(apiKey), name, newName));
 }
 
 /** The playbook to rename; a draft is not one. */
@@ -234,5 +250,8 @@ function listed(pb, draft) {
 export async function remove(apiKey, name) {
   if (!keyConfig.getPlaybook(apiKey, name)) throw new HttpError(Status.NOT_FOUND, `No playbook named ${name}`);
   await keyConfig.deletePlaybook(apiKey, name);
-  if (!name.endsWith(':draft')) await keyConfig.deletePlaybook(apiKey, `${name}:draft`);
+  if (name.endsWith(':draft')) return;
+  await keyConfig.deletePlaybook(apiKey, `${name}:draft`);
+  // A new playbook given this name must not inherit these runs.
+  await alongside(history.forget(fingerprint(apiKey), name));
 }

@@ -3,14 +3,18 @@
  */
 'use client';
 
+import { Fragment, useState } from 'react';
 import { Workflow } from 'lucide-react';
 import SyntaxCode from '@/components/ui/syntax-code';
 import PlaybookRow, { type RowHandlers } from './playbook-row';
+import PlaybookRuns from './playbook-runs';
 import { RECORD_SNIPPET } from './constants';
 import type { PlaybookInfo } from './types';
 
 /** Props for the table. */
 interface Props {
+  /** The caller's API key, to load a row's run history. */
+  apiKey: string;
   /** The playbooks; null until the first load. */
   playbooks: PlaybookInfo[] | null;
   /** The clock the ages are measured from. */
@@ -29,7 +33,7 @@ function TableHead() {
         <th className="w-[70px] px-2 py-3 text-right">Steps</th>
         <th className="w-[28%] px-3 py-3">Healed draft</th>
         <th className="w-[90px] px-2 py-3 text-right">Created</th>
-        <th className="w-[150px] px-2 py-3" aria-label="Actions" />
+        <th className="w-[190px] px-2 py-3" aria-label="Actions" />
       </tr>
     </thead>
   );
@@ -53,8 +57,12 @@ function EmptyPlaybooks() {
   );
 }
 
-/** Every playbook as a row. */
-export default function PlaybookTable({ playbooks, now, on }: Props) {
+/** The table's columns, so a row's run history spans them all. */
+const COLUMNS = 6;
+
+/** Every playbook as a row, each with its run history when opened; what is open survives a refresh. */
+export default function PlaybookTable({ apiKey, playbooks, now, on }: Props) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const list = playbooks || [];
   return (
     <div className="data-scroll mx-4 mb-4 min-h-0 flex-initial overflow-auto rounded-xl border border-border bg-bg-card/25 lg:mx-6 lg:mb-6">
@@ -62,7 +70,22 @@ export default function PlaybookTable({ playbooks, now, on }: Props) {
         <TableHead />
         <tbody>
           {list.map((p) => (
-            <PlaybookRow key={p.name} p={p} now={now} on={on} />
+            <Fragment key={p.name}>
+              <PlaybookRow
+                p={p}
+                now={now}
+                on={on}
+                open={Boolean(open[p.name])}
+                onRuns={() => setOpen((o) => ({ ...o, [p.name]: !o[p.name] }))}
+              />
+              {open[p.name] && (
+                <tr id={`runs-${p.name}`}>
+                  <td colSpan={COLUMNS} className="border-b border-border/60 bg-bg/40 px-4 py-3">
+                    <PlaybookRuns apiKey={apiKey} name={p.name} lastEnded={p.lastRun?.endedAt} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

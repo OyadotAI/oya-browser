@@ -3,7 +3,7 @@
  * its edits, recording on a live browser, and replay runs.
  */
 import { api } from '@/lib/api-client';
-import type { PlaybookBody, PlaybookList, RecordedStep, RunInfo, StartedBrowser } from './types';
+import type { PlaybookBody, PlaybookList, PlaybookRunRecord, RecordedStep, RunInfo, StartedBrowser } from './types';
 
 /** A path segment, escaped. */
 const seg = encodeURIComponent;
@@ -104,3 +104,7 @@ export const respondToRun = (key: string, runId: string, response: string) =>
 /** Starts a browser on a profile. */
 export const startBrowser = (key: string, persona: string) =>
   api<StartedBrowser>('/browsers/start', { key, method: 'POST', body: { persona } });
+
+/** A playbook's newest finished runs, newest first. */
+export const getPlaybookRuns = (key: string, name: string) =>
+  api<{ /** The runs. */ runs: PlaybookRunRecord[] }>(`/playbooks/${seg(name)}/runs`, { key });
