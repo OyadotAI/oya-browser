@@ -343,12 +343,13 @@ What the key can do at once, free:
   https://oyabrowser.com/#download, then connect it without anyone typing a key:
   `POST /api/pairing` (Bearer api_key) → { "code" }, then open
   `oya://connect?code=CODE&server=wss://oyabrowser.com/ws` (macOS: `open "<link>"`).
-- Any browser you bring: `POST /api/browsers/connect` with a CDP URL, or a
-  vendor (Browserbase, Steel, Anchor, Browser Use) on your own vendor key.
+- Any browser you bring: `POST /api/browsers/start` with `provider: "cdp"` and
+  its `wsUrl`, or a vendor (Browserbase, Steel, Anchor, Browser Use) on your own
+  vendor key.
 - MCP, playbooks, personas and everything else on the key.
 
-What needs a person: Oya Cloud browsers (`provider: "oya-cloud"`, and
-`POST /api/browsers/provision`). Until a person claims the key they answer
+What needs a person: Oya Cloud browsers (`POST /api/browsers/start` with
+`provider: "oya-cloud"`). Until a person claims the key they answer
 403 with `code: "claim_required"` and the `claim_url`. Send claim_url to the
 person whose email you gave; opening it while signed in to Oya adds the key to
 their account and unlocks cloud browsers. The key itself does not change.

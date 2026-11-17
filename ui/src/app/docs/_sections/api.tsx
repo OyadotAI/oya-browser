@@ -3,6 +3,7 @@
  */
 'use client';
 
+import { SITE_URL } from '@/lib/site';
 import type { ReactNode } from 'react';
 import { CodeBlock, InlineCode, SectionHeading, Table } from '../_docs/blocks';
 
@@ -34,11 +35,6 @@ const REST_API_ROWS_1: ReactNode[][] = [
     <span key="dsb">
       Bulk: <InlineCode>{`{ "ids": [...] }`}</InlineCode> or <InlineCode>{`{ "all": true }`}</InlineCode>
     </span>,
-  ],
-  [
-    <InlineCode key="mf">GET</InlineCode>,
-    <InlineCode key="ef">/fleet</InlineCode>,
-    'Totals by health, provider and persona; usage and limits',
   ],
   [
     <InlineCode key="m4">POST</InlineCode>,
@@ -114,7 +110,6 @@ const REST_API_ROWS_1: ReactNode[][] = [
     <InlineCode key="eu">/usage</InlineCode>,
     "This key's usage, bucketed by hour",
   ],
-  [<InlineCode key="ma">GET</InlineCode>, <InlineCode key="ea">/audit</InlineCode>, "This key's audit history"],
   [
     <InlineCode key="m8">GET</InlineCode>,
     <InlineCode key="e8">/config</InlineCode>,
@@ -227,7 +222,12 @@ function RestApi() {
         <a href="/openapi.json" className="text-accent hover:text-accent-hover transition-colors">
           /openapi.json
         </a>
-        . For the full route list, including auth, pool, cookies and admin config, read the REST API section of{' '}
+        . Browse every route in the{' '}
+        {/* Absolute: the Markdown twins are cut from this text, and a relative /docs link would break there. */}
+        <a href={`${SITE_URL}/docs/api/reference`} className="text-accent hover:text-accent-hover transition-colors">
+          interactive reference
+        </a>
+        , or read the REST API section of{' '}
         <a href="/llms.txt" className="text-accent hover:text-accent-hover transition-colors">
           oyabrowser.com/llms.txt
         </a>
