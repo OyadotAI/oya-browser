@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.249](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.249) · 2026-11-18
+
 ### Added
 
 - [A BAA page](https://oyabrowser.com/baa): how to get a Business Associate Agreement for HIPAA mode (on Oya Cloud on request, or self-hosted in your own cloud), what HIPAA mode changes, where Oya Cloud runs PHI on Google Cloud, and the evidence available on request.
