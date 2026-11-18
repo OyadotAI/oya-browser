@@ -3,6 +3,7 @@
  * finds and jumps, Escape clears it, "/" focuses it, and the sidebar and
  * in-page links navigate.
  */
+import { STACK_HEADING, STACK_LINES } from '@/app/_home/stack-content';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -101,6 +102,12 @@ describe('DocsPage', () => {
     expect(prompts[0].textContent).toContain('instead of Chrome');
     expect(prompts[2].textContent).toContain('hand the tab back');
     expect(section.textContent).toContain('Expected: all 32 tools listed without signing in');
+  });
+
+  it("leads with the one line each existing stack changes, without taking the quickstart's place", () => {
+    render(<DocsPage />);
+    const stack = screen.getByRole('region', { name: STACK_HEADING });
+    for (const { line } of STACK_LINES) expect(stack.textContent).toContain(line);
   });
 
   it('opens on the quickstart, ahead of the architecture', () => {
