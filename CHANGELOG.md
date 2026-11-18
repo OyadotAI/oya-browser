@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.246](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.246) · 2026-11-18
+
 ### Fixed
 
 - Releases were blocked by a high-severity advisory in picomatch (GHSA-fc5q-39xc-vjpf) that has no fixed version yet. It reaches the server only through the Daytona SDK's image builder, which Oya never calls, so the dependency audit now allows it by id until a fix ships.
