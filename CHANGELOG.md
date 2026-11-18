@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.245](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.245) · 2026-11-18
+
 ### Added
 
 - Two pages for people choosing an AI browser: [the browser for Claude Code, Codex and Cursor](https://oyabrowser.com/browser-for-claude-code) and [an AI browser that works with ChatGPT and Claude](https://oyabrowser.com/ai-browser-chatgpt-claude).
