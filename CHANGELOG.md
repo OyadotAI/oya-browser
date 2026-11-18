@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Two pages for people choosing an AI browser: [the browser for Claude Code, Codex and Cursor](https://oyabrowser.com/browser-for-claude-code) and [an AI browser that works with ChatGPT and Claude](https://oyabrowser.com/ai-browser-chatgpt-claude).
+
+### Changed
+
+- The home page title and description are shorter, and each payer portal page's title now starts with what it automates (for example, "Payer portal automation for portals with no API").
+
 ## [1.0.244](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.244) · 2026-11-17
 
 ### Added
