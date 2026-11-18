@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.253](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.253) · 2026-11-18
+
 ### Changed
 
 - Extended the forest, ivory and lime design across the website, documentation, authentication and console. Mobile navigation and full scrolling tables keep every destination and column available; the landing diagram has a separate routing lane, and documentation anchors honor reduced motion.
