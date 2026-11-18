@@ -27,6 +27,20 @@ def _jar(persona_id: str) -> str:
     return f"/api/pool/cookies?persona={segment(persona_id)}"
 
 
+def _camel(name: str) -> str:
+    """A keyword as the API spells it: max_concurrent -> maxConcurrent."""
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _merged(options: dict[str, Any] | None, fields: dict[str, Any]) -> dict[str, Any]:
+    """A dict and keywords as one body, the keywords in the API's spelling and winning.
+
+    So create(name=...) reads like browser.start(), and a 0.2.x create({...}) call still works.
+    """
+    return {**(options or {}), **{_camel(k): v for k, v in fields.items()}}
+
+
 class Personas(Namespace):
     """oya.personas: find, create and change identities, their second factors, site logins and cookies."""
 
@@ -38,17 +52,20 @@ class Personas(Namespace):
         """One persona."""
         return self._do(Call("GET", _persona(persona_id)))
 
-    def create(self, options: dict[str, Any] | None = None) -> Any:
-        """A new identity; its device is chosen here and fixed for life (preview() shows what a choice makes)."""
-        return self._do(Call("POST", "/api/personas", options or {}))
+    def create(self, options: dict[str, Any] | None = None, **fields: Any) -> Any:
+        """A new identity, as keywords (name=, prefs=, proxy=, max_concurrent=) or a dict.
 
-    def update(self, persona_id: str, changes: dict[str, Any]) -> Any:
-        """Name, concurrency cap and proxy hint. Never the device: clone for that."""
-        return self._do(Call("PUT", _persona(persona_id), changes))
+        Its device is chosen here and fixed for life; preview() shows what a choice makes.
+        """
+        return self._do(Call("POST", "/api/personas", _merged(options, fields)))
 
-    def clone(self, persona_id: str, options: dict[str, Any] | None = None) -> Any:
-        """A new persona of the same kind of device: same choices, fresh identity, empty jar."""
-        return self._do(Call("POST", _persona(persona_id, "/clone"), options or {}))
+    def update(self, persona_id: str, changes: dict[str, Any] | None = None, **fields: Any) -> Any:
+        """Name, concurrency cap and proxy hint, as keywords or a dict. Never the device: clone for that."""
+        return self._do(Call("PUT", _persona(persona_id), _merged(changes, fields)))
+
+    def clone(self, persona_id: str, options: dict[str, Any] | None = None, **fields: Any) -> Any:
+        """A new persona of the same kind of device, as keywords or a dict: same choices, fresh identity, empty jar."""
+        return self._do(Call("POST", _persona(persona_id, "/clone"), _merged(options, fields)))
 
     def preview(self, prefs: dict[str, Any] | None = None) -> Any:
         """The fingerprint these choices would produce. Persists nothing."""

@@ -183,6 +183,17 @@ describe('playbook routes', () => {
       assert.equal((await as('GET', `/runs/${submitted.body.id}`)).body.status, 'succeeded');
     });
 
+    it('reads null data and secrets on a run as none, as the Python SDK sends them', async () => {
+      const res = await as('POST', `/browsers/${BROWSER}/runs`, {
+        prompt: 'x',
+        playbook: 'y',
+        data: null,
+        secrets: null,
+      });
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /exactly one of prompt or playbook/, 'got past the data check');
+    });
+
     it('refuses a run with both a prompt and a playbook', async () => {
       const res = await as('POST', `/browsers/${BROWSER}/runs`, { prompt: 'x', playbook: 'y' });
       assert.equal(res.status, 400);

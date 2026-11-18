@@ -18,9 +18,11 @@
   gap: 6px 20px;
   align-items: baseline;
   padding: 14px 16px;
-  border: 1px solid var(--border);
+  /* The landing page's own tokens: the global --card and --border are the dark theme's, which put dark text on a
+     near-black card here. */
+  border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  background: var(--card);
+  background: var(--surface);
 }
 .who {
   font-weight: 500;

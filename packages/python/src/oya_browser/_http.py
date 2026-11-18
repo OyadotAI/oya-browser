@@ -3,7 +3,7 @@
 Errors come back as OyaError with the server's message, so a caller reads "Browser abc not found", not a status code.
 """
 
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import quote
 
 import httpx
@@ -22,6 +22,47 @@ def segment(value: object, field: str = "id") -> str:
     if "/" in value or value in (".", ".."):
         raise ValueError(f"{field} must be a single path segment, not {value!r}")
     return quote(value, safe="")
+
+
+class ModelOptions(TypedDict, total=False):
+    """The model behind ask(), extract(), runs and healed replays, for this client only; never saved to the key."""
+
+    provider: str
+    """openai, anthropic, gemini, vertex, chatgpt or openrouter."""
+    name: str
+    """The model's name, e.g. claude-sonnet-5."""
+    api_key: str
+    """Your own key for that provider; left out, the key's saved credential is used, for the same provider."""
+
+
+#: Each model option and the header the server reads it from (server/src/modules/config/request-llm.ts).
+_MODEL_HEADERS = (("provider", "X-Oya-Llm-Provider"), ("name", "X-Oya-Llm-Model"), ("api_key", "X-Oya-Llm-Api-Key"))
+
+#: The lowest printable ASCII character; tab is the one control character a header may carry.
+_SPACE, _TILDE, _TAB = 0x20, 0x7E, 0x09
+
+
+def model_headers(model: ModelOptions | None) -> dict[str, str]:
+    """The model option as the headers the server reads it from on every call.
+
+    Headers, so background runs and heals started by any call carry it too. A value httpx cannot send is refused
+    here, by position, never echoed.
+    """
+    out: dict[str, str] = {}
+    for field, header in _MODEL_HEADERS:
+        value = (model or {}).get(field)
+        if value:
+            out[header] = _header_safe(str(value).strip(), f"model.{field}")
+    return out
+
+
+def _header_safe(value: str, field: str) -> str:
+    """`value`, or a ValueError naming the field and the first character a header cannot carry."""
+    for i, ch in enumerate(value):
+        code = ord(ch)
+        if not (_SPACE <= code <= _TILDE or code == _TAB):
+            raise ValueError(f"{field} has a character HTTP headers cannot carry at position {i + 1} (U+{code:04X}).")
+    return value
 
 
 def _headers(origin: Origin, extra: dict[str, str] | None) -> dict[str, str]:

@@ -201,6 +201,15 @@ describe('chat', () => {
     assert.match(res.body.error, /^data must map names/);
   });
 
+  it('reads null data and secrets as none, as the Python SDK sends them', async () => {
+    const res = await talk({ messages: 'hi', data: null, secrets: null });
+    assert.deepEqual(
+      [res.statusCode, res.body],
+      [400, { error: 'messages array required' }],
+      'got past the data check',
+    );
+  });
+
   it('refuses a schema that is not a JSON object', async () => {
     for (const schema of ['object', [1], null]) {
       const res = await talk({ messages: [], schema });

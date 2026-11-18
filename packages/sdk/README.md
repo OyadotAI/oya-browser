@@ -473,7 +473,7 @@ const oya = new Oya({
 | `ask(prompt, { data?, secrets? }?)`             | `Promise<string>`                            | Natural-language AI driving using key's configured model |
 | `extract(prompt, schema, { data?, secrets? }?)` | `Promise<T>`                                 | The same, answered as data in the shape of a JSON schema |
 | `analyze()`                                     | `Promise<Analysis>`                          | Returns markdown representation and numbered elements    |
-| `elements()`                                    | `Promise<Element[]>`                         | Returns only visible interactable elements               |
+| `elements()`                                    | `Promise<Element[]>`                         | Only the elements in view now; scroll to reach the rest  |
 | `click(elementId)`                              | `Promise<void>`                              | Click element by numeric ID from `analyze()`             |
 | `type(elementId, text)`                         | `Promise<{ suggestions_visible?: boolean }>` | Type text into specified element                         |
 | `pressKey(key)`                                 | `Promise<void>`                              | Dispatch keyboard key event (e.g. `'Enter'`)             |
