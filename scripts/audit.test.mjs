@@ -38,8 +38,14 @@ describe('the dependency audit', () => {
   });
 
   it('no longer exempts the advisories removed by the dependency security update', () => {
-    assert.deepEqual(ALLOWED, {});
+    assert.equal(Object.hasOwn(ALLOWED, 'GHSA-vfj7-8cjw-p6xm'), false);
     assert.equal(blocking(report(advisory('GHSA-vfj7-8cjw-p6xm', 'high', 'braces'))).length, 1);
+  });
+
+  it('exempts only the picomatch advisory that has no fixed release, and says why', () => {
+    assert.deepEqual(Object.keys(ALLOWED), ['GHSA-fc5q-39xc-vjpf']);
+    for (const reason of Object.values(ALLOWED)) assert.ok(reason.length > 0);
+    assert.deepEqual(blocking(report(advisory('GHSA-fc5q-39xc-vjpf', 'high', 'picomatch'))), []);
   });
 
   it('counts an advisory reached through several packages once, and skips the names that only point to it', () => {
