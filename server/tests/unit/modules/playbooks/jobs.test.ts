@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { ownDataDir } from '../../support/data-dir.ts';
 
 ownDataDir();
-const { runJob } = await import('../../../../src/modules/playbooks/jobs.ts');
+const { runJob, bringsLogin } = await import('../../../../src/modules/playbooks/jobs.ts');
 const { scriptedBrowser, stubLlm, textReply } = await import('../../support/agent.ts');
 const { registry } = await import('../../../../src/modules/browsers/registry.ts');
 
@@ -89,5 +89,42 @@ describe('runJob', () => {
       runJob(job(), async () => 'done'),
       { message: 'The agent hit its step limit without finishing' },
     );
+  });
+});
+
+describe('bringsLogin', () => {
+  const job = (over) => ({
+    key: 'k',
+    browserId: 'b',
+    pb: null,
+    prompt: '',
+    data: {},
+    secrets: {},
+    autoHeal: true,
+    ...over,
+  });
+
+  it('is true for a run given secrets to type', () => {
+    assert.equal(bringsLogin(job({ secrets: { password: 'x' } })), true);
+  });
+
+  it("is true for a replay given values for its playbook's secret variables in data", () => {
+    assert.equal(bringsLogin(job({ pb: { secrets: ['password'] }, data: { password: 'x' } })), true);
+  });
+
+  it('is true for a replay whose secret was saved with the playbook and left out by the caller', () => {
+    assert.equal(bringsLogin(job({ pb: { secrets: ['password'], defaults: { password: 'saved' } }, data: {} })), true);
+  });
+
+  it('is true for a workflow whose variable is declared secret and given a value', () => {
+    assert.equal(
+      bringsLogin(job({ pb: { variables: { password: { secret: true } } }, data: { password: 'x' } })),
+      true,
+    );
+  });
+
+  it('is false for a run with no secrets, or a replay whose secret variables were not given', () => {
+    assert.equal(bringsLogin(job({ data: { name: 'Ada' } })), false);
+    assert.equal(bringsLogin(job({ pb: { secrets: ['password'] }, data: { name: 'Ada' } })), false);
   });
 });

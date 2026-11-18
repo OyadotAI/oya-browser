@@ -41,7 +41,7 @@ const shownDefaults = (pb) => {
  * on a workflow's variables, so a form that sets its values (a routine's) can say
  * the saved value is used instead of asking for it again.
  */
-const secretNames = (pb): string[] => {
+export const secretNames = (pb): string[] => {
   const declared = Object.entries(pb.variables || {}).filter(([, v]: [string, any]) => v?.secret);
   return [...new Set([...(pb.secrets ?? []).map(String), ...declared.map(([k]) => k)])];
 };

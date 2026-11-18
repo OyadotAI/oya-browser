@@ -111,12 +111,24 @@ async function discover(url) {
   return found.href;
 }
 
+/**
+ * Why a vendor cannot start, and where to fix it: the key's own setting first (a hosted
+ * user cannot set a server variable), then the variable for a self-hosted server.
+ */
+const notConfigured = (provider: string): string => {
+  const field = `${provider}_api_key`;
+  return (
+    `${provider} is not configured. Add ${field} in Settings > Browsers, or call oya.config.set({ ${field}: '...' }). ` +
+    `Self-hosting: set ${provider.toUpperCase()}_API_KEY on the server.`
+  );
+};
+
 /** The vendor's config and API key; unknown or unconfigured vendors are refused. */
 function vendorFor(provider, env) {
   const cfg = catalog(env)[provider];
   if (!cfg?.createUrl) fail(`Unknown browser provider: ${provider}`, Status.BAD_REQUEST);
   const key = keyFor(provider, env);
-  if (!key) fail(`${provider} is not configured, set ${provider.toUpperCase()}_API_KEY`, Status.CONFLICT);
+  if (!key) fail(notConfigured(provider), Status.CONFLICT);
   return { cfg, key };
 }
 

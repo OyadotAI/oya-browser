@@ -91,6 +91,7 @@ describe('login.complete', () => {
     const result = await login.complete(evaluate, 'p1', { ...OPTIONS, domain: 'elsewhere.example' });
     assert.equal(result.method, 'handoff');
     assert.match(result.error, /No credentials are stored for elsewhere\.example/);
+    assert.equal(result.missing, true, 'marked as nothing stored, so a run with its own login can take it');
     assert.match((await login.complete(evaluate, 'p1', { browserId: 'b1' })).error, /for this site/);
   });
 

@@ -6,6 +6,7 @@ import { inCallerOrOwnLane } from '../browsers/connection/lane.ts';
 import { runChat } from '../agent/chat.ts';
 import { play } from './service.ts';
 import { checkpointFor, challengesFor } from './checkpoint.ts';
+import { secretNames } from './catalog.ts';
 
 /** What a run was submitted with. */
 export interface Job {
@@ -41,10 +42,24 @@ export interface StepEvent {
 export async function runJob(job: Job, requestHuman) {
   // Each run is its own lane, or its caller's: on an Oya desktop it drives a tab of its own, beside other agents.
   return inCallerOrOwnLane(job.browserId, () => {
-    const checkpoint = checkpointFor(job.key, job.browserId, requestHuman);
+    const checkpoint = checkpointFor(job.key, job.browserId, requestHuman, { ownLogin: bringsLogin(job) });
     return job.pb ? replayJob(job, checkpoint, requestHuman) : runPrompt(job, checkpoint, requestHuman);
   });
 }
+
+/**
+ * Whether the run brings its own login: secrets to type, or a replay with a value for one of
+ * the playbook's secrets, given in `data` (a replay takes every variable there) or saved with
+ * the playbook, which a replay types when the caller leaves it out.
+ */
+export function bringsLogin({ pb, data, secrets }: Job): boolean {
+  if (Object.keys(secrets ?? {}).length) return true;
+  if (!pb) return false;
+  return secretNames(pb).some((name) => given(data?.[name]) || given(pb.defaults?.[name]));
+}
+
+/** Whether a variable has a value to type. */
+const given = (value: unknown): boolean => value !== undefined && value !== null && value !== '';
 
 /** Replays the job's playbook with its data and secrets as the variables. */
 function replayJob({ key, browserId, pb, data, secrets, autoHeal, onStep }: Job, checkpoint, requestHuman) {
