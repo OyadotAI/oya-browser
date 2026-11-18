@@ -92,10 +92,14 @@ def challenge(browser_id: str, kind: str) -> Call:
 
 
 def ask(browser_id: str, prompt: str, data: Any, secrets: Any, schema: Any = None) -> Call:
-    """A task in plain language; with `schema`, the answer comes back as data in that shape."""
-    body: dict[str, Any] = {"messages": [{"role": "user", "content": prompt}], "data": data, "secrets": secrets}
-    if schema is not None:
-        body["schema"] = schema
+    """A task in plain language; with `schema`, the answer comes back as data in that shape.
+
+    Values left out are left out of the body, as the TypeScript SDK's undefined is: the server refuses
+    "data": null and "secrets": null, so a plain ask() with neither failed.
+    """
+    fields = {"data": data, "secrets": secrets, "schema": schema}
+    body: dict[str, Any] = {"messages": [{"role": "user", "content": prompt}]}
+    body.update({k: v for k, v in fields.items() if v is not None})
     return Call("POST", f"/api/browsers/{segment(browser_id)}/chat", body, AGENT_TIMEOUT_S)
 
 
