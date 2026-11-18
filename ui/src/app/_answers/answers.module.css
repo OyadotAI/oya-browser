@@ -1,0 +1,28 @@
+/* Comparison tables on answer pages. The trust table hides its second column on phones; a
+   comparison cannot drop a vendor, so it scrolls sideways instead and keeps the row names in view. */
+.scroll {
+  margin-top: 20px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.compare {
+  min-width: 640px;
+  margin-top: 0;
+}
+.compare caption {
+  padding-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+}
+.compare th:first-child,
+.compare td:first-child {
+  position: sticky;
+  left: 0;
+  background: var(--background);
+  font-weight: 500;
+}
+.sources li {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
