@@ -73,10 +73,10 @@ function TabStrip({ tab, open }: Pick<TopBarProps, 'tab' | 'open'>) {
 /** Search remains reachable from every section without duplicating customer selection state. */
 export function TopBar({ tab, open, l }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-40 border-b border-border bg-bg/90 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-border bg-bg">
       <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 pt-4 lg:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="font-display text-xl tracking-tight text-text">Admin</h1>
+          <h1 className="text-2xl font-medium tracking-tight text-text">Admin</h1>
           <SearchBox l={l} onSearch={() => open('customers')} />
         </div>
         <TabStrip tab={tab} open={open} />

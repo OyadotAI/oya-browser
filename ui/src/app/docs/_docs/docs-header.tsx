@@ -18,15 +18,15 @@ interface Props {
 /** The top bar. */
 export function DocsHeader({ onOpenMenu }: Props) {
   return (
-    <header className="fixed inset-x-0 top-0 z-40 flex h-[72px] items-center justify-between gap-4 border-b border-border bg-bg/95 px-4 backdrop-blur-md lg:px-8">
+    <header className="fixed inset-x-0 top-0 z-40 flex h-[72px] items-center justify-between gap-4 border-b border-border bg-bg px-4 lg:px-8">
       <div className="flex items-center gap-5">
         <OyaWordmark />
         <span className="hidden border-l border-border pl-5 text-[13px] text-text-muted sm:block">Documentation</span>
       </div>
       <div className="flex items-center gap-3">
         <ThemeToggle />
-        <Link href="/dashboard" className="btn-ghost h-9 text-[12px]">
-          Open console <ArrowUpRight size={14} />
+        <Link href="/dashboard" className="btn-ghost h-9 text-[12px]" aria-label="Open console" title="Open console">
+          <span className="hidden min-[375px]:inline">Open console</span> <ArrowUpRight size={14} />
         </Link>
         {onOpenMenu && (
           <button className="btn-icon lg:hidden" onClick={onOpenMenu} aria-label="Open documentation menu">

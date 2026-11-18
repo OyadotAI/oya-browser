@@ -19,7 +19,7 @@ export default function DashboardPage() {
   useConnectDesktop(apiKey);
   const onboarding = view.showOnboarding && config && apiKey;
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-bg">
+    <div className="workspace-page flex h-dvh flex-col overflow-hidden bg-bg">
       <Header apiKey={apiKey} setApiKey={c.openProject} onOpenSettings={() => patch({ showSettings: true })} />
       {onboarding ? (
         <Onboarding

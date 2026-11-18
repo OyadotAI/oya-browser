@@ -3,6 +3,7 @@
  * and the caveats, in the release notes' column style with the trust center's table. Numbers come
  * only from the post's data, which a test pins to its source document.
  */
+import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
 import styles from '../page.module.css';
 import notes from '../release-notes/release-notes.module.css';
@@ -74,10 +75,12 @@ export function PostPage({ post }: { /** What the page shows. */ post: ResearchP
       <div className={styles.container}>
         <SiteHeader />
         <main className={notes.main}>
-          <h1>{post.title}</h1>
-          <p className={notes.lead}>
-            Run {post.date} · {post.setup}
-          </p>
+          <Reveal preset="public">
+            <h1>{post.title}</h1>
+            <p className={notes.lead}>
+              Run {post.date} · {post.setup}
+            </p>
+          </Reveal>
           <Body post={post} />
         </main>
         <SiteFooter />

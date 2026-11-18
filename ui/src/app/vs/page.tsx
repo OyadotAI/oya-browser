@@ -1,4 +1,5 @@
 /** /vs: the index of comparison pages, so a buyer weighing Oya against another vendor finds them in one click. */
+import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import styles from '../page.module.css';
@@ -27,14 +28,16 @@ export default function Compare() {
       <div className={styles.container}>
         <SiteHeader />
         <main className={notes.main}>
-          <h1>Compare</h1>
-          <p className={notes.lead}>How Oya Browser differs from other browsers for AI agents.</p>
-          {COMPARISONS.map(({ path, title, lead }) => (
+          <Reveal preset="public">
+            <h1>Compare</h1>
+            <p className={notes.lead}>How Oya Browser differs from other browsers for AI agents.</p>
+          </Reveal>
+          {COMPARISONS.map(({ path, title, lead, hero }) => (
             <section key={path} className={notes.release}>
               <h2>
-                <Link href={path}>{title}</Link>
+                <Link href={path}>{hero?.headline ?? title}</Link>
               </h2>
-              <p>{firstSentence(lead)}</p>
+              <p>{hero?.paragraphs[0] ?? firstSentence(lead)}</p>
             </section>
           ))}
         </main>

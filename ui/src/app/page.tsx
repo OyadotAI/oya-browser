@@ -7,16 +7,14 @@ import { headers } from 'next/headers';
 import { Kit } from './_home/kit';
 import { Nav } from './_home/nav';
 import { Hero } from './_home/hero';
-import { EnterpriseCapabilities } from './_home/enterprise-capabilities';
 import { ProductDemo } from './_home/product-demo';
-import { ControlPlaneOverview } from './_home/control-plane-overview';
+import { Operations } from './_home/operations';
+import { WorkflowStory } from './_home/workflow-story';
 import { Statement } from './_home/statement';
 import { BringYourStack } from './_home/bring-your-stack';
-import { Integrations } from './_home/integrations';
 import { Faq } from './_home/faq';
 import { Closing } from './_home/closing';
 import landing from './_home/landing.module.css';
-import controlPlane from './_home/control-plane.module.css';
 
 /** Classifies the public page without changing document-wide presentation state. */
 export const metadata: Metadata = { other: { 'site-kind': 'software', 'page-type': 'software' } };
@@ -35,20 +33,13 @@ export default async function Home() {
             <ProductDemo />
           </div>
         </div>
+        <WorkflowStory />
         <BringYourStack />
-        <Statement />
-        <section className="section" aria-labelledby="architecture-h">
-          <div className="wrap">
-            <div className={controlPlane.sectionHeading}>
-              <h2 id="architecture-h">Operate those workflows across agents and browsers.</h2>
-              <p>The control plane connects your applications, browser fleet and healthcare portals.</p>
-            </div>
-            <ControlPlaneOverview />
-          </div>
-        </section>
-        <EnterpriseCapabilities />
-        <Integrations />
-        <Faq />
+        <Operations />
+        <div className={landing.trustSection}>
+          <Statement />
+          <Faq />
+        </div>
       </main>
       <Closing />
     </div>

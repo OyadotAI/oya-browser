@@ -121,9 +121,13 @@ function Healing() {
     <>
       <Sub id="healing">When a page changes</Sub>
       <p className="mb-3">
-        If a step no longer fits the page, the agent finishes the task from there and its fix replaces the broken steps,
-        so the next replay runs clean. The result says <InlineCode>healed: true</InlineCode>. Pass{' '}
+        On server replay, if a step no longer fits the page, the agent finishes the task from there and its fix replaces
+        the broken steps, so the next replay runs clean. The result says <InlineCode>healed: true</InlineCode>. Pass{' '}
         <InlineCode>{'{ autoHeal: false }'}</InlineCode> to throw the step&apos;s error instead.
+      </p>
+      <p className="mb-3">
+        On desktop, alternative-locator repairs are saved as separate paused drafts for review. The original workflow
+        stays unchanged; assertions are never auto-repaired.
       </p>
       <Sub id="replay-sign-in">Signing in on replay</Sub>
       <p className="mb-3">

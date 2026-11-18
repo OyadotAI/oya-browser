@@ -36,3 +36,10 @@ export const CONTROL_STAGE_COUNT = 4;
 export const CONTROL_TICK_MS = 1800;
 /** Ownership examples retain only a bounded recent history. */
 export const HANDOFF_EVENT_LIMIT = 4;
+
+/** Intrinsic dimensions reserve the generated hero artwork's space before it loads. */
+export const HERO_ART_WIDTH = 1536;
+/** The sculpture's landscape framing stays consistent across responsive image sources. */
+export const HERO_ART_HEIGHT = 1024;
+/** The closing mark is decorative and intentionally crops against its panel edge. */
+export const CLOSING_MARK_SIZE = 420;

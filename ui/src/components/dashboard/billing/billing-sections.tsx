@@ -20,7 +20,7 @@ function Go({
   /** Its text. */ children: React.ReactNode;
   /** The accent style. */ primary?: boolean;
 }) {
-  const look = primary ? 'bg-accent text-white' : 'border border-border text-text hover:bg-text/5';
+  const look = primary ? 'bg-accent text-accent-foreground' : 'border border-border text-text hover:bg-text/5';
   return (
     <button onClick={onClick} className={`rounded-md px-3 py-1.5 text-xs font-medium ${look}`}>
       {children}

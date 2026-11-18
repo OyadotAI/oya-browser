@@ -51,7 +51,7 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
             <button
               key={p.id}
               onClick={() => void upgrade(p.id)}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white"
+              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground"
             >
               {p.label} {p.price}
             </button>

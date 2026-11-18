@@ -5,8 +5,8 @@ import { repository } from './content';
 export const CAPABILITY_GROUPS = [
   {
     id: 'orchestrate',
-    title: 'Orchestrate',
-    summary: 'Operate the fleet, not individual scripts.',
+    title: 'Run work',
+    summary: 'Queue tasks and choose browser capacity.',
     detail: 'Execution providers, queues, concurrency, estimated budgets, playbooks and scheduled routines.',
     items: [
       ['Execution choice', 'Oya Cloud, self-hosted browsers and connected providers behind common interfaces.'],
@@ -20,8 +20,8 @@ export const CAPABILITY_GROUPS = [
   },
   {
     id: 'govern',
-    title: 'Govern',
-    summary: 'Set the boundaries agents work within.',
+    title: 'Set access',
+    summary: 'Choose who can act and which hosts can be reached.',
     detail:
       'Roles, scoped credentials, stable personas, sealed credentials, host policies and model-provider controls.',
     items: [
@@ -36,8 +36,8 @@ export const CAPABILITY_GROUPS = [
   },
   {
     id: 'observe',
-    title: 'Observe',
-    summary: 'See the run. Intervene when needed.',
+    title: 'Review runs',
+    summary: 'Watch, take control and inspect the audit trail.',
     detail: 'Live view, human control, hash-chained audit history and lifecycle webhooks.',
     items: [
       ['Human control', 'Watch sessions, take control and explicitly resume the agent when you are ready.'],

@@ -1,0 +1,67 @@
+/** Finite interaction feedback complements native scrolling and keeps reduced-motion layouts settled. */
+.motion-disclosure {
+  margin-top: 20px;
+  border-top: 1px solid var(--line, var(--border));
+}
+.motion-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding-block: 12px;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+.motion-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.motion-disclosure > summary svg {
+  flex: none;
+  transition: transform 180ms ease;
+}
+.motion-disclosure[open] > summary svg {
+  transform: rotate(180deg);
+}
+.motion-disclosure-body {
+  padding-block: 8px 20px;
+}
+.motion-disclosure-body > p + p {
+  margin-top: 16px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .btn-primary,
+  .btn-ghost,
+  .btn-danger,
+  .btn-icon {
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      transform 180ms ease;
+  }
+  :is(.btn-primary, .btn-ghost, .btn-danger, .btn-icon):active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .faq__item > [role='region']:not([hidden]),
+  .workspace-page [role='alert'] {
+    animation: feedback-arrival 180ms ease both;
+  }
+}
+@keyframes feedback-arrival {
+  from {
+    opacity: 0.85;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: no-preference) and (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+}

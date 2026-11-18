@@ -1,37 +1,41 @@
+/** Oya's shared themes and accessible primitives connect public reading pages and operational workspaces. */
 @import 'tailwindcss';
+@import './docs.css';
+@import './motion.css';
+@import './workspace.css';
 
 /* Oya tokens shared with A2ABaseAI/frontend. Secondary text is raised for
    legibility in dense tables; the brand surfaces and primary are identical. */
 :root {
   color-scheme: dark;
-  --background: #0c0c0a;
-  --foreground: rgba(255, 255, 255, 0.88);
-  --primary: #39ed35;
-  --primary-foreground: #0c0c0a;
-  --card: #1c1c18;
-  --elevated: #242420;
-  --sunken: #141410;
-  --border: rgba(255, 255, 255, 0.12);
-  --secondary: rgba(255, 255, 255, 0.76);
-  --muted: rgba(255, 255, 255, 0.64);
-  --dim: rgba(255, 255, 255, 0.5);
+  --background: #081b15;
+  --foreground: #f6f4e8;
+  --primary: #c8f56b;
+  --primary-foreground: #081b15;
+  --card: #103025;
+  --elevated: #173c2f;
+  --sunken: #06150f;
+  --border: #b9d4b82e;
+  --secondary: #d0dacb;
+  --muted: #afc3b5;
+  --dim: #98af9f;
   --info: #6cb4ff;
   --warning: #f5a623;
   --destructive: #ff6b6b;
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  --background: #f4f3ef;
-  --foreground: #0c0c0a;
-  --primary: #157a13;
-  --primary-foreground: #fff;
-  --card: #fff;
-  --elevated: #eceae4;
-  --sunken: #fafaf8;
-  --border: rgba(12, 12, 10, 0.14);
-  --secondary: #45453e;
-  --muted: #62625a;
-  --dim: #72726a;
+  --background: #f6f4e8;
+  --foreground: #10251c;
+  --primary: #235d3a;
+  --primary-foreground: #f6f4e8;
+  --card: #fffdf4;
+  --elevated: #e9eddd;
+  --sunken: #eff1e5;
+  --border: #143f2530;
+  --secondary: #3a4e40;
+  --muted: #526457;
+  --dim: #647565;
   --info: #1d4ed8;
   --warning: #92400e;
   --destructive: #b91c1c;
@@ -64,11 +68,11 @@
   --font-mono: 'Cascadia Code', ui-monospace, 'Source Code Pro', Menlo, Monaco, Consolas, monospace;
 
   --radius-sm: 3px;
-  --radius-md: 4px;
+  --radius-md: 8px;
   --radius-lg: 8px;
-  --radius-xl: 10px;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-elevated: 0 8px 32px rgba(12, 12, 10, 0.12);
+  --radius-xl: 16px;
+  --shadow-card: 0 2px 8px #04100c12;
+  --shadow-elevated: 0 20px 64px -24px #04100c60;
 }
 
 html {
@@ -122,8 +126,8 @@ body {
 
 /* Focus visible. Solid primary: a translucent ring falls under 3:1 in light. */
 :focus-visible {
-  outline: 1px solid var(--primary);
-  outline-offset: 2px;
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
 }
 
 /* Smooth transitions globally */
@@ -150,7 +154,7 @@ textarea {
    Buttons, table rows and inputs read the same everywhere. Numbers are
    tabular so a refreshing column does not jitter. */
 @utility btn-base {
-  @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold tracking-[0.01em] whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  @apply inline-flex h-9 items-center justify-center gap-2 rounded-full px-4 text-[13px] font-medium whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
 }
 @utility btn-primary {
   @apply btn-base bg-accent text-accent-foreground hover:bg-accent-hover;
@@ -531,110 +535,6 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.docs-page main {
-  color: var(--secondary);
-}
-/* Docs prose: a comfortable size and a line short enough to read without losing your place. */
-.docs-page main p,
-.docs-page main li {
-  max-width: 70ch;
-  font-size: 16px;
-  line-height: 1.75;
-}
-.docs-page main .docs-lede {
-  font-size: 18px;
-  line-height: 1.65;
-}
-.docs-page main strong {
-  color: var(--foreground);
-  font-weight: 600;
-}
-.docs-page main td {
-  font-size: 14.5px;
-  line-height: 1.6;
-}
-/* The quickstart's steps, joined by a quiet line from one number to the next. */
-.docs-step::before {
-  content: '';
-  position: absolute;
-  top: 34px;
-  bottom: 6px;
-  left: 13.5px;
-  width: 1px;
-  background: var(--border);
-}
-.docs-step:last-of-type::before {
-  display: none;
-}
-@media (max-width: 640px) {
-  .docs-page main p,
-  .docs-page main li {
-    font-size: 15.5px;
-  }
-  .docs-page main pre {
-    font-size: 12.5px;
-  }
-  .docs-step {
-    padding-left: 38px;
-  }
-}
-.docs-page main table {
-  min-width: 560px;
-}
-.docs-page main h3 {
-  color: var(--foreground);
-  scroll-margin-top: 110px;
-}
-@media (max-width: 767px) {
-  .fleet-data,
-  .profile-data {
-    min-width: 0;
-  }
-  .fleet-data th:nth-child(1) {
-    width: 28px;
-  }
-  .fleet-data th:nth-child(2) {
-    width: 18px;
-  }
-  .fleet-data th:nth-child(3) {
-    width: auto;
-  }
-  .fleet-data th:nth-child(5) {
-    width: 78px;
-  }
-  .fleet-data th:nth-child(10) {
-    width: 64px;
-  }
-  .fleet-data :is(th, td):nth-child(4),
-  .fleet-data :is(th, td):nth-child(6),
-  .fleet-data :is(th, td):nth-child(7),
-  .fleet-data :is(th, td):nth-child(8),
-  .fleet-data :is(th, td):nth-child(9) {
-    display: none;
-  }
-  .fleet-data :is(th, td) {
-    padding-inline: 5px;
-  }
-  .profile-data th:first-child {
-    width: 55%;
-  }
-  .profile-data th:nth-child(2) {
-    width: 45%;
-  }
-  .profile-data :is(th, td):nth-child(n + 3) {
-    display: none;
-  }
-}
-@media (max-width: 767px) {
-  .fleet-data th:nth-child(10) {
-    width: 92px;
-  }
-  .fleet-data td:last-child .btn-icon {
-    width: 40px;
-    height: 40px;
-  }
-}
-
 /* The playbook editor's CodeMirror syntax (classHighlighter's tok-* classes), in the shared code palette. */
 .cm-editor .tok-comment {
   color: #8d9689;

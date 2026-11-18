@@ -5,11 +5,11 @@ test('landing is readable at desktop and mobile widths without changing the app 
   await page.addInitScript(() => localStorage.setItem('oya_theme', 'dark'));
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'Build browser automations on your desktop. Deploy them anywhere.',
+    'Turn repeated portal work into a workflow you can reuse.',
   );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.locator('main').evaluate((el) => getComputedStyle(el.parentElement!).backgroundColor)).toBe(
-    'rgb(255, 255, 255)',
+    'rgb(246, 244, 232)',
   );
   await expect(page.locator('link[href^="/assets/"], script[src^="/assets/"]')).toHaveCount(0);
   const cta = page.locator('section[aria-labelledby="hero-h"]').getByRole('link', { name: 'Book a demo' });
@@ -90,7 +90,7 @@ test('download choices work and the page fits a phone', async ({ page }, testInf
       new RegExp(`${extension}$`),
     );
   }
-  await expect(page.locator('#steps')).toContainText('Record once');
+  await expect(page.locator('#steps')).toContainText('Keep the steps, not just the result.');
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('home-mobile.png'), fullPage: true });

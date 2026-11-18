@@ -59,6 +59,7 @@ import {
 import { SiteFooter } from '@/app/_home/site-footer';
 import { Closing } from '@/app/_home/closing';
 import { AnswerPage } from '@/app/_answers/answer-page';
+import { presentationOf, leadParagraphs } from '@/app/_answers/presentation';
 import { SITE_DESCRIPTION, SITE_URL } from '@/lib/site';
 import sitemap from '@/app/sitemap';
 
@@ -156,10 +157,46 @@ function structuredData(container: HTMLElement) {
 describe.each(PAGES)('/$name', ({ Page, metadata, content }) => {
   afterEach(() => cleanup());
 
-  it('puts the answer under the question, as the first paragraph', () => {
+  it('opens with the task-led story while retaining its metadata separately', () => {
+    const { container } = render(<Page />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(content.hero?.headline ?? content.title);
+    expect([...container.querySelectorAll('[data-lead]')].map((paragraph) => paragraph.textContent).join('')).toBe(
+      content.hero?.paragraphs.join('') ?? content.lead,
+    );
+  });
+
+  it('has an explicit subject visual and narrative paragraphs', () => {
+    const { container } = render(<Page />);
+    const presentation = presentationOf(content.path);
+    expect(presentation).toBeTruthy();
+    expect(container.querySelector('[data-visual-family]')?.getAttribute('data-visual-family')).toBe(
+      presentation?.family,
+    );
+    expect(leadParagraphs(content)).toEqual(content.hero?.paragraphs);
+    expect(content.hero?.headline).not.toBe(content.title);
+    expect(content.hero?.action.href).toBeTruthy();
+  });
+
+  it('shows its complete narrative chapters and preserved comparison criteria', () => {
+    const { container } = render(<Page />);
+    for (const section of content.sections) {
+      expect(container.textContent).toContain(section.body);
+      for (const item of section.items ?? []) expect(container.textContent).toContain(item);
+    }
+    for (const section of content.sections.filter((section) => section.table)) {
+      for (const name of section.table!.columns.filter(Boolean)) expect(container.textContent).toContain(name);
+    }
+  });
+
+  it('connects its opening to the same next action at the story conclusion', () => {
     render(<Page />);
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(content.title);
-    expect(screen.getByText(content.lead)).toBeTruthy();
+    const action = content.hero!.action;
+    const links = screen
+      .getAllByRole('link', { name: action.label })
+      .filter((link) => link.getAttribute('data-track-label')?.startsWith('answer_'));
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link.getAttribute('href')).toBe(action.href);
+    expect(screen.getByText(action.invitation)).toBeTruthy();
   });
 
   it('shows every answer, not collapsed', () => {

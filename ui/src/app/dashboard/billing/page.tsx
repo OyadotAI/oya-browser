@@ -50,11 +50,11 @@ function Body({ s }: { /** The page's state. */ s: ReturnType<typeof useBillingP
 export default function BillingPage() {
   const s = useBillingPage();
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-4 bg-bg p-4 lg:p-6">
+    <main className="workspace-page mx-auto flex min-h-screen max-w-3xl flex-col gap-4 bg-bg p-4 lg:p-6">
       <Link href="/dashboard" className="flex items-center gap-1.5 text-xs text-text-dim hover:text-text">
         <ArrowLeft className="h-3.5 w-3.5" /> Dashboard
       </Link>
-      <h1 className="text-lg font-semibold text-text">Plan &amp; billing</h1>
+      <h1 className="text-3xl font-medium tracking-tight text-text">Plan &amp; billing</h1>
       <Body s={s} />
     </main>
   );

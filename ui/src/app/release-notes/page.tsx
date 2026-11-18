@@ -2,6 +2,7 @@
  * The public release notes: CHANGELOG.md from the repository root, read when the
  * site is built, so the page and the file in the code base never disagree.
  */
+import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Metadata } from 'next';
@@ -79,10 +80,12 @@ export default function ReleaseNotes() {
       <div className={styles.container}>
         <SiteHeader />
         <main className={notes.main}>
-          <h1>Release notes</h1>
-          <p className={notes.lead}>
-            The server, the desktop app, the SDK and the CLI ship together under one version.
-          </p>
+          <Reveal preset="public">
+            <h1>Release notes</h1>
+            <p className={notes.lead}>
+              The server, the desktop app, the SDK and the CLI ship together under one version.
+            </p>
+          </Reveal>
           {releases.filter(hasNews).map((release) => (
             <ReleaseEntry key={release.title} release={release} />
           ))}

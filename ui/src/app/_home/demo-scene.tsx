@@ -12,21 +12,26 @@ import styles from './demo.module.css';
 /** Four visible steps explain how a prompt becomes a repeatable artifact. */
 const STEPS = [
   {
-    title: 'Describe the task',
-    body: 'Send work through MCP or your application.',
+    title: 'Describe the task you already know.',
+    body: 'Start with one case and the information your team would enter.',
     icon: MessageSquareText,
     artifact: false,
   },
-  { title: 'Record once', body: 'Oya records the agent’s portal actions.', icon: MousePointer2, artifact: false },
   {
-    title: 'Save the playbook',
-    body: 'Keep readable Playwright code with variable inputs.',
+    title: 'Watch the agent work through it.',
+    body: 'Follow the portal steps and take control if the task needs you.',
+    icon: MousePointer2,
+    artifact: false,
+  },
+  {
+    title: 'Keep the steps, not just the result.',
+    body: 'A successful task can become a playbook: readable Playwright code with the changing inputs saved as variables.',
     icon: FileCode2,
     artifact: true,
   },
   {
-    title: 'Replay new inputs',
-    body: 'Call the saved workflow through the SDK, without a model.',
+    title: 'Use those steps for the next case.',
+    body: 'Give the saved workflow new inputs. It replays those steps without a model in the loop.',
     icon: Repeat2,
     artifact: false,
   },

@@ -2,8 +2,8 @@
 
 /** Reported prior-authorization times, shown with the same unit and explicit comparison labels. */
 const FIGURES = [
-  ['By hand', '22–26 minutes'],
-  ['With Oya', 'Under 2 minutes'],
+  ['By hand', '22–26'],
+  ['With Oya', 'Under 2'],
 ];
 
 /** Presents the existing customer-reported comparison without overlapping speed metrics. */
@@ -11,7 +11,9 @@ export function Statement() {
   return (
     <section className="section" id="results" aria-labelledby="results-h">
       <div className="wrap comparison-layout">
-        <h2 id="results-h">See what customers report.</h2>
+        <div>
+          <h2 id="results-h">Compare the result with your current process.</h2>
+        </div>
         <div>
           <div role="group" aria-labelledby="prior-auth-time-h">
             <h3 className="comparison-label" id="prior-auth-time-h">
@@ -21,7 +23,10 @@ export function Statement() {
               {FIGURES.map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
-                  <dd>{value}</dd>
+                  <dd>
+                    {value}
+                    <span className="comparison-unit"> minutes</span>
+                  </dd>
                 </div>
               ))}
             </dl>

@@ -1,13 +1,9 @@
 /** Existing navigation destinations, kept separate from disclosure state and presentation. */
 /** The main navigation words and their destinations. */
 export const WORDS = [
-  { word: 'Control plane', href: '#control-plane' },
   { word: 'Workflows', href: '#workflows' },
-  { word: 'Compare', href: '/vs' },
-  { word: 'Research', href: '/research' },
-  { word: 'Audit', href: '#audit' },
   { word: 'Docs', href: '/docs' },
-  { word: 'Questions', href: '#faq' },
+  { word: 'Security', href: '/trust' },
 ];
 
 /** The product menu's original groups, descriptions and links. */
@@ -25,6 +21,7 @@ export const PRODUCT = [
     links: [
       ['Record once', 'A run saved as Playwright code', '#playbooks'],
       ['Three steps', 'Run, save, replay', '#steps'],
+      ['Control plane', 'Operate, govern and observe workflows', '#control-plane'],
       ['Audit trail', 'Every action hash-chained', '#audit'],
     ],
   },
