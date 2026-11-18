@@ -61,13 +61,49 @@ Stagehand v3's `cdpUrl`. Stagehand v4 runs inside its own browser extension, whi
 | | |
 |---|---|
 | `goto(url)`, `analyze(format=None)`, `elements()` | Open a page; read it as TOON, markdown or JSONL with numbered elements |
-| `click(id)`, `type(id, text)`, `press_key(key)`, `scroll(direction)`, `wait_for(selector)` | Act on elements by their number from `analyze()` |
+| `click(id)`, `type(id, text)`, `press_key(key)`, `wait_for(selector)` | Act on elements by their number from `analyze()` |
+| `scroll(direction, amount=None, at=None)` | Scroll the page, or aim at an inner scroller with `at=(x, y)` |
+| `url()`, `tabs()`, `open_tab(url=None)`, `switch_tab(id)`, `close_tab(id)` | Tabs |
+| `handle_dialog(accept, prompt_text=None)` | Answer a `confirm()` or `prompt()` holding the page |
 | `ask(prompt, data=, secrets=)`, `extract(prompt, schema)` | A task in plain language; `secrets` are typed but never shown to the model |
 | `to_playbook(name)`, `play(name, data, auto_heal=True)` | Save the last task; replay it with no model, repairing a step a page changed |
+| `submit(prompt)` or `submit(playbook=...)` | A background run with `on_success`, `on_failure`, `on_human_attention`, `on_healed` callbacks |
+| `live_view_url()`, `live_stream_url()`, `share_url(control=False)`, `revoke_share(id)` | Watch it, embed its frames, or hand a person a scoped, expiring link |
 | `solve_captcha()`, `complete_mfa()`, `screenshot()`, `status()`, `stop()` | |
 
-`oya.browser`: `start(persona=, provider=, name=)`, `get(id)`, `list()`, `stop(ids)`, `stop_all()`.
-`oya.playbooks`: `list()`, `get(name)`, `export(name)`, `remove(name)`.
+`oya.browser.start(captcha="auto")` makes every `goto()` clear a CAPTCHA, raising `OyaError` (409) when one needs
+a person.
+
+`submit()` on `AsyncOya` polls in the background as soon as it returns; `await run.done` for the result. The
+sync client has no background to poll in without a thread, so `run.wait()` polls, fires the same callbacks in the
+same order, and returns the result or raises. Answer an attention request with `request["respond"]()`.
+
+```python
+run = browser.submit(playbook="prior-auth", data={"member": "M1"},
+                     on_human_attention=lambda req: print("Needs you:", req["liveViewUrl"]))
+result = run.wait()
+```
+
+Files ride in `data`: `browser.ask("Attach my resume", data={"resume": file("cv.pdf")})`, up to
+`MAX_FILE_BYTES` (10MB).
+
+## The client
+
+| | |
+|---|---|
+| `oya.browser` | `start(persona=, provider=, name=, captcha=)`, `get(id)`, `list()`, `stop(ids)`, `stop_all()` |
+| `oya.desktop` | `connect(persona=None)`: the person's own desktop browser with their logins, paired if needed |
+| `Oya.signup(email)` | An agent's own key, saved to `~/.oya/config.json` |
+| `oya.playbooks` | `list()`, `get(name)`, `promote(name)`, `export(name)`, `import_(doc, name=, overwrite=)`, `remove(name)` |
+| `oya.llm` | `answer(question, values)`: the text for a free-text field in an exported playbook |
+| `oya.personas` (`oya.profiles`) | `list`, `get`, `create`, `update`, `clone`, `preview`, `options`, `pin_proxy`, `remove`, `set_mfa`, `clear_mfa`, `set_credentials`, `credentials`, `clear_credentials`, `cookies`, `import_cookies`, `copy_cookies`, `clear_cookies` |
+| `oya.persona_groups` (`oya.profile_groups`) | `list`, `create`, `update`, `remove` |
+| `oya.proxies` | `list`, `create`, `remove`, `check` |
+| `oya.control` | Sessions, takeover, recovery, events, service credentials, members, webhooks |
+| `oya.config` | `get()`, `set(values)`: this key's model, provider and solver settings |
+| `oya.usage()` | Usage on this key |
+
+Results are the server's JSON as plain dicts. On `AsyncOya` the same calls are awaited.
 
 Every failure raises `OyaError` with the server's message, `status` and `body`.
 

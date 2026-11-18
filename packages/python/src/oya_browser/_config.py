@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ._constants import DEFAULT_BASE_URL
+from ._constants import DEFAULT_BASE_URL, JSON_INDENT, PRIVATE_FILE
 
 NO_KEY = "No API key. Get one at https://oyabrowser.com, then set OYA_API_KEY or pass api_key=..."
 
@@ -23,11 +23,15 @@ class Origin:
     base_url: str
 
 
+def config_file() -> Path:
+    """The CLI's config file: OYA_CONFIG_HOME, else ~/.oya, then config.json."""
+    return Path(os.environ.get("OYA_CONFIG_HOME") or str(Path.home() / ".oya")) / "config.json"
+
+
 def _saved() -> dict[str, str]:
     """The CLI's saved config, or nothing when there is none or it does not parse."""
-    home = os.environ.get("OYA_CONFIG_HOME") or str(Path.home() / ".oya")
     try:
-        data = json.loads((Path(home) / "config.json").read_text())
+        data = json.loads(config_file().read_text())
     except (OSError, ValueError):
         return {}
     return {k: v for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
@@ -36,6 +40,19 @@ def _saved() -> dict[str, str]:
 def _host(url: str) -> str:
     """The deployment a URL belongs to: its host, port included."""
     return urlsplit(url).netloc
+
+
+def save_key(api_key: str, base_url: str) -> bool:
+    """Saves a key where `oya login` would, unless one is there already, owner-only; True when it wrote."""
+    if _saved().get("apiKey"):
+        return False
+    path = config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps({**_saved(), "apiKey": api_key, "baseUrl": base_url}, indent=JSON_INDENT)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    return True
 
 
 def resolve(api_key: str | None = None, base_url: str | None = None) -> Origin:

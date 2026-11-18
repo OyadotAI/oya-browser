@@ -73,3 +73,16 @@ def test_a_server_error_carries_the_servers_message(fake):
     with pytest.raises(OyaError, match="Out of browser hours") as e:
         client(f).browser.start()
     assert e.value.status == 402
+
+
+def test_captcha_auto_is_kept_by_the_client_not_sent_and_makes_goto_solve(fake):
+    f = fake(
+        {
+            ("POST", "/api/browsers/start"): {"id": "b1", "status": "ready"},
+            ("POST", "/api/browsers/b1/command"): {"ok": True},
+            ("POST", "/api/browsers/b1/captcha"): {"present": False},
+        }
+    )
+    client(f).browser.start(captcha="auto").goto("https://example.com")
+    assert "captcha" not in f.calls[0][2]
+    assert f.calls[-1][1] == "/api/browsers/b1/captcha"
