@@ -19,7 +19,8 @@
 .compare td:first-child {
   position: sticky;
   left: 0;
-  background: var(--background);
+  /* The page's own white: the global --background is the dark theme's, which painted this column black. */
+  background: #fff;
   font-weight: 500;
 }
 .sources li {

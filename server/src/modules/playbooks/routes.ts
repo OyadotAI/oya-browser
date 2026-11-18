@@ -125,10 +125,13 @@ router.post('/playbooks/:name/promote', authMiddleware, async (req, res) => {
   res.json(await playbooks.promote(getKey(req), req.params.name));
 });
 
+/** A run's data and secrets, null read as none as much as a missing field is: the Python SDK sends null for none. */
+const runValues = (body) => ({ data: body?.data ?? {}, secrets: body?.secrets ?? {} });
+
 /** POST /browsers/:browserId/runs, submit a prompt or playbook in the background; the SDK polls and fires callbacks. */
 router.post('/browsers/:browserId/runs', authMiddleware, enforce('chat'), requireBrowser, async (req, res) => {
   const { browserId } = req.params;
-  const { prompt, playbook, data = {}, secrets = {}, autoHeal = true } = req.body || {};
+  const { prompt, playbook, autoHeal = true, data, secrets } = { ...req.body, ...runValues(req.body) };
   const key = getKey(req);
   const { pb, status, error } = runnable(key, { prompt, playbook, data, secrets });
   if (error) return res.status(status).json({ error });

@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- The Python SDK, `oya-browser` 0.2.2: `Oya(model={"provider": ..., "name": ..., "api_key": ...})` picks the model for one client, as `@oya-ai/browser` does, and `oya.personas.create`, `clone` and `update` take keyword arguments (`create(name="us", max_concurrent=2)`), with a dict still accepted.
+- The repository README links both SDKs: `@oya-ai/browser` on npm and `oya-browser` on PyPI.
+
+### Fixed
+
+- The server reads a `null` `data` or `secrets` on a chat or a background run as none, so an older client that sends `null` (the Python SDK before 0.2.1) is no longer refused.
+- On oyabrowser.com, the "change one line" cards and the comparison tables' first column showed black; the site header no longer lets the page show through behind its links; the home page's opening paragraph is shorter.
+
 ## [1.0.251](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.251) · 2026-11-18
 
 ### Fixed

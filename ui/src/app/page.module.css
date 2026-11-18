@@ -204,9 +204,9 @@
   width: 100vw;
   transform: translateX(-50%);
   border-bottom: 1px solid rgba(26, 38, 30, 0.08);
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: saturate(180%) blur(16px);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  /* Solid, as the home page's nav is: a see-through header showed scrolled text under its links wherever the
+     browser draws no backdrop blur. */
+  background: #fff;
 }
 .console {
   border-radius: 999px;

@@ -60,7 +60,7 @@ Stagehand v3's `cdpUrl`. Stagehand v4 runs inside its own browser extension, whi
 
 | | |
 |---|---|
-| `goto(url)`, `analyze(format=None)`, `elements()` | Open a page; read it as TOON, markdown or JSONL with numbered elements |
+| `goto(url)`, `analyze(format=None)`, `elements()` | Open a page; read it as TOON, markdown or JSONL with numbered elements; `elements()` is only those in view now |
 | `click(id)`, `type(id, text)`, `press_key(key)`, `wait_for(selector)` | Act on elements by their number from `analyze()` |
 | `scroll(direction, amount=None, at=None)` | Scroll the page, or aim at an inner scroller with `at=(x, y)` |
 | `url()`, `tabs()`, `open_tab(url=None)`, `switch_tab(id)`, `close_tab(id)` | Tabs |
@@ -103,14 +103,26 @@ Files ride in `data`: `browser.ask("Attach my resume", data={"resume": file("cv.
 | `oya.config` | `get()`, `set(values)`: this key's model, provider and solver settings |
 | `oya.usage()` | Usage on this key |
 
+Options are keyword arguments, as with `browser.start()`:
+`oya.personas.create(name="us-shopper", prefs={"locale": "en-US"}, max_concurrent=2)`; a dict still works too.
 Results are the server's JSON as plain dicts. On `AsyncOya` the same calls are awaited.
 
-Every failure raises `OyaError` with the server's message, `status` and `body`.
+Every failure the server reports raises `OyaError` with its message, `status` and `body`. A connection that breaks
+before an answer comes back raises httpx's own error (`httpx.TransportError`).
 
 ## Configuration
 
 The key and address come from the arguments (`Oya(api_key=..., base_url=...)`), then `OYA_API_KEY` and
 `OYA_BASE_URL`, then the key `oya login` saved in `~/.oya/config.json`, the same order as the TypeScript SDK.
+
+`ask()`, `extract()`, runs and healed replays use the key's saved model. Pick one in code, for this client only and
+never saved to the key:
+
+```python
+oya = Oya(model={"provider": "anthropic", "name": "claude-sonnet-5", "api_key": os.environ["ANTHROPIC_API_KEY"]})
+```
+
+Without `api_key`, `name` runs on the credential your key already uses, which must be the same provider.
 
 ## HIPAA
 

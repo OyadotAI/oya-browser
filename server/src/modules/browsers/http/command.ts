@@ -94,8 +94,10 @@ const BAD_RESUME = 'resume must be a short token of letters, digits, dots, dashe
 export const validToken = (token: unknown) => typeof token === 'string' && LANE_PATTERN.test(token);
 
 /** Why a chat's body cannot run, or null when it can. */
-function badChat({ messages, data = {}, secrets = {}, schema, resume }) {
+function badChat({ messages, data, secrets, schema, resume }) {
   if (!messages || !Array.isArray(messages)) return 'messages array required';
+  // null is "none" as much as a missing field is: the Python SDK (0.2.1) sends data: null with no data.
+  [data, secrets] = [data ?? {}, secrets ?? {}];
   if (resume !== undefined && !validToken(resume)) return BAD_RESUME;
   if (!validData(data) || !validData(secrets, { files: false })) return BAD_DATA;
   return validSchema(schema) ? null : BAD_SCHEMA;
@@ -114,7 +116,8 @@ export async function chat(req, res) {
   if (bad) return res.status(Status.BAD_REQUEST).json({ error: bad });
   // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
   if (!withLlm(req, res)) return;
-  const { messages, data = {}, secrets = {}, schema } = req.body;
+  const { messages, schema } = req.body;
+  const [data, secrets] = [req.body.data ?? {}, req.body.secrets ?? {}];
   await answerChat(req, res, messages, { data, secrets, schema, remember: remembered(req.body) });
 }
 

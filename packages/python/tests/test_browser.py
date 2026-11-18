@@ -48,6 +48,12 @@ def test_ask_sends_data_and_secrets_and_returns_the_text(fake):
     }
 
 
+def test_ask_with_no_data_leaves_data_and_secrets_out_rather_than_sending_null(fake):
+    f = fake({("POST", "/api/browsers/b1/chat"): {"text": "Example Domain"}})
+    browser(f).ask("Title?")
+    assert f.calls[0][2] == {"messages": [{"role": "user", "content": "Title?"}]}
+
+
 def test_an_agent_failure_in_a_200_body_raises(fake):
     f = fake({("POST", "/api/browsers/b1/chat"): {"error": "Model refused", "status": 400}})
     with pytest.raises(OyaError, match="Model refused") as e:

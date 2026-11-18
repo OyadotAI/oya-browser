@@ -4,7 +4,8 @@
 
 <p align="center">
   <a href="https://github.com/OyadotAI/oya-browser/releases/latest"><img src="https://badgen.net/github/tag/OyadotAI/oya-browser?label=release&color=39ed35" alt="Latest release"></a>
-  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://badgen.net/npm/v/@oya-ai/browser?label=@oya-ai/browser&color=39ed35" alt="npm: @oya-ai/browser"></a>
+  <a href="https://www.npmjs.com/package/@oya-ai/browser"><img src="https://badgen.net/npm/v/@oya-ai/browser?label=npm%20@oya-ai/browser&color=39ed35" alt="npm: @oya-ai/browser"></a>
+  <a href="https://pypi.org/project/oya-browser/"><img src="https://badgen.net/pypi/v/oya-browser?label=pypi%20oya-browser&color=39ed35" alt="PyPI: oya-browser"></a>
   <a href="https://codecov.io/gh/OyadotAI/oya-browser"><img src="https://badgen.net/codecov/c/github/OyadotAI/oya-browser?label=coverage" alt="Coverage"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-Sustainable_Use_%2B_MIT_SDK-157a13" alt="License"></a>
   <a href="https://discord.gg/wqSeXJPygn"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
@@ -20,7 +21,9 @@ steps as a playbook that replays deterministically, without calling a model, and
 steps when a page changes. People can watch any session and take control at any time.
 
 This repository contains the community edition: the browser, the control plane, the web console,
-the TypeScript SDK and the CLI. HIPAA compliance and a signed BAA come with Oya Cloud and the
+the CLI, and the SDKs: [TypeScript on npm](https://www.npmjs.com/package/@oya-ai/browser)
+(`npm install @oya-ai/browser`) and [Python on PyPI](https://pypi.org/project/oya-browser/)
+(`pip install oya-browser`). HIPAA compliance and a signed BAA come with Oya Cloud and the
 enterprise edition.
 
 - [Features](#features)
@@ -95,7 +98,8 @@ export OYA_API_KEY=oya_...
 ### 2. Install the SDK
 
 ```bash
-npm install @oya-ai/browser
+npm install @oya-ai/browser   # TypeScript: https://www.npmjs.com/package/@oya-ai/browser
+pip install oya-browser       # or Python: https://pypi.org/project/oya-browser/
 ```
 
 ### 3. Run the sample

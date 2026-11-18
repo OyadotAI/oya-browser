@@ -1,7 +1,7 @@
 # The Python SDK for Oya Browser: the TypeScript SDK's core (@oya-ai/browser) for Python agent stacks.
 [project]
 name = "oya-browser"
-version = "0.2.1"
+version = "0.2.2"
 description = "Real browsers for AI agents: start one on Oya Cloud or any provider, drive it, save a task as a playbook and replay it with no model. Plugs into browser-use over CDP."
 readme = "README.md"
 license = "MIT"

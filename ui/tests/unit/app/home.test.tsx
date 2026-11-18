@@ -77,7 +77,7 @@ describe('landing page', () => {
     expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
       screen.getByText(
-        'An agent does the task once in the Oya desktop app. Oya keeps it as Playwright code that replays with no model, and you run it on a schedule or from your code: on Oya Cloud, in your own infrastructure, or on Browserbase, Steel, Anchor or Browser Use.',
+        'An agent does the task once. Oya keeps it as Playwright code that replays with no model, on Oya Cloud or your own infrastructure.',
       ),
     ).toBeTruthy();
     const demos = screen.getAllByRole('link', { name: /Book a demo/ });

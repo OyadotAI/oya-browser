@@ -19,7 +19,7 @@ import httpx
 from . import _start as st
 from ._config import resolve
 from ._constants import READY_POLL_S, READY_TIMEOUT_S, START_TIMEOUT_S
-from ._http import AsyncHttp, Http, segment
+from ._http import AsyncHttp, Http, ModelOptions, model_headers, segment
 from ._namespace import Namespace
 from ._ops import Call
 from .browser import AsyncBrowser, Browser
@@ -121,8 +121,14 @@ class Oya(_Client):
     signup = staticmethod(signup)
     """Oya.signup(email): an agent's own key, saved to ~/.oya/config.json. See signup.py."""
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None, client: httpx.Client | None = None):
-        self._http: Http = Http(resolve(api_key, base_url), client)
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: httpx.Client | None = None,
+        model: ModelOptions | None = None,
+    ):
+        self._http: Http = Http(resolve(api_key, base_url), client, model_headers(model))
         super().__init__(self._http)
         self.browser = Browsers(self._http)
         self.desktop = Desktop(self._http, self.browser.list)
@@ -206,9 +212,13 @@ class AsyncOya(_Client):
     """await AsyncOya.signup(email): Oya.signup with asyncio."""
 
     def __init__(
-        self, api_key: str | None = None, base_url: str | None = None, client: httpx.AsyncClient | None = None
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: httpx.AsyncClient | None = None,
+        model: ModelOptions | None = None,
     ):
-        self._http: AsyncHttp = AsyncHttp(resolve(api_key, base_url), client)
+        self._http: AsyncHttp = AsyncHttp(resolve(api_key, base_url), client, model_headers(model))
         super().__init__(self._http)
         self.browser = AsyncBrowsers(self._http)
         self.desktop = AsyncDesktop(self._http, self.browser.list)

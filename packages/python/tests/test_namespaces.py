@@ -65,6 +65,20 @@ CASES = [
     (lambda o: o.personas.update("p1", {"name": "n"}), ("PUT", "/api/personas/p1", {"name": "n"}), ANY, ANY),
     (lambda o: o.personas.clone("p1"), ("POST", "/api/personas/p1/clone", {}), ANY, ANY),
     (
+        lambda o: o.personas.create(name="us", prefs={"locale": "en-US"}, max_concurrent=2),
+        ("POST", "/api/personas", {"name": "us", "prefs": {"locale": "en-US"}, "maxConcurrent": 2}),
+        ANY,
+        ANY,
+    ),
+    (
+        lambda o: o.personas.create({"name": "old"}, max_concurrent=1),
+        ("POST", "/api/personas", {"name": "old", "maxConcurrent": 1}),
+        ANY,
+        ANY,
+    ),
+    (lambda o: o.personas.update("p1", name="n"), ("PUT", "/api/personas/p1", {"name": "n"}), ANY, ANY),
+    (lambda o: o.personas.clone("p1", name="c"), ("POST", "/api/personas/p1/clone", {"name": "c"}), ANY, ANY),
+    (
         lambda o: o.personas.preview({"platform": "mac"}),
         ("POST", "/api/personas/preview", {"prefs": {"platform": "mac"}}),
         {"fingerprint": {"ua": "x"}},
