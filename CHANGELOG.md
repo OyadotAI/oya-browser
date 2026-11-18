@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.251](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.251) · 2026-11-18
+
 ### Fixed
 
 - Python SDK 0.2.1: `browser.ask()` and `extract()` called without `data` or `secrets` failed, because they sent `null` for both and the server refuses that. They now leave out what was not given, as the TypeScript SDK does.
