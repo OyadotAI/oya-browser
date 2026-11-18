@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.248](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.248) · 2026-11-18
+
 ### Added
 
 - Comparison pages built from each vendor's own public pages, linked and dated: [best browser for AI agents](https://oyabrowser.com/best-browser-for-ai-agents) (Browserbase, Steel, Anchor, Browser Use, Kernel), [best payer portal automation](https://oyabrowser.com/best-payer-portal-automation) (Skyvern, CloudCruise, QuickIntell, Champ AI) and [best AI browser](https://oyabrowser.com/best-ai-browser) (Comet, Dia, Claude in Chrome, Aside, ego). Each Oya vs page now has a side-by-side table too.
