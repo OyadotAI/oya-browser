@@ -11,6 +11,7 @@ part's folder. Each one is the same set of checks CI runs (`.github/workflows/ci
 | `server/` | `npm run lint && npm run format:check && npm run typecheck && npm run test:coverage` (floors: 95% lines, 90% branches, 90% functions) |
 | `ui/` | `npm run lint && npm run format:check && npm run typecheck && npm run test:coverage` |
 | `packages/*`, `tooling/`, `scripts/` | from the root: `npm run lint && npm run format:check && npm run test:packages && npm run test:scripts` |
+| `packages/python/` | from that folder: `uv sync --group dev && uv run ruff format --check src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q` |
 
 Integration suites need a real Electron or a running stack. Run the ones a change touches, under
 `xvfb-run -a` on Linux:
