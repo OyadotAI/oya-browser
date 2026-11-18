@@ -6,6 +6,15 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- [A BAA page](https://oyabrowser.com/baa): how to get a Business Associate Agreement for HIPAA mode (on Oya Cloud on request, or self-hosted in your own cloud), what HIPAA mode changes, where Oya Cloud runs PHI on Google Cloud, and the evidence available on request.
+
+### Changed
+
+- SOC 2: the site now states the issued SOC 2 Type I report; the Type II audit is in progress.
+- The comparison pages say HIPAA mode uses no outside browser vendors, proxies or CAPTCHA solvers, and that audit records are kept six years in HIPAA mode.
+
 ## [1.0.248](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.248) · 2026-11-18
 
 ### Added
