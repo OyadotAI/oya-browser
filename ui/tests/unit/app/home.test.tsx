@@ -2,6 +2,7 @@
  * Unit tests for the landing page, through what a visitor sees: the replay and its audit
  * strip, the steps, the workflow tabs, the trail, the questions, and the claims it may make.
  */
+import { STACK_HEADING, STACK_LINES } from '@/app/_home/stack-content';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -150,15 +151,35 @@ describe('landing page', () => {
     }
   });
 
+  it('shows each stack the one line that moves it onto Oya, from the content the docs share', async () => {
+    await page();
+    const section = screen.getByRole('region', { name: STACK_HEADING });
+    for (const { line, who } of STACK_LINES) {
+      expect(section.textContent).toContain(line);
+      expect(section.textContent).toContain(who);
+    }
+  });
+
   it('connects the first workflow and its results to operating, controlling and deploying more workflows', async () => {
     const { container } = await page();
-    const journey = ['hero', 'workflows', 'results', 'control-plane', 'capabilities', 'deployment', 'faq', 'contact'];
+    const journey = [
+      'hero',
+      'workflows',
+      'stack',
+      'results',
+      'control-plane',
+      'capabilities',
+      'deployment',
+      'faq',
+      'contact',
+    ];
     const order = Array.from(container.querySelectorAll('[id]'))
       .map((element) => element.id)
       .filter((id) => journey.includes(id));
     expect(order).toEqual(journey);
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
       'Your first task becomes a reusable playbook.',
+      'Already have a stack? Change one line.',
       'See what customers report.',
       'Operate those workflows across agents and browsers.',
       'Control how the work runs.',
