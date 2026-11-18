@@ -113,3 +113,16 @@ def test_for_browser_use_refuses_a_browser_with_no_cdp_endpoint(fake):
     f = fake({("GET", "/api/browsers/b1"): {"id": "b1"}})
     with pytest.raises(ValueError, match="no CDP endpoint"):
         browser(f).for_browser_use()
+
+
+def test_ask_without_data_or_secrets_sends_neither_since_the_server_refuses_null(fake):
+    f = fake({("POST", "/api/browsers/b1/chat"): {"text": "Example Domain"}})
+    browser(f).ask("Title?")
+    assert f.calls[0][2] == {"messages": [{"role": "user", "content": "Title?"}]}
+
+
+def test_extract_sends_its_schema_and_only_the_values_given(fake):
+    f = fake({("POST", "/api/browsers/b1/chat"): {"text": "ok", "data": {"heading": "Example Domain"}}})
+    schema = {"type": "object"}
+    assert browser(f).extract("Heading?", schema) == {"heading": "Example Domain"}
+    assert f.calls[0][2] == {"messages": [{"role": "user", "content": "Heading?"}], "schema": schema}

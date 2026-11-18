@@ -18,4 +18,4 @@ from .file import MAX_FILE_BYTES, file
 from .run import AsyncRun, Run
 
 __all__ = ["MAX_FILE_BYTES", "AsyncBrowser", "AsyncOya", "AsyncRun", "Browser", "Oya", "OyaError", "Run", "file"]
-__version__ = "0.2.0"
+__version__ = "0.2.1"
