@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- The Python SDK, [oya-browser on PyPI](https://pypi.org/project/oya-browser/): `pip install oya-browser`. The same surface as `@oya-ai/browser`, sync (`Oya`) and async (`AsyncOya`), and `browser.for_browser_use()` hands an Oya browser to browser-use in one line.
+- The home page and the docs open with the one line each stack changes to run on Oya: browser-use, Playwright (Python and TypeScript), Browserbase, and Claude Code, Codex or Cursor.
+
 ## [1.0.249](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.249) · 2026-11-18
 
 ### Added
