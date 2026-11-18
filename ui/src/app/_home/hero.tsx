@@ -1,6 +1,8 @@
 /**
- * Leads with portal automation and explains how teams reuse the work as playbooks.
- * Its actions lead into the existing demo and developer entry point.
+ * Leads with the platform loop: build a browser automation on the desktop, deploy it anywhere,
+ * replay it with no model. No other browser vendor can say "anywhere", because each one is the
+ * cloud; Oya is the layer above them. The eyebrow and the trust line keep healthcare, Oya's first
+ * market, as the proof. Its actions lead into the existing demo and developer entry point.
  */
 import Link from 'next/link';
 import { COMPLIANCE_LINE, foundersCall } from './content';
@@ -43,10 +45,13 @@ export function Hero() {
             <div>
               <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
               <h1 id="hero-h">
-                Automate portal work. <span className={styles.heroAccent}>Keep control.</span>
+                Build browser automations on your desktop.{' '}
+                <span className={styles.heroAccent}>Deploy them anywhere.</span>
               </h1>
               <p className="hero__lead">
-                Tell Oya the task, then keep the steps as a playbook your team can run again with new case details.
+                An agent does the task once in the Oya desktop app. Oya keeps it as Playwright code that replays with no
+                model, and you run it on a schedule or from your code: on Oya Cloud, in your own infrastructure, or on
+                Browserbase, Steel, Anchor or Browser Use.
               </p>
             </div>
             <Actions place="hero" />

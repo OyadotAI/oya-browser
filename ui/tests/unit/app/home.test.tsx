@@ -68,12 +68,15 @@ const replay = () => screen.getByRole('figure', { name: /Example replay:/ });
 describe('landing page', () => {
   afterEach(() => cleanup());
 
-  it('speaks to healthtech and RCM product teams with one concise hero and the existing actions', async () => {
+  it('leads with build on the desktop, deploy anywhere, keeps healthtech and RCM as its audience, and the existing actions', async () => {
     await page();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Automate portal work. Keep control.');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
+      'Build browser automations on your desktop. Deploy them anywhere.',
+    );
+    expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
       screen.getByText(
-        'Tell Oya the task, then keep the steps as a playbook your team can run again with new case details.',
+        'An agent does the task once in the Oya desktop app. Oya keeps it as Playwright code that replays with no model, and you run it on a schedule or from your code: on Oya Cloud, in your own infrastructure, or on Browserbase, Steel, Anchor or Browser Use.',
       ),
     ).toBeTruthy();
     const demos = screen.getAllByRole('link', { name: /Book a demo/ });
