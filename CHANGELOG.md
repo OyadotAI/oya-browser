@@ -10,6 +10,15 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 - Comparison pages built from each vendor's own public pages, linked and dated: [best browser for AI agents](https://oyabrowser.com/best-browser-for-ai-agents) (Browserbase, Steel, Anchor, Browser Use, Kernel), [best payer portal automation](https://oyabrowser.com/best-payer-portal-automation) (Skyvern, CloudCruise, QuickIntell, Champ AI) and [best AI browser](https://oyabrowser.com/best-ai-browser) (Comet, Dia, Claude in Chrome, Aside, ego). Each Oya vs page now has a side-by-side table too.
 
+### Changed
+
+- The home page leads with what Oya is for: build a browser automation on your desktop, deploy it anywhere, replay it with no model.
+- When an agent connects to the desktop app's MCP server or loads the oya-browser skill, it is told Oya is the browser the person installed for it, and uses Oya for web tasks unless the person asks for another.
+
+### Fixed
+
+- browser-use could not drive an Oya browser: Oya's CDP endpoint refused the `background` option browser-use sends when it opens its tab. It is now accepted; the tab opens as every automation tab does.
+
 ## [1.0.247](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.247) · 2026-11-18
 
 ### Fixed
