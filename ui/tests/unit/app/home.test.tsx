@@ -281,11 +281,12 @@ describe('landing page', () => {
     expect(throughput.textContent).not.toContain('Under 2 minutes');
   });
 
-  it('claims SOC 2 only as an audit in progress and preserves the HIPAA wording', async () => {
+  it('claims SOC 2 as the Type I report or the Type II audit in progress, never certified, and preserves the HIPAA wording', async () => {
     const { container } = await page();
     const text = container.textContent ?? '';
     expect(text).not.toMatch(/certified|SOC 2 (compliant|report|attested)/i);
-    for (const [at] of text.matchAll(/SOC 2[^.·]*/g)) expect(at).toMatch(/^SOC 2 Type II audit (is )?in progress/);
+    for (const [at] of text.matchAll(/SOC 2[^.·]*/g))
+      expect(at).toMatch(/^SOC 2 (Type I(?!I)|Type II audit (is )?in progress)/);
     expect(text).toContain('HIPAA compliant');
   });
 
