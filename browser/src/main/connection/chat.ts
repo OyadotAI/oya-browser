@@ -4,15 +4,23 @@
  * its own agent (lane `tab-<id>`), driving that tab beside the other tabs' agents.
  * The panel and the routines both ask through it.
  */
+import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { inLane } from '../control/agent-tab.ts';
 import type { AppServices } from '../app/services.ts';
 import { ServerApi } from './server-api.ts';
-import { ERROR_PREVIEW_CHARS } from './constants.ts';
+import {
+  CHAT_STOP_TIMEOUT_MS,
+  ERROR_PREVIEW_CHARS,
+  HttpStatus,
+  REATTACH_RETRY_MS,
+  REATTACH_WAIT_MS,
+} from './constants.ts';
 
 /** The services a chat uses. */
 type Deps = Pick<
   AppServices,
-  'config' | 'socket' | 'control' | 'shield' | 'chatAbort' | 'chatRuns' | 'agentTab' | 'tabs' | 'windows'
+  'config' | 'socket' | 'control' | 'shield' | 'shell' | 'chatAbort' | 'chatRuns' | 'agentTab' | 'tabs' | 'windows'
 >;
 
 /** The lane of tab `tab`'s chat: its agent drives that tab, beside other tabs' agents. */
@@ -38,9 +46,32 @@ export interface ChatAnswer {
 export const STOPPED = 'Stopped';
 /** What a chat answers while the agent is already on another task (a routine, or another chat). */
 const BUSY = 'The agent is busy with another task. Stop it first, or try again when it finishes.';
-/** What a chat answers when the server hung up mid-run (fetch says "terminated"), as a restart does. */
+/**
+ * What a chat answers when its connection to the server dropped mid-run (fetch says "terminated")
+ * and the run could not be collected afterwards: the window to come back in passed, or the server
+ * no longer has the run (it restarted, or it is too old to keep one).
+ */
 const CUT_OFF =
-  'The connection to the server dropped mid-run, likely a server restart. Check where the page got to, then ask again.';
+  'The connection to the server dropped and the run could not be resumed. Check where the page got to, then ask again.';
+/** One try at collecting a run found the server has no such run: there is nothing to wait for. */
+const GONE = Symbol('gone');
+/** One try at collecting a run was cut like the request before it: the run is still there, so the wait starts over. */
+const CUT = Symbol('cut');
+/** One try at collecting a run could not reach the server: try again shortly. */
+const RETRY = Symbol('retry');
+/** How one try at collecting a run ended. */
+type Collected = ChatAnswer | typeof GONE | typeof CUT | typeof RETRY;
+
+/** What a chat sends the server. */
+interface Sent {
+  /** The tab's lane. */
+  lane: string;
+  /** Names this run, so the desktop can collect its answer after a dropped connection, and never another run's. */
+  resume: string;
+  /** The conversation, the files and whether it is remembered. */
+  [key: string]: unknown;
+}
+
 /** What a chat answers without a signed-in socket. */
 const OFFLINE = 'Not connected to server';
 /** What a chat answers from an incognito tab: agents never see or drive incognito pages. */
@@ -79,8 +110,93 @@ export class Chat {
     const tab = Number.isSafeInteger(tabId) ? (tabId as number) : (this.deps.tabs.activeTabId ?? 0);
     if (this.deps.windows?.owner(tab)?.tabs.privateSession) return Promise.resolve({ error: INCOGNITO });
     if (!this.api.canCall()) return Promise.resolve({ error: OFFLINE });
-    const payload = { messages, ...(data ? { data } : {}), lane: tabLane(tab), ...(remember ? {} : { remember }) };
-    return this.asOnlyChat(tab, (signal) => this.inTab(tab, () => this.ask('chat', payload, signal)));
+    const said = { messages, ...(data ? { data } : {}), lane: tabLane(tab), ...(remember ? {} : { remember }) };
+    const payload: Sent = { ...said, resume: randomUUID() };
+    return this.asOnlyChat(tab, (signal) => this.inTab(tab, () => this.converse(tab, payload, signal)));
+  }
+
+  /**
+   * Asks, and when the request is cut mid-run comes back for the same run: a network that drops a
+   * long request used to end the run. A run this side has given up on (stopped, failed to reach,
+   * or not collected) is told to stop, since hanging up no longer stops a run that named a token.
+   */
+  private async converse(tab: number, payload: Sent, signal: AbortSignal): Promise<ChatAnswer> {
+    const first = await this.ask('chat', payload, signal);
+    const answer = first.error === CUT_OFF ? await this.reattach(tab, payload.resume, signal) : first;
+    if (signal.aborted || answer.error) void this.stopOnServer(tab, payload.resume);
+    return answer;
+  }
+
+  /**
+   * Collects the run's answer, trying until the window the server keeps an unheard run for has
+   * passed. Over HTTP alone, not waiting for the socket: the server holds the run through the
+   * socket's gap. A try cut like the first request means the run is still going, so the wait starts over.
+   */
+  private async reattach(tab: number, token: string, signal: AbortSignal): Promise<ChatAnswer> {
+    let deadline = Date.now() + REATTACH_WAIT_MS;
+    while (!signal.aborted && Date.now() < deadline) {
+      const got = await this.collect(tab, token, signal);
+      if (typeof got === 'object') return got;
+      if (got === GONE) break;
+      deadline = await this.nextDeadline(got === CUT, deadline, signal);
+    }
+    return { error: signal.aborted ? STOPPED : CUT_OFF };
+  }
+
+  /** When to give up after a failed try: a cut try starts the wait over at once, any other pauses and keeps the deadline. */
+  private async nextDeadline(cut: boolean, deadline: number, signal: AbortSignal): Promise<number> {
+    if (cut) return Date.now() + REATTACH_WAIT_MS;
+    await sleep(REATTACH_RETRY_MS, undefined, { signal }).catch(() => {});
+    return deadline;
+  }
+
+  /**
+   * One try at collecting the run, with the panel told it is reconnecting; a try that fails says how.
+   * Only a try that listened for a while counts as cut: one cut at once is a server or proxy that is
+   * not holding the request at all, and counting it would start the wait over forever.
+   */
+  private collect(tab: number, token: string, signal: AbortSignal): Promise<Collected> {
+    this.tell(tab, 'reconnecting');
+    const began = Date.now();
+    const listened = () => Date.now() - began >= REATTACH_RETRY_MS;
+    const failed = (err: Error): Collected => (err.message === 'terminated' && listened() ? CUT : RETRY);
+    return this.resumed(tab, token, signal).catch(failed);
+  }
+
+  /** Asks the server for the run's answer: the answer once the run ends, or GONE or RETRY when the server refuses. */
+  private async resumed(tab: number, token: string, signal: AbortSignal): Promise<Collected> {
+    const body = { lane: tabLane(tab), resume: token };
+    const res = await this.api.postToBrowser('chat/resume', body, undefined, signal);
+    if (!res.ok) return res.status === HttpStatus.NOT_FOUND ? GONE : RETRY;
+    this.tell(tab, 'resumed');
+    return readChatAnswer(res);
+  }
+
+  /** Tells tab `tab`'s panel how its run's connection stands, as an agent event of no run. */
+  private tell(tab: number, kind: 'reconnecting' | 'resumed'): void {
+    this.deps.shell.send('agent-event', { runId: '', event: { kind }, tabId: tab });
+  }
+
+  /**
+   * Tells the server to stop the run named `token`, trying until the server hears it or the window
+   * it keeps an unheard run for has passed. Stop pressed while the network is down would otherwise
+   * be lost, and the run would drive the browser until the server gave up on it. Naming the run
+   * keeps a stop that lands late from ending the next run in the same tab.
+   */
+  private async stopOnServer(tab: number, token: string): Promise<void> {
+    const until = Date.now() + REATTACH_WAIT_MS;
+    while (!(await this.heardStop(tab, token)) && Date.now() < until)
+      await sleep(REATTACH_RETRY_MS, undefined, { ref: false });
+  }
+
+  /** One try at telling the server to stop the run; any answer at all means it heard. */
+  private heardStop(tab: number, token: string): Promise<boolean> {
+    const body = { lane: tabLane(tab), resume: token };
+    const heard = this.api.postToBrowser('chat/stop', body, CHAT_STOP_TIMEOUT_MS);
+    return heard.then(
+      () => true,
+      () => false,
+    );
   }
 
   /** Runs `work` as tab `tab`'s agent with control lent to it; only a run that actually ran tells the shield it ended. */

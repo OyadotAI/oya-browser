@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- An agent run in the desktop app now survives a dropped connection. The run used to stop whenever the network cut the long request behind it, with "the connection to the server dropped mid-run, likely a server restart". Now the server keeps the run going for two minutes, the panel says "Reconnecting…", and the app comes back for the same run and shows its real answer. The agent stays in the tab it was working in, and Stop still stops the run at once. Needs this release on both the server and the desktop app.
+- The message shown when a run really could not be picked up again no longer blames a server restart.
+
 ## [1.0.246](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.246) · 2026-11-18
 
 ### Fixed

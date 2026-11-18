@@ -17,6 +17,7 @@ import type { OrbState } from '../../../ui/index.ts';
 import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { AgentEvent } from '../../../../shared/ipc.ts';
 import type { AgentRunEvent, DevLogEntry, PlanStep, RunUsage } from '../model/types.ts';
+import { ASK_TEXT } from '../model/constants.ts';
 import { commandAction, commandParams, elapsedSeconds, runSummary, stepLabel, usageTitle } from '../model/steps.ts';
 
 /** One narrated action in a run's timeline. */
@@ -127,11 +128,22 @@ export class RunViewModel extends ViewModel<RunState> {
   private event({ runId, event, tabId }: AgentEvent): void {
     const run = event as AgentRunEvent | undefined;
     if (!this.state.card || !run || (this.tabId !== null && tabId != null && tabId !== this.tabId)) return;
+    if (this.connection(run.kind)) return;
     if (run.kind === 'start' && !this.runId) this.runId = runId;
     if (!this.runId || runId !== this.runId) return;
     if (run.kind === 'plan') this.setPlan(run.steps ?? []);
     if (run.kind === 'step') this.step(run.line || run.tool || '');
     if (run.kind === 'usage') this.used = { input: run.input, output: run.output };
+  }
+
+  /**
+   * The run's connection dropped or is back, told by this app, not by the run, so it carries no run id:
+   * the live line says so until the run is heard again or its next step lands. Answers whether `kind` was one.
+   */
+  private connection(kind?: string): boolean {
+    if (kind !== 'reconnecting' && kind !== 'resumed') return false;
+    this.set({ label: kind === 'reconnecting' ? ASK_TEXT.reconnecting : '' });
+    return true;
   }
 
   /** Redraws the plan. */

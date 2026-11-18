@@ -157,3 +157,10 @@ export const MINUTES_PER_HOUR = 60;
 
 /** Hours in a day. */
 export const HOURS_PER_DAY = 24;
+
+/** How long a desktop chat run keeps going with nobody listening before it is stopped, and how long its finished answer is kept. */
+const DEFAULT_CHAT_GRACE_MS = 120_000;
+/** The grace window of a resumable chat run; `OYA_CHAT_GRACE_MS` overrides it. */
+export const CHAT_GRACE_MS = Number(process.env.OYA_CHAT_GRACE_MS) || DEFAULT_CHAT_GRACE_MS;
+/** How long a resumable run's next browser tool waits for a browser that dropped its socket to come back. */
+export const RECONNECT_WAIT_MS = 15_000;

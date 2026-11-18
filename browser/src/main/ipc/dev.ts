@@ -17,6 +17,7 @@ type Deps = Pick<
   | 'socket'
   | 'control'
   | 'shield'
+  | 'shell'
   | 'chatAbort'
   | 'chatRuns'
   | 'tabs'

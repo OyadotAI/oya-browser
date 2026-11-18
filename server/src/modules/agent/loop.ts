@@ -3,7 +3,7 @@
  * model answers in text or the iteration limit is reached.
  */
 import { toolsOn } from './tools.ts';
-import { actionsOf } from '../browsers/socket.ts';
+import { actionsOf, whenConnected } from '../browsers/socket.ts';
 import { REMEMBER, REQUEST_HUMAN, RESTART_RECORDING, UPDATE_PLAN, returnDataTool } from './prompt.ts';
 import { notesHere, rememberNote } from './site-notes.ts';
 import { executeTool } from './executor.ts';
@@ -28,7 +28,7 @@ import {
 import { newGuard, afterCall, afterEmpty, failed, type Guard } from './guards.ts';
 import { verify, recheck } from './verifier.ts';
 import { CHALLENGE_TOOLS, CHALLENGE_HANDLERS, type Challenges } from './challenge-tools.ts';
-import { VERIFY_ROUNDS } from './constants.ts';
+import { RECONNECT_WAIT_MS, VERIFY_ROUNDS } from './constants.ts';
 import { llmCost } from '../billing/index.ts';
 
 /** Tools after which the page may have changed, so the caller's checkpoint runs. */
@@ -115,6 +115,8 @@ export type LoopContext = {
   shownSites?: Set<string>;
   /** Aborted when the caller gives up (the person pressed Stop); the run ends at the next step. */
   signal?: AbortSignal;
+  /** Whether a browser tool waits for a browser that dropped its socket to come back (a run that outlives its request). */
+  awaitReconnect?: boolean;
   /** The run's tokens so far, every model call and the check before done included, for the caller to show per run. */
   usage?: RunUsage;
   /** Told the run's tokens so far after each model call, so a run the caller stops still shows what it used. */
@@ -231,13 +233,24 @@ const toolsFor = (ctx: LoopContext) => [
 const NO_SCRIPTS =
   'Error: run_script is not available on a task that carries secrets, because a script could read one. Read the page with analyze_page instead.';
 
+/**
+ * Runs a tool in the browser. A run that outlives its request first waits for a browser whose
+ * socket dropped to come back: nothing has been sent yet, so waiting cannot repeat an action.
+ * It carries on only in a browser its own key registered, never one another key took the id for.
+ */
+async function inBrowser(ctx: LoopContext, name, args) {
+  if (ctx.awaitReconnect && !(await whenConnected(ctx.browserId, ctx.apiKey, RECONNECT_WAIT_MS, ctx.signal)))
+    throw new Error(`Browser ${ctx.browserId} not connected`);
+  return executeTool(ctx.browserId, name, filled(args, ctx.values), ctx.files);
+}
+
 /** Runs a call: a local tool here, anything else in the browser. */
 async function invoke(ctx: LoopContext, name, args) {
   try {
     if (stopRequested(ctx)) return `Error: tool not run. ${ctx.stop}`;
     if (isLocal(ctx, name)) return await runLocal(ctx, name, args);
     if (name === 'run_script' && Object.keys(ctx.secrets || {}).length) return NO_SCRIPTS;
-    return await executeTool(ctx.browserId, name, filled(args, ctx.values), ctx.files);
+    return await inBrowser(ctx, name, args);
   } catch (err) {
     return `Error: ${err.message}`;
   }

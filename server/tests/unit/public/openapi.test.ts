@@ -67,6 +67,8 @@ const INTERNAL: [string, string][] = [
   ['PATCH /api/auth/me', "The console's signed-in person."],
   ['DELETE /api/auth/me', 'Account deletion, confirmed by a person in the console.'],
   ['POST /api/browsers/{browserId}/translate', "The desktop app's page translation."],
+  ['POST /api/browsers/{browserId}/chat/resume', 'The desktop app collecting a chat run whose connection dropped.'],
+  ['POST /api/browsers/{browserId}/chat/stop', "The desktop app's Stop for a chat run."],
   ['/api/auth/keys', "The console's API key management, signed in as a person."],
   ['/api/auth/projects', "The console's project switcher, signed in as a person."],
   ['/api/auth/whoami', "The console's account menu."],

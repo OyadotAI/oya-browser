@@ -168,6 +168,8 @@ export const INTERNAL_ACTIONS = new Set(Object.keys(VOCABULARY).filter(isInterna
  */
 export async function longJson(res, work) {
   res.writeHead(Status.OK, { 'Content-Type': 'application/json' });
+  // Sent now, not with the first keepalive: a caller whose connection drops in between must be able to tell the work started.
+  res.flushHeaders?.();
   const keepalive = setInterval(() => res.write(' '), LONG_JSON_KEEPALIVE_MS);
   try {
     await endWithResult(res, work);

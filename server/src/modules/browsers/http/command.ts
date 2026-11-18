@@ -3,7 +3,16 @@
  * the browser tools.
  */
 import { sendCommand } from '../socket.ts';
-import { runChat, lastRun, hasReplayableSteps, requireLlm, NEEDS_INPUT } from '../../agent/chat.ts';
+import {
+  runChat,
+  lastRun,
+  hasReplayableSteps,
+  requireLlm,
+  resumableRuns,
+  runKey,
+  NEEDS_INPUT,
+  type HeldRun,
+} from '../../agent/chat.ts';
 import { control } from '../../control/service.ts';
 import * as usage from '../../../platform/usage.ts';
 import { Status } from '../../../platform/http-status.ts';
@@ -13,6 +22,7 @@ import { getKey, longJson, validData } from '../../../app/http.ts';
 import { inCallerOrOwnLane, inLane } from '../connection/lane.ts';
 import { noTimeouts, refuseAction } from './helpers.ts';
 import { CHAT_DRAIN_MS, MAX_SCHEMA_CHARS } from '../constants.ts';
+import { LANE_PATTERN } from '../connection/constants.ts';
 import { challengesFor, quietCheckpointFor } from '../../playbooks/checkpoint.ts';
 import { LiveRun } from '../../agent/run-events.ts';
 
@@ -77,9 +87,16 @@ const validSchema = (schema) =>
     !Array.isArray(schema) &&
     JSON.stringify(schema).length <= MAX_SCHEMA_CHARS);
 
+/** Why a chat's resume token was refused. */
+const BAD_RESUME = 'resume must be a short token of letters, digits, dots, dashes and underscores';
+
+/** Whether `token` can name a run to resume: a short name, like a lane. */
+export const validToken = (token: unknown) => typeof token === 'string' && LANE_PATTERN.test(token);
+
 /** Why a chat's body cannot run, or null when it can. */
-function badChat({ messages, data = {}, secrets = {}, schema }) {
+function badChat({ messages, data = {}, secrets = {}, schema, resume }) {
   if (!messages || !Array.isArray(messages)) return 'messages array required';
+  if (resume !== undefined && !validToken(resume)) return BAD_RESUME;
   if (!validData(data) || !validData(secrets, { files: false })) return BAD_DATA;
   return validSchema(schema) ? null : BAD_SCHEMA;
 }
@@ -98,9 +115,35 @@ export async function chat(req, res) {
   // Checked before the 200 goes out: with no model there is nothing to converse with, and the caller deserves the real status.
   if (!withLlm(req, res)) return;
   const { messages, data = {}, secrets = {}, schema } = req.body;
-  const task = { data, secrets, schema, signal: abortOnHangUp(res), remember: remembered(req.body) };
-  const work = () => converse(req, messages, task);
+  await answerChat(req, res, messages, { data, secrets, schema, remember: remembered(req.body) });
+}
+
+/** Answers a chat: one that named a lane and a resume token outlives this request, any other stops when its caller hangs up. */
+async function answerChat(req, res, messages, task) {
+  if (validToken(req.body.lane) && req.body.resume) return void (await answerWith(res, held(req, messages, task)));
+  const work = () => converse(req, messages, { ...task, signal: abortOnHangUp(res) });
   await inFlight(longJson(res, () => inChatLane(req, work)));
+}
+
+/**
+ * Starts a chat that outlives this request: a desktop names a `resume` token, and when its
+ * connection drops the run keeps going for a grace window so the desktop can collect the answer
+ * (POST chat/resume). Its Stop is a call (POST chat/stop), since a hang-up no longer means one.
+ * The run itself is held for shutdown, not just this response to it.
+ */
+function held(req, messages, task): HeldRun {
+  const { lane, resume } = req.body;
+  const run = (signal: AbortSignal) => converse(req, messages, { ...task, signal, awaitReconnect: true });
+  const key = runKey(req.params.browserId, lane);
+  const kept = resumableRuns.start(key, getKey(req), resume, (signal) => inLane(lane, () => run(signal)));
+  inFlight(kept.answer).catch(() => {});
+  return kept;
+}
+
+/** Answers `res` with a held run's answer; the response closing, however it closes, is one listener gone. */
+export function answerWith(res, run: HeldRun) {
+  res.on('close', () => resumableRuns.release(run));
+  return longJson(res, () => run.answer);
 }
 
 /**
