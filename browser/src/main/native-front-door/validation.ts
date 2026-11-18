@@ -40,7 +40,8 @@ const PARAMS: Record<string, readonly string[]> = {
   'Browser.getVersion': [],
   'Target.getTargets': [],
   'Target.getTargetInfo': ['targetId'],
-  'Target.createTarget': ['url', 'browserContextId'],
+  // background: browser-use opens its working tab with it; see Target.createTarget in protocol.ts.
+  'Target.createTarget': ['url', 'browserContextId', 'background'],
   'Target.createBrowserContext': ['disposeOnDetach'],
   'Target.getBrowserContexts': [],
   'Target.disposeBrowserContext': ['browserContextId'],
@@ -71,15 +72,15 @@ export function validateParams(command: NativeCommand): void {
   if (command.method.startsWith('DOM.')) validateDom(command);
   if (command.method === 'Emulation.setDeviceMetricsOverride') metricParameters(command.params);
 }
-/** The small subset has string arguments, finite numeric bounds, and one boolean attachment flag. */
+/** Arguments that are on/off flags; each must be a boolean. */
+const BOOLEAN_FLAGS = ['flatten', 'discover', 'ignoreCache', 'disposeOnDetach', 'background'];
+/** Arguments that are counts; each must be a positive finite number. */
+const COUNTS = ['amount', 'limit'];
+/** The small subset has string arguments, finite numeric bounds, and a few boolean flags. */
 function validateValue(key: string, value: unknown): void {
-  if (['flatten', 'discover', 'ignoreCache', 'disposeOnDetach'].includes(key) && typeof value === 'boolean') return;
-  if (['amount', 'limit'].includes(key) && typeof value === 'number' && Number.isFinite(value) && value > 0) return;
-  if (
-    !['flatten', 'discover', 'ignoreCache', 'disposeOnDetach', 'amount', 'limit', 'index'].includes(key) &&
-    typeof value === 'string'
-  )
-    return;
+  if (BOOLEAN_FLAGS.includes(key) && typeof value === 'boolean') return;
+  if (COUNTS.includes(key) && typeof value === 'number' && Number.isFinite(value) && value > 0) return;
+  if (![...BOOLEAN_FLAGS, ...COUNTS, 'index'].includes(key) && typeof value === 'string') return;
   throw Error(`Invalid parameter: ${key}`);
 }
 
