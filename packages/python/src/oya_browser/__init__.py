@@ -14,6 +14,8 @@ With browser-use (pip install "oya-browser[browser-use]"):
 from .browser import AsyncBrowser, Browser
 from .client import AsyncOya, Oya
 from .errors import OyaError
+from .file import MAX_FILE_BYTES, file
+from .run import AsyncRun, Run
 
-__all__ = ["AsyncBrowser", "AsyncOya", "Browser", "Oya", "OyaError"]
-__version__ = "0.1.0"
+__all__ = ["MAX_FILE_BYTES", "AsyncBrowser", "AsyncOya", "AsyncRun", "Browser", "Oya", "OyaError", "Run", "file"]
+__version__ = "0.2.0"

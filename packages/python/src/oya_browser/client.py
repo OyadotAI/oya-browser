@@ -20,12 +20,18 @@ from . import _start as st
 from ._config import resolve
 from ._constants import READY_POLL_S, READY_TIMEOUT_S, START_TIMEOUT_S
 from ._http import AsyncHttp, Http, segment
+from ._namespace import Namespace
+from ._ops import Call
 from .browser import AsyncBrowser, Browser
+from .control import Control
+from .desktop import AsyncDesktop, Desktop
 from .errors import OyaError
-
-
-def _playbook(name: str) -> str:
-    return f"/api/playbooks/{segment(name, 'name')}"
+from .key_config import KeyConfig
+from .persona_groups import PersonaGroups
+from .personas import Personas
+from .playbooks import Llm, Playbooks
+from .proxies import Proxies
+from .signup import async_signup, signup
 
 
 class Browsers:
@@ -41,15 +47,16 @@ class Browsers:
         name: str | None = None,
         ready_timeout_s: float = READY_TIMEOUT_S,
         idempotency_key: str | None = None,
+        captcha: str | None = None,
         **extra: Any,
     ) -> Browser:
-        """Starts a browser and waits until it can take commands."""
+        """Starts a browser and waits until it can take commands; captcha="auto" makes goto() clear CAPTCHAs."""
         body, headers = st.start_body(persona, provider, name, extra), st.start_headers(idempotency_key)
         started = self._http.request("POST", "/api/browsers/start", body, START_TIMEOUT_S, headers=headers)
         if started.get("status") == "starting":
             self._wait(started["id"], ready_timeout_s)
             started["cdpUrl"] = self._record(started["id"]).get("cdpUrl")
-        return Browser(self._http, started)
+        return Browser(self._http, started, captcha == "auto")
 
     def _record(self, browser_id: str) -> dict[str, Any]:
         result: dict[str, Any] = self._http.request("GET", f"/api/browsers/{segment(browser_id)}")
@@ -86,40 +93,39 @@ class Browsers:
         return int(self._http.request("POST", "/api/browsers/stop", {"all": True}, START_TIMEOUT_S).get("stopped", 0))
 
 
-class Playbooks:
-    """oya.playbooks: the playbooks saved with browser.to_playbook()."""
+class _Client(Namespace):
+    """The namespaces both clients share: one class each, sync or async depending on the client's http."""
 
-    def __init__(self, http: Http) -> None:
-        self._http = http
+    def __init__(self, http: Http | AsyncHttp) -> None:
+        super().__init__(http)
+        self.playbooks = Playbooks(http)
+        self.llm = Llm(http)
+        self.control = Control(http)
+        self.proxies = Proxies(http)
+        self.personas = Personas(http)
+        self.profiles = self.personas
+        """The same as personas, under the name the console uses."""
+        self.persona_groups = PersonaGroups(http)
+        self.profile_groups = self.persona_groups
+        """The same as persona_groups, matching the profiles alias."""
+        self.config = KeyConfig(http)
 
-    def list(self) -> builtins.list[dict[str, Any]]:
-        """Every playbook on this key."""
-        result: builtins.list[dict[str, Any]] = self._http.request("GET", "/api/playbooks").get("playbooks", [])
-        return result
-
-    def get(self, name: str) -> dict[str, Any]:
-        """One playbook, with its steps, variables and Playwright code."""
-        result: dict[str, Any] = self._http.request("GET", _playbook(name))
-        return result
-
-    def export(self, name: str) -> dict[str, Any]:
-        """A playbook as a portable document, to import on another key or keep."""
-        result: dict[str, Any] = self._http.request("GET", f"{_playbook(name)}/export")
-        return result
-
-    def remove(self, name: str) -> None:
-        """Deletes a playbook."""
-        self._http.request("DELETE", _playbook(name))
+    def usage(self) -> Any:
+        """Usage on this key; on AsyncOya, an awaitable of it."""
+        return self._do(Call("GET", "/api/usage"))
 
 
-class Oya:
+class Oya(_Client):
     """The synchronous client. Use it as a context manager, or call close()."""
 
+    signup = staticmethod(signup)
+    """Oya.signup(email): an agent's own key, saved to ~/.oya/config.json. See signup.py."""
+
     def __init__(self, api_key: str | None = None, base_url: str | None = None, client: httpx.Client | None = None):
-        origin = resolve(api_key, base_url)
-        self._http = Http(origin, client)
+        self._http: Http = Http(resolve(api_key, base_url), client)
+        super().__init__(self._http)
         self.browser = Browsers(self._http)
-        self.playbooks = Playbooks(self._http)
+        self.desktop = Desktop(self._http, self.browser.list)
 
     def close(self) -> None:
         """Closes the connection pool; running browsers keep running until stopped."""
@@ -145,15 +151,16 @@ class AsyncBrowsers:
         name: str | None = None,
         ready_timeout_s: float = READY_TIMEOUT_S,
         idempotency_key: str | None = None,
+        captcha: str | None = None,
         **extra: Any,
     ) -> AsyncBrowser:
-        """Starts a browser and waits until it can take commands."""
+        """Starts a browser and waits until it can take commands; captcha="auto" makes goto() clear CAPTCHAs."""
         body, headers = st.start_body(persona, provider, name, extra), st.start_headers(idempotency_key)
         started = await self._http.request("POST", "/api/browsers/start", body, START_TIMEOUT_S, headers=headers)
         if started.get("status") == "starting":
             await self._wait(started["id"], ready_timeout_s)
             started["cdpUrl"] = (await self._record(started["id"])).get("cdpUrl")
-        return AsyncBrowser(self._http, started)
+        return AsyncBrowser(self._http, started, captcha == "auto")
 
     async def _record(self, browser_id: str) -> dict[str, Any]:
         result: dict[str, Any] = await self._http.request("GET", f"/api/browsers/{segment(browser_id)}")
@@ -192,42 +199,19 @@ class AsyncBrowsers:
         return int(result.get("stopped", 0))
 
 
-class AsyncPlaybooks:
-    """oya.playbooks, with asyncio."""
-
-    def __init__(self, http: AsyncHttp) -> None:
-        self._http = http
-
-    async def list(self) -> builtins.list[dict[str, Any]]:
-        """Every playbook on this key."""
-        result: builtins.list[dict[str, Any]] = (await self._http.request("GET", "/api/playbooks")).get("playbooks", [])
-        return result
-
-    async def get(self, name: str) -> dict[str, Any]:
-        """One playbook, with its steps, variables and Playwright code."""
-        result: dict[str, Any] = await self._http.request("GET", _playbook(name))
-        return result
-
-    async def export(self, name: str) -> dict[str, Any]:
-        """A playbook as a portable document, to import on another key or keep."""
-        result: dict[str, Any] = await self._http.request("GET", f"{_playbook(name)}/export")
-        return result
-
-    async def remove(self, name: str) -> None:
-        """Deletes a playbook."""
-        await self._http.request("DELETE", _playbook(name))
-
-
-class AsyncOya:
+class AsyncOya(_Client):
     """The asyncio client. Use it as an async context manager, or await aclose()."""
+
+    signup = staticmethod(async_signup)
+    """await AsyncOya.signup(email): Oya.signup with asyncio."""
 
     def __init__(
         self, api_key: str | None = None, base_url: str | None = None, client: httpx.AsyncClient | None = None
     ):
-        origin = resolve(api_key, base_url)
-        self._http = AsyncHttp(origin, client)
+        self._http: AsyncHttp = AsyncHttp(resolve(api_key, base_url), client)
+        super().__init__(self._http)
         self.browser = AsyncBrowsers(self._http)
-        self.playbooks = AsyncPlaybooks(self._http)
+        self.desktop = AsyncDesktop(self._http, self.browser.list)
 
     async def aclose(self) -> None:
         """Closes the connection pool; running browsers keep running until stopped."""

@@ -27,7 +27,31 @@ WAIT_FOR_GRACE_S = 5.0
 """Extra request time on top of wait_for()'s own timeout, so the server answers first."""
 MS_PER_SECOND = 1000
 """The API takes wait_for()'s timeout in milliseconds."""
+AIMED_SCROLL_AMOUNT = 500
+"""Pixels an aimed scroll (scroll(at=...)) moves when no amount is given."""
+SHARE_EXPIRES_S = 3600
+"""How long a share_url() link works by default."""
+RUN_POLL_S = 2.0
+"""How often a submitted run is polled by default."""
+MAX_RUN_POLL_ERRORS = 5
+"""Failed polls in a row before a run is reported as failed."""
+DESKTOP_TIMEOUT_S = 300.0
+"""How long desktop.connect() waits for a person to click Connect (and allow the keychain prompt)."""
+DESKTOP_PROVIDER = "oya-desktop"
+"""The provider the server names the Oya desktop app by."""
+DESKTOP_DOWNLOAD_URL = "https://oyabrowser.com/#download"
+"""Where the desktop app is downloaded."""
+BYTES_PER_MB = 1_048_576
+"""Bytes in a megabyte, for file limits and messages."""
+MAX_FILE_MB = 10
+"""Largest task file: bigger and the server would refuse the body anyway."""
+PRIVATE_FILE = 0o600
+"""Owner read and write only: the saved config holds a key."""
+JSON_INDENT = 2
+"""Indent of the saved config, as `oya login` writes it."""
 
+STATUS_UNKNOWN = 0
+"""A failure that was not an HTTP answer, such as a run that could not be polled."""
 STATUS_NOT_FOUND = 404
 """A session not recorded yet, which is fine while a browser starts."""
 STATUS_CONFLICT = 409
