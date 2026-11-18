@@ -119,6 +119,14 @@ const METHODS: Record<string, (session: NativeProtocol, command: NativeCommand) 
     !c.params.targetId && s.browserSession(c) && !s.pinned
       ? { targetInfo: BROWSER_TARGET }
       : { targetInfo: s.target(c.params.targetId || s.targetId(c)) },
+  /**
+   * Why `Target.createTarget` takes `background` without acting on it. browser-use (1.x, through its
+   * browser-harness daemon) opens its working tab with `background: true`, and refusing it refused it at its first command. Oya cannot open a tab without laying it out: a tab that is never laid out has a 0x0
+   * viewport, which breaks pages and marks the browser as a bot (tabs.openForAutomation). So the tab
+   * opens as every automation tab does. Isolation is unchanged: the same persona, egress and
+   * protection path opens it, and options that would change where or how it opens (newWindow, a
+   * window size) are still refused.
+   */
   'Target.createTarget': async (s, c) => ({
     targetId: await s.backend.open(
       address({ url: 'about:blank', ...c.params }),
