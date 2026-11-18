@@ -1,11 +1,12 @@
 # Packages architecture
 
-Two published packages live here, both MIT and both built with tsup:
+Three published packages live here, all MIT. The two npm packages are built with tsup:
 
 | Package | Path | What it is |
 |:---|:---|:---|
 | `@oya-ai/browser` | `sdk/` | The TypeScript client for the control plane. Zero runtime dependencies; runs in Node 20+ and in browsers. |
 | `@oya-ai/cli` | `cli/` | The `oya` command: login, onboarding, browsers, personas and their cookies, the control plane, and the `oya install` wizard. The SDK is bundled into its single file. |
+| `oya-browser` (PyPI) | `python/` | The Python client: the TS SDK's core (start, drive, ask, playbooks) sync and async, with `for_browser_use()` for browser-use. One runtime dependency, httpx; checked with ruff, mypy --strict and pytest. |
 
 The standards every part shares (size limits, documentation, no magic numbers)
 are in the root [ARCHITECTURE.md](../ARCHITECTURE.md). The rules are enforced

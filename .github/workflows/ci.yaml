@@ -88,6 +88,21 @@ jobs:
       - run: npm run test:packages
       - run: npm run test:scripts
 
+  python-sdk:
+    name: Python SDK
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --group dev
+      - run: uv run ruff format --check src tests
+      - run: uv run ruff check src tests
+      - run: uv run mypy
+      - run: uv run pytest -q
+
   desktop:
     name: Desktop unit and regressions
     runs-on: ubuntu-24.04
