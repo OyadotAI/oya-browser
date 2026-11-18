@@ -30,10 +30,12 @@ import AiBrowserChatgptClaude, { metadata as planMetadata } from '@/app/ai-brows
 import BestBrowserForAiAgents, { metadata as bestInfraMetadata } from '@/app/best-browser-for-ai-agents/page';
 import BestPayerPortalAutomation, { metadata as bestPortalMetadata } from '@/app/best-payer-portal-automation/page';
 import BestAiBrowser, { metadata as bestAiMetadata } from '@/app/best-ai-browser/page';
+import BaaPage, { metadata as baaMetadata } from '@/app/baa/page';
 import {
   AGENTIC_BROWSER,
   AI_BROWSER,
   ANSWER_PAGES,
+  BAA,
   BEST_AI_BROWSER,
   BEST_INFRA,
   BEST_PORTAL,
@@ -142,6 +144,7 @@ const PAGES = [
     content: BEST_PORTAL,
   },
   { name: 'best-ai-browser', Page: BestAiBrowser, metadata: bestAiMetadata, content: BEST_AI_BROWSER },
+  { name: 'baa', Page: BaaPage, metadata: baaMetadata, content: BAA },
 ];
 
 /** The FAQPage structured data the page rendered. */

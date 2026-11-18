@@ -57,20 +57,21 @@ export const INFRA_ROWS: Row[] = [
   { key: 'price', label: 'Free tier, then first paid plan' },
 ];
 
-/** Oya, in the site's own words (see _home/content.ts and OYA_CONTROLS). */
+/** Oya, in the site's own words (see _home/content.ts and OYA_CONTROLS) and its trust center (enterprise.oyabrowser.com/trust). */
 export const OYA: Vendor = {
   name: 'Oya',
   cells: {
-    baa: 'Yes, on Oya Cloud and the enterprise edition',
+    baa: 'Yes: HIPAA mode on Oya Cloud (BAA on request) or self-hosted in your own cloud',
     soc2: 'Type II audit in progress',
     selfHost:
       'Enterprise edition on Docker, ECS, GCP or Kubernetes, with a BAA; community edition free up to 5 browsers',
     replay: 'Yes: playbooks, and the agent repairs only a step that moved',
     code: 'Yes: every playbook is a readable Playwright module that runs on any Chromium browser over CDP',
-    audit: 'Hash-chained rows the database refuses to edit or delete, kept 365 days at least',
+    audit: 'Append-only and hash-chained; every read of ePHI audited; kept six years in HIPAA mode',
     secrets: 'Passwords and TOTP seeds are sealed and never shown to the model',
     takeover: 'Watch live, take over, hand back',
-    providers: 'Yes: Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, with failover',
+    providers:
+      'Yes: Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, with failover; HIPAA mode uses no outside browser vendors',
     price: 'Free desktop app and 1 cloud browser hour; $20 a month for 100 hours',
     kind: 'Self-serve: desktop app, Oya Cloud, or your own infrastructure',
     mfa: 'Sealed TOTP; staff take over for a text-message code and hand back',
