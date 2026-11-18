@@ -4,7 +4,9 @@ import { test, expect } from '@playwright/test';
 test('landing is readable at desktop and mobile widths without changing the app theme', async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('oya_theme', 'dark'));
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Automate portal work. Keep control.');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+    'Build browser automations on your desktop. Deploy them anywhere.',
+  );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.locator('main').evaluate((el) => getComputedStyle(el.parentElement!).backgroundColor)).toBe(
     'rgb(255, 255, 255)',
