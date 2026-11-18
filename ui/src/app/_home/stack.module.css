@@ -1,0 +1,51 @@
+/* The "change one line" list: who it is for beside the one line, the line scrolling sideways on a phone rather than
+   wrapping, since a wrapped line of code is no longer the line someone pastes. */
+.lead {
+  max-width: 640px;
+  margin-top: 12px;
+  color: var(--muted);
+}
+.lines {
+  display: grid;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 0;
+  list-style: none;
+}
+.line {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 6px 20px;
+  align-items: baseline;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+}
+.who {
+  font-weight: 500;
+}
+.lang {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.code {
+  overflow-x: auto;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 13px;
+  white-space: pre;
+}
+.note {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+@media (max-width: 760px) {
+  .line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .note {
+    grid-column: 1;
+  }
+}

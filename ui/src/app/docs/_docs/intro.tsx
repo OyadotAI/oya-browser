@@ -1,11 +1,12 @@
 /**
- * The top of the docs: what Oya is in one line, and cards into the sections a
- * developer needs first, the quickstart leading.
+ * The top of the docs: what Oya is in one line, the one line each existing stack changes to run on Oya (most
+ * readers arrive with an agent already written), and cards into the sections a developer needs first.
  */
 'use client';
 
 import { ArrowUpRight } from 'lucide-react';
 import { useDocsNav } from './nav';
+import { DocsStack } from './stack';
 
 /** [section id, title, description] for each card. */
 const CARDS = [
@@ -40,6 +41,7 @@ export function DocsIntro() {
         Your agent does a task once in plain language. Oya saves it as Playwright code and replays it with no model,
         signed in like your staff and never flagged as a bot. Start with the quickstart: three steps, three minutes.
       </p>
+      <DocsStack />
       <div data-md="skip" className="mb-14 grid gap-3 grid-cols-2 lg:grid-cols-3">
         {CARDS.map(([id, title, description]) => (
           <a

@@ -11,6 +11,7 @@ import { EnterpriseCapabilities } from './_home/enterprise-capabilities';
 import { ProductDemo } from './_home/product-demo';
 import { ControlPlaneOverview } from './_home/control-plane-overview';
 import { Statement } from './_home/statement';
+import { BringYourStack } from './_home/bring-your-stack';
 import { Integrations } from './_home/integrations';
 import { Faq } from './_home/faq';
 import { Closing } from './_home/closing';
@@ -34,6 +35,7 @@ export default async function Home() {
             <ProductDemo />
           </div>
         </div>
+        <BringYourStack />
         <Statement />
         <section className="section" aria-labelledby="architecture-h">
           <div className="wrap">
