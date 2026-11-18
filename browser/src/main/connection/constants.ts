@@ -101,3 +101,13 @@ export const HttpStatus = {
 
 /** Follow background playbook runs without depending on the visible panel. */
 export const PLAYBOOK_POLL_MS = 1000;
+
+/**
+ * How long a chat whose connection dropped keeps trying to collect its run: just under the
+ * window the server keeps an unheard run for (OYA_CHAT_GRACE_MS, 120s), after which there is none.
+ */
+export const REATTACH_WAIT_MS = 110_000;
+/** The pause between tries at collecting a run while the server cannot be reached. */
+export const REATTACH_RETRY_MS = 2_000;
+/** How long the call that stops a run on the server may take before it is given up. */
+export const CHAT_STOP_TIMEOUT_MS = 10_000;

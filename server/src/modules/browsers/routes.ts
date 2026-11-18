@@ -22,6 +22,7 @@ import { provision, deleteSandbox } from './http/provision.ts';
 import { cloudNeedsPerson } from './http/cloud-gate.ts';
 import { runCommand, chat } from './http/command.ts';
 import { endCallerLane } from './http/lane.ts';
+import { resumeChat, stopChat } from './http/chat-resume.ts';
 
 export { startBrowser } from './lifecycle/start.ts';
 export { stopBrowser } from './lifecycle/stop.ts';
@@ -112,6 +113,15 @@ router.post('/browsers/:browserId/command', authMiddleware, enforce('command'), 
 
 /** POST /browsers/:browserId/lane/end, the caller's lane (X-Oya-Agent) is done: a desktop closes the tab it worked in. */
 router.post('/browsers/:browserId/lane/end', authMiddleware, enforce('command'), requireBrowser, endCallerLane);
+
+/**
+ * POST /browsers/:browserId/chat/resume, waits for the answer of a desktop chat run whose connection dropped.
+ * No requireBrowser: the desktop's socket is usually down too, and a 404 here means "no run", nothing else.
+ */
+router.post('/browsers/:browserId/chat/resume', authMiddleware, enforce('command'), resumeChat);
+
+/** POST /browsers/:browserId/chat/stop, stops the caller's chat run in a lane (the desktop's Stop). */
+router.post('/browsers/:browserId/chat/stop', authMiddleware, enforce('command'), stopChat);
 
 /** POST /browsers/:browserId/chat, LLM + MCP tools for natural-language browser control. */
 router.post('/browsers/:browserId/chat', authMiddleware, enforce('chat'), requireBrowser, chat);

@@ -75,6 +75,7 @@ import { CommandRunner } from './connection/commands.ts';
 import { Mirror } from './mirror/mirror.ts';
 import { LibraryImport } from './mirror/index.ts';
 import { ChatgptAuth, Onboarding } from './chatgpt/index.ts';
+import { ChatTabs } from './connection/chat-tabs.ts';
 import { BrowserWindows } from './windows/index.ts';
 import { IncognitoSession } from './incognito/index.ts';
 import { type AnalysisResult } from './shell/control-shield.ts';
@@ -234,10 +235,14 @@ ctx.agentTab = new AgentTab(ctx, () => {
     scope.tabs.sendTabList();
   });
 });
+/** Keeps each chat in flight in its tab across a dropped socket. */
+const chatTabs = new ChatTabs(ctx);
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
   changed: (state) => {
+    chatTabs.note();
     ctx.agentTab.sync(state);
+    chatTabs.restore();
     ctx.passkeys.sync();
     void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
     ctx.dialogs.controlChanged();

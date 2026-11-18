@@ -32,7 +32,7 @@ export function inLane<T>(lane: unknown, work: () => T): T {
 }
 
 /** The running command's lane. */
-const currentLane = (): string => lanes.getStore() ?? DEFAULT_LANE;
+export const currentLane = (): string => lanes.getStore() ?? DEFAULT_LANE;
 
 /**
  * Whether `lane` is an SDK browser's: a script driving the person's desktop names one lane for its

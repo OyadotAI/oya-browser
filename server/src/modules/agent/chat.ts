@@ -29,6 +29,7 @@ export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
 export { NEEDS_INPUT, billUsage } from './loop.ts';
+export { resumableRuns, runKey, type HeldRun } from './resumable-runs.ts';
 export { requireLlmAllowed, allowedLlm } from './llm-policy.ts';
 export { executeTool } from './executor.ts';
 export { LIBRARY_TOOL_NAMES } from './library-tools.ts';

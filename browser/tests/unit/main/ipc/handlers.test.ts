@@ -389,12 +389,13 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
-  it('explains a chat the server hung up on mid-run, as a restart does, instead of saying "terminated"', async () => {
+  it('explains a chat cut mid-run whose run the server no longer has, instead of saying "terminated"', async () => {
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
-    const fetch = mock.method(globalThis, 'fetch', async () => {
-      throw new TypeError('terminated');
+    const fetch = mock.method(globalThis, 'fetch', async (url: string) => {
+      if (url.endsWith('/chat')) throw new TypeError('terminated');
+      return new Response(JSON.stringify({ error: 'No chat run to resume' }), { status: 404 });
     });
-    assert.match((await call('send-chat', [{ role: 'user' }])).error, /dropped mid-run, likely a server restart/);
+    assert.match((await call('send-chat', [{ role: 'user' }])).error, /dropped and the run could not be resumed/);
     fetch.mock.restore();
   });
 
