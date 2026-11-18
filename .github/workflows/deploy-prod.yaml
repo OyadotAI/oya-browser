@@ -683,6 +683,34 @@ jobs:
           npm publish --workspace="$PKG" --provenance
         done
 
+  publish-pypi:
+    name: Publish the Python SDK to PyPI
+    # After the deploy, for the same reason as npm: a new SDK never calls a route the
+    # server does not have yet. PyPI Trusted Publishing: PyPI accepts this workflow in this
+    # repo, by OIDC, so there is no PyPI token to leak or rotate. oya-browser must list
+    # OyadotAI/oya-browser and deploy-prod.yaml as its trusted publisher on pypi.org.
+    # The Python SDK versions on its own (pyproject.toml), so most tags carry a version
+    # that is already out; skip-existing makes that a no-op, not a failure.
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && hashFiles('packages/python/pyproject.toml') != '' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: astral-sh/setup-uv@v6
+
+    - name: Build
+      working-directory: packages/python
+      run: uv build
+
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: packages/python/dist/
+        skip-existing: true
+
   publish-registry:
     name: Publish to MCP Registry
     # After the deploy, so the listing never points at tools that are not live
