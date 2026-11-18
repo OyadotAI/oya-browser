@@ -27,10 +27,16 @@ import ProviderEnrollmentAutomation, {
 import StateRegistryAutomation, { metadata as registriesMetadata } from '@/app/state-registry-automation/page';
 import BrowserForClaudeCode, { metadata as codingAgentMetadata } from '@/app/browser-for-claude-code/page';
 import AiBrowserChatgptClaude, { metadata as planMetadata } from '@/app/ai-browser-chatgpt-claude/page';
+import BestBrowserForAiAgents, { metadata as bestInfraMetadata } from '@/app/best-browser-for-ai-agents/page';
+import BestPayerPortalAutomation, { metadata as bestPortalMetadata } from '@/app/best-payer-portal-automation/page';
+import BestAiBrowser, { metadata as bestAiMetadata } from '@/app/best-ai-browser/page';
 import {
   AGENTIC_BROWSER,
   AI_BROWSER,
   ANSWER_PAGES,
+  BEST_AI_BROWSER,
+  BEST_INFRA,
+  BEST_PORTAL,
   CODING_AGENT_BROWSER,
   PLAN_BROWSER,
   CLAIM_STATUS,
@@ -123,6 +129,19 @@ const PAGES = [
     content: CODING_AGENT_BROWSER,
   },
   { name: 'ai-browser-chatgpt-claude', Page: AiBrowserChatgptClaude, metadata: planMetadata, content: PLAN_BROWSER },
+  {
+    name: 'best-browser-for-ai-agents',
+    Page: BestBrowserForAiAgents,
+    metadata: bestInfraMetadata,
+    content: BEST_INFRA,
+  },
+  {
+    name: 'best-payer-portal-automation',
+    Page: BestPayerPortalAutomation,
+    metadata: bestPortalMetadata,
+    content: BEST_PORTAL,
+  },
+  { name: 'best-ai-browser', Page: BestAiBrowser, metadata: bestAiMetadata, content: BEST_AI_BROWSER },
 ];
 
 /** The FAQPage structured data the page rendered. */
@@ -185,6 +204,32 @@ describe.each(PAGES)('/$name', ({ Page, metadata, content }) => {
   it('never claims HIPAA without naming Oya Cloud or the enterprise edition', () => {
     const text = [content.lead, ...content.sections.map((s) => s.body), ...content.faq.map((f) => f.a)].join(' ');
     if (/HIPAA[- ]compliant|sign BAAs/i.test(text)) expect(text).toMatch(/Oya Cloud|enterprise edition/);
+  });
+
+  it('cites dated vendor sources whenever it compares other companies in a table', () => {
+    if (!content.sections.some((s) => s.table)) return;
+    expect(content.sources?.checked).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(content.sources?.links.length).toBeGreaterThan(0);
+    for (const { url } of content.sources?.links ?? []) expect(url).toMatch(/^https:\/\//);
+  });
+
+  it('gives every table row a cell for every column, and shows each one', () => {
+    const tables = content.sections.flatMap((s) => (s.table ? [s.table] : []));
+    if (tables.length === 0) return;
+    const { container } = render(<Page />);
+    for (const { caption, columns, rows } of tables) {
+      for (const row of rows) expect(row.length).toBe(columns.length);
+      const table = [...container.querySelectorAll('table')].find((t) => t.caption?.textContent === caption);
+      expect(table?.querySelectorAll('tbody tr').length).toBe(rows.length);
+    }
+  });
+
+  it('links each source it lists', () => {
+    if (!content.sources) return;
+    const { container } = render(<Page />);
+    const sources = container.querySelector('section[aria-labelledby="sources"]');
+    expect(sources?.textContent).toContain(content.sources.checked);
+    for (const { url } of content.sources.links) expect(sources?.querySelector(`a[href="${url}"]`)).toBeTruthy();
   });
 });
 

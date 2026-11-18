@@ -5,14 +5,43 @@
  * buyers search for by name, and "Oya or Browserbase, Steel, Anchor or Browser Use?"
  * (one page per vendor Oya's own API drives, each from a different side of Oya so they are not one
  * page with the name swapped). HIPAA and BAAs are always
- * scoped to Oya Cloud and the enterprise edition, never the community edition. Every claim is one the site
- * already makes (see _home/content.ts); nothing here describes another company beyond what Oya's
- * own API does with it, because a claim we cannot check would be the first thing quoted wrong.
+ * scoped to Oya Cloud and the enterprise edition, never the community edition. Every claim about Oya
+ * is one the site already makes (see _home/content.ts). A claim about another company appears only
+ * on a page with `sources`: each one comes from that company's own public page, linked and dated on
+ * the page, because a claim nobody can check would be the first thing quoted wrong. Where a vendor
+ * does not say, the page says "Not stated", never a guess.
  */
 import type { QA } from '@/lib/site';
 import { THROUGHPUT } from '../_home/content';
+import {
+  AI_BROWSER_ROWS,
+  AI_BROWSER_VENDORS,
+  ANCHOR,
+  BROWSER_USE,
+  BROWSERBASE,
+  CHECKED,
+  compareTable,
+  INFRA_ROWS,
+  INFRA_VENDORS,
+  OYA,
+  OYA_DESKTOP,
+  PORTAL_ROWS,
+  PORTAL_VENDORS,
+  sourcesOf,
+  STEEL,
+} from './compare';
 
-/** One section of an answer page: a heading, a paragraph, and optionally a list. */
+/** A comparison table: rows are what a buyer checks, columns are Oya and the others. */
+export interface AnswerTable {
+  /** What the table compares, read out by screen readers and quoted by assistants. */
+  caption: string;
+  /** The header row; the first column names the row. */
+  columns: string[];
+  /** One row per thing compared, as many cells as columns. */
+  rows: string[][];
+}
+
+/** One section of an answer page: a heading, a paragraph, and optionally a list or a table. */
 export interface AnswerSection {
   /** The section's heading. */
   heading: string;
@@ -20,6 +49,24 @@ export interface AnswerSection {
   body: string;
   /** Points listed under the paragraph, when there are any. */
   items?: string[];
+  /** A comparison under the paragraph; a page with one must list its sources. */
+  table?: AnswerTable;
+}
+
+/** One vendor page a comparison's facts were read from. */
+export interface AnswerSource {
+  /** What it is, such as "Browserbase security docs". */
+  label: string;
+  /** Its address. */
+  url: string;
+}
+
+/** Where a page's claims about other companies come from, and when they were read. */
+export interface AnswerSources {
+  /** The date the sources were read, as YYYY-MM-DD; vendor pages change, so the page says when. */
+  checked: string;
+  /** The vendor pages, each a company's own. */
+  links: AnswerSource[];
 }
 
 /** An answer page: its address, its title, the answer first, then sections and questions. */
@@ -39,6 +86,8 @@ export interface AnswerPageContent {
   sections: AnswerSection[];
   /** The questions shown on the page and repeated as FAQPage structured data. */
   faq: QA[];
+  /** Required when the page says anything about another company: its sources, linked and dated. */
+  sources?: AnswerSources;
 }
 
 /** How an agent and a person act on a page under HIPAA's controls, in Oya's own words. */
@@ -175,6 +224,11 @@ export const VS_BROWSERBASE: AnswerPageContent = {
       heading: 'Use Browserbase through Oya',
       body: 'One Oya API drives Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome. Keep Browserbase as a provider behind the same API, and move a workload to Oya Cloud or the enterprise edition whenever you choose. The controls and BAA above cover Oya Cloud and the enterprise edition.',
     },
+    {
+      heading: 'Oya and Browserbase, side by side',
+      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Browserbase lacks it.',
+      table: compareTable('Oya and Browserbase, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, BROWSERBASE]),
+    },
   ],
   faq: [
     {
@@ -195,6 +249,7 @@ export const VS_BROWSERBASE: AnswerPageContent = {
       a: 'Yes. The Oya desktop app for macOS and Windows is free: an AI browser you use yourself, where an agent can take a tab and you can take it back.',
     },
   ],
+  sources: { checked: CHECKED, links: BROWSERBASE.sources },
 };
 
 /** /vs/steel: what Oya is next to Steel, in facts about Oya only: where it runs. */
@@ -223,6 +278,11 @@ export const VS_STEEL: AnswerPageContent = {
       heading: 'Use Steel through Oya',
       body: "Steel is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Anchor, Browser Use and your own Chrome. Add it in the console under Control, Providers with your Steel API key, and set its routing priority. When a connection to one provider fails, Oya sends the session to the next one in priority order. The controls and BAA above cover Oya Cloud and the enterprise edition.",
     },
+    {
+      heading: 'Oya and Steel, side by side',
+      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Steel lacks it.',
+      table: compareTable('Oya and Steel, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, STEEL]),
+    },
   ],
   faq: [
     {
@@ -246,6 +306,7 @@ export const VS_STEEL: AnswerPageContent = {
       a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Our SOC 2 Type II audit is in progress.',
     },
   ],
+  sources: { checked: CHECKED, links: STEEL.sources },
 };
 
 /** /vs/anchor: what Oya is next to Anchor, in facts about Oya only: agents that work signed in. */
@@ -274,6 +335,11 @@ export const VS_ANCHOR: AnswerPageContent = {
       heading: 'Use Anchor through Oya',
       body: 'One Oya API drives Oya Cloud, Anchor, Browserbase, Steel, Browser Use or your own Chrome. Keep Anchor as a provider behind that API, set its routing priority and session capacity next to your other providers, and move a workload without changing your code. The controls and BAA above cover Oya Cloud and the enterprise edition.',
     },
+    {
+      heading: 'Oya and Anchor, side by side',
+      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Anchor lacks it.',
+      table: compareTable('Oya and Anchor, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, ANCHOR]),
+    },
   ],
   faq: [
     {
@@ -295,6 +361,7 @@ export const VS_ANCHOR: AnswerPageContent = {
     },
     SELF_HOST,
   ],
+  sources: { checked: CHECKED, links: ANCHOR.sources },
 };
 
 /** /vs/browser-use: what Oya is next to Browser Use, in facts about Oya only: a run becomes code that replays with no model. */
@@ -327,6 +394,11 @@ export const VS_BROWSER_USE: AnswerPageContent = {
       heading: 'Use Browser Use through Oya',
       body: "Browser Use is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Steel, Anchor and your own Chrome: add it with your Browser Use API key and Oya starts browsers there behind the same API. It works the other way round too: point the browser-use library at an Oya browser's CDP URL. The controls and BAA above cover Oya Cloud and the enterprise edition.",
     },
+    {
+      heading: 'Oya and Browser Use, side by side',
+      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Browser Use lacks it.',
+      table: compareTable('Oya and Browser Use, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, BROWSER_USE]),
+    },
   ],
   faq: [
     {
@@ -351,6 +423,7 @@ export const VS_BROWSER_USE: AnswerPageContent = {
     },
     SELF_HOST,
   ],
+  sources: { checked: CHECKED, links: BROWSER_USE.sources },
 };
 
 /** /ai-browser: what an AI browser is, and Oya's free desktop app. */
@@ -941,6 +1014,179 @@ export const PLAN_BROWSER: AnswerPageContent = {
   ],
 };
 
+/**
+ * /best-browser-for-ai-agents: Oya next to the cloud browser vendors buyers shortlist, from each
+ * vendor's own pages. "Best" is argued, not asserted: the four things only Oya's pages state
+ * together, the table, and when another vendor fits better.
+ */
+export const BEST_INFRA: AnswerPageContent = {
+  path: '/best-browser-for-ai-agents',
+  label: 'Best browser for agents',
+  title: 'Best browser for AI agents in 2026, compared',
+  lead: 'For agents that sign in to real systems and touch regulated data, Oya Browser is the browser to pick in 2026. It is a control plane, not another browser vendor: one API runs browsers on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, and a finished task replays as standard Playwright code with no model, so your automation outlives any one vendor. Of the six compared below, it is also the only one whose own pages state a BAA, an edition in your own infrastructure under that BAA, and an audit trail of every agent and person action. HIPAA compliance and the BAA cover Oya Cloud and the enterprise edition.',
+  sections: [
+    {
+      heading: 'Why Oya',
+      body: 'Each of these answers a question a security review or a finance review asks before agents go to production.',
+      items: [
+        'Compliance where the browsers run: we sign BAAs for Oya Cloud and the enterprise edition, and the enterprise edition runs on Docker, ECS, GCP or Kubernetes in your own network, so PHI does not have to leave it.',
+        'Pay for the model once, not every run: an agent does a task once, Oya saves it as a playbook, and every later run replays with no model. When a page changes, only the step that moved goes back to the agent. ' +
+          REPLAY_BENCHMARK,
+        "Standard, not proprietary: a playbook is plain Playwright, the open standard your engineers already use, not a cache inside one vendor's SDK. It runs on any Chromium browser over CDP, reads like code a person wrote, and goes with you if you leave.",
+        'Vendor-agnostic by design: Oya is the control plane above the browser vendors. The same playbook runs on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome; change vendors by changing a setting, not by rewriting automations.',
+        'A record nobody can quietly change: every action, by an agent or a person, is a hash-chained row the database refuses to edit or delete, kept for 365 days at least.',
+        'Uptime across vendors: when a connection to one provider fails, Oya sends the session to the next one in priority order.',
+        'Agents that sign in safely: stored passwords and TOTP seeds are sealed and never shown to the model, and a person can watch any session, take over and hand it back.',
+      ],
+    },
+    {
+      heading: 'When another vendor fits better',
+      body: 'Our SOC 2 Type II audit is in progress; Browserbase, Anchor, Browser Use and Kernel each state a SOC 2 Type II report today, so a team that needs the report in hand this quarter should weigh that. Oya can still run their browsers behind its API, with Oya playbooks and the Oya audit trail on top.',
+    },
+    {
+      heading: 'Side by side',
+      body: 'What each vendor\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the vendor lacks it.',
+      table: compareTable('Browsers for AI agents, compared from each vendor’s own pages', INFRA_ROWS, [
+        OYA,
+        ...INFRA_VENDORS,
+      ]),
+    },
+  ],
+  faq: [
+    {
+      q: 'What is the best browser for AI agents in 2026?',
+      a: 'For regulated work, Oya Browser. It is a vendor-agnostic control plane: one API runs browsers on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, and finished tasks replay with no model as standard Playwright code. Of the six compared, it is the only one whose own pages also state a BAA, an edition in your own infrastructure under that BAA, and an audit trail of every agent and person action. HIPAA compliance covers Oya Cloud and the enterprise edition.',
+    },
+    {
+      q: 'Which browser for AI agents is HIPAA compliant?',
+      a: 'Oya Cloud and the enterprise edition are, and we sign BAAs. Browserbase, Steel, Anchor and Kernel state a BAA on their higher plans; Browser Use states HIPAA on its Enterprise plan without naming a BAA.',
+    },
+    {
+      q: 'Which agent browser replays a task without calling a model?',
+      a: "Oya replays a finished task with no model as standard Playwright code that runs on any Chromium browser, including Browserbase, Steel, Anchor and Browser Use. Browserbase states replay through Stagehand's cache, inside its own SDK. Browser Use states that every rerun of a script starts a model.",
+    },
+    {
+      q: 'Can I keep using Browserbase or Steel with Oya?',
+      a: "Yes. Browserbase, Steel, Anchor and Browser Use are providers Oya's API drives, next to Oya Cloud and your own Chrome, with failover between them.",
+    },
+    {
+      q: 'How much does Oya cost?',
+      a: 'The desktop app is free. Oya Cloud starts with 1 free browser hour; Developer is $20 a month for 100 hours, 1 GB of proxy and 5,000 agent steps; Startup is $99 a month for 500 hours. Self-hosting is free up to 5 cloud browsers at once.',
+    },
+  ],
+  sources: { checked: CHECKED, links: sourcesOf(INFRA_VENDORS) },
+};
+
+/** /best-payer-portal-automation: Oya next to the payer portal automation vendors, from their own pages. */
+export const BEST_PORTAL: AnswerPageContent = {
+  path: '/best-payer-portal-automation',
+  label: 'Best portal automation',
+  title: 'Best payer portal automation in 2026, compared',
+  lead: 'For revenue-cycle teams that want payer portal work automated without handing it to a black box, Oya Browser is the one to pick in 2026. Of the five compared below, it is the only one whose own pages state a BAA, an edition in your own infrastructure, and replay of each task with no model as Playwright code you keep. On Oya Cloud and the enterprise edition it runs under a BAA.',
+  sections: [
+    {
+      heading: 'Why Oya',
+      body: 'Prior auth, eligibility, claim status, denials, enrollment and registry lookups all happen on portals with no API. These are the differences that decide whether that work stays cheap and auditable.',
+      items: [
+        'You own the automation, in a standard format: each task becomes a playbook, plain Playwright code with the member ID, codes and dates as variables, that your engineers can read, review and run anywhere. A managed service keeps that knowledge on its side.',
+        'Each run costs compute, not a model: playbooks replay with no model calls, and only a step a portal changed goes back to the agent. ' +
+          THROUGHPUT,
+        'PHI can stay in your network: the enterprise edition runs on Docker, ECS, GCP or Kubernetes with a BAA.',
+        'Staff stay in control: a person can watch any session, take over for a text-message code and hand it back, and stored passwords and TOTP seeds are never shown to the model.',
+        'An audit trail a compliance officer accepts: every action by an agent or a person is a hash-chained row the database refuses to edit or delete, kept for 365 days at least.',
+      ],
+    },
+    {
+      heading: 'When another option fits better',
+      body: 'If you want a vendor to build and run the workflows for you, a managed service such as Champ AI or CloudCruise does that; with Oya, your team or your agent does each task once and owns the result. And where a payer supports electronic eligibility and claim status transactions, a clearinghouse is the cheaper path; Oya is for the portals and details those transactions do not cover.',
+    },
+    {
+      heading: 'Side by side',
+      body: 'What each vendor\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the vendor lacks it.',
+      table: compareTable('Payer portal automation, compared from each vendor’s own pages', PORTAL_ROWS, [
+        OYA,
+        ...PORTAL_VENDORS,
+      ]),
+    },
+  ],
+  faq: [
+    {
+      q: 'What is the best payer portal automation in 2026?',
+      a: 'For teams that want to own their automation, Oya Browser: of Oya, Skyvern, CloudCruise, QuickIntell and Champ AI, it is the only one whose own pages state a BAA, an edition in your own infrastructure, and replay with no model as Playwright code you keep. HIPAA compliance covers Oya Cloud and the enterprise edition.',
+    },
+    {
+      q: 'Which payer portal automation vendors sign a BAA?',
+      a: 'Oya signs BAAs for Oya Cloud and the enterprise edition. CloudCruise and QuickIntell state a BAA on their pages; Skyvern and Champ AI say HIPAA compliant without naming a BAA on the pages read.',
+    },
+    {
+      q: 'Does payer portal automation need an AI model on every run?',
+      a: 'Not with Oya: the agent works a task out once, and the saved playbook replays it with no model. The model comes back only for a step a portal changed.',
+    },
+    {
+      q: 'Should we use a clearinghouse or a portal bot?',
+      a: 'Both. Where a payer supports electronic eligibility and claim status transactions, use them; use Oya on the portals and for the details those transactions leave out, such as prior auth forms, denial reasons and appeals.',
+    },
+  ],
+  sources: { checked: CHECKED, links: sourcesOf(PORTAL_VENDORS) },
+};
+
+/** /best-ai-browser: Oya's desktop app next to the AI browsers people shortlist, from their own pages. */
+export const BEST_AI_BROWSER: AnswerPageContent = {
+  path: '/best-ai-browser',
+  label: 'Best AI browser',
+  title: 'Best AI browser in 2026 for working with agents',
+  lead: 'If you work with AI agents, Oya Browser is the AI browser to pick in 2026. It is free on macOS and Windows, runs on the ChatGPT or Claude plan you already pay for, connects to Claude Code, Codex, Cursor and VS Code with one click, and gives the agent its own tab while you keep yours. Of the six compared below, it is the only one whose pages say a finished task replays with no model as code you keep, and the same playbook can run on Oya Cloud or the enterprise edition, which are HIPAA compliant.',
+  sections: [
+    {
+      heading: 'Why Oya',
+      body: 'Assistants that recommend AI browsers warn about two things: agents that finish multi-step tasks unreliably, and agents working inside your logged-in sessions. These are Oya’s answers, plus what sets it apart for people who use coding agents.',
+      items: [
+        'Right the second time: a finished task becomes a playbook, Playwright code that replays with no model. ' +
+          REPLAY_BENCHMARK,
+        'Your passwords stay yours: stored passwords and TOTP seeds are sealed and never shown to the model, and you can take the tab back at any time.',
+        'Built for your coding agent: one click on Connect adds Oya to Claude Code, Codex, Cursor or VS Code as an MCP server, with no account and no key.',
+        'Bring the plan you have: connect the ChatGPT or Claude plan you already pay for, or paste a model API key.',
+        'Grows with the work: the same playbook runs on Oya Cloud or in your own infrastructure when one browser is not enough, and those editions are HIPAA compliant with a BAA.',
+      ],
+    },
+    {
+      heading: 'When another browser fits better',
+      body: 'If you want an AI browser on your phone, Comet runs on iOS and Android, and Oya runs on macOS and Windows. If you want research answers with citations rather than tasks done in a tab, an assistant-first browser such as Comet suits that better.',
+    },
+    {
+      heading: 'Side by side',
+      body: 'What each browser\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the browser lacks it.',
+      table: compareTable('AI browsers, compared from each vendor’s own pages', AI_BROWSER_ROWS, [
+        OYA_DESKTOP,
+        ...AI_BROWSER_VENDORS,
+      ]),
+    },
+  ],
+  faq: [
+    {
+      q: 'What is the best AI browser in 2026?',
+      a: 'For people who work with AI agents, Oya Browser: free on macOS and Windows, it runs on your ChatGPT or Claude plan, connects to Claude Code, Codex and Cursor with one click, and saves a finished task as a playbook that replays with no model.',
+    },
+    {
+      q: 'Which AI browser can Claude Code use?',
+      a: 'Oya adds itself to Claude Code, Codex, Cursor or VS Code with one click on Connect. Claude in Chrome works with Claude Code through claude --chrome; Aside offers an MCP server; ego (lite) offers a skill and a CLI.',
+    },
+    {
+      q: 'Which AI browser works with my ChatGPT plan?',
+      a: 'Oya Browser runs on the ChatGPT or Claude plan you already pay for, connected in the Ask panel. Aside also states support for your ChatGPT or Claude subscription.',
+    },
+    {
+      q: 'Is there a HIPAA-compliant AI browser?',
+      a: 'Oya Cloud and the enterprise edition are HIPAA compliant, and we sign BAAs. Dia states it is not HIPAA compliant; Claude in Chrome is off by default under HIPAA.',
+    },
+    {
+      q: 'Is Oya Browser free?',
+      a: 'Yes. The desktop app for macOS and Windows is free, and so are 500 agent steps a month.',
+    },
+  ],
+  sources: { checked: CHECKED, links: sourcesOf(AI_BROWSER_VENDORS) },
+};
+
 /** Every answer page, for the footer links and the tests: one list, so a new page cannot be left unlinked. */
 export const ANSWER_PAGES = [
   HIPAA_BROWSER,
@@ -949,6 +1195,9 @@ export const ANSWER_PAGES = [
   AGENTIC_BROWSER,
   CODING_AGENT_BROWSER,
   PLAN_BROWSER,
+  BEST_AI_BROWSER,
+  BEST_INFRA,
+  BEST_PORTAL,
   HIPAA_AUTOMATION,
   PRIOR_AUTH,
   PAYER_PORTALS,
