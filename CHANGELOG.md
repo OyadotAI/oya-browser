@@ -11,6 +11,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 - The Python SDK, [oya-browser on PyPI](https://pypi.org/project/oya-browser/): `pip install oya-browser`. The same surface as `@oya-ai/browser`, sync (`Oya`) and async (`AsyncOya`), and `browser.for_browser_use()` hands an Oya browser to browser-use in one line.
 - The home page and the docs open with the one line each stack changes to run on Oya: browser-use, Playwright (Python and TypeScript), Browserbase, and Claude Code, Codex or Cursor.
 
+### Fixed
+
+- A background run (`browser.submit()`) that brings its own login, as `secrets` or as a replay's secret variables, signs in itself instead of waiting forever for a person when no login is stored on the profile. A stored login, a refused password, a lockout, MFA and CAPTCHA still hand off as before.
+- "No CAPTCHA solver configured" and "<vendor> is not configured" now say where to fix it on a hosted key: the console's Settings tab or `oya.config.set(...)`, with the server variable only for self-hosting.
+- The `@oya-ai/browser` README: the portal example saves its login on the profile, `analyze()` asks for markdown, `extract()` is typed, and the `login` attention reason is listed.
+
 ## [1.0.249](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.249) · 2026-11-18
 
 ### Added

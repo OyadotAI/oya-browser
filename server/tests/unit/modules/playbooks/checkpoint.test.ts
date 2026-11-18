@@ -45,6 +45,21 @@ describe('checkpointFor', () => {
     );
   });
 
+  it('leaves a login page with nothing stored to a run that brought its own login, and still parks on the rest', async () => {
+    detected = { present: true, type: 'recaptcha' };
+    const requestHuman = mock.fn(async () => 'done');
+    await checkpointFor(KEY, BROWSER, requestHuman, { ownLogin: true })();
+    assert.deepEqual(
+      requestHuman.mock.calls.map((c) => c.arguments[0].reason),
+      ['captcha', 'mfa'],
+    );
+    assert.equal(
+      events.find((e) => e.type === 'login.failed'),
+      undefined,
+      'a login the run types itself is not a failed sign-in',
+    );
+  });
+
   it('parks on a person for a CAPTCHA, a sign-in and an MFA prompt it cannot clear, in that order', async () => {
     detected = { present: true, type: 'recaptcha' };
     const requestHuman = mock.fn(async () => 'done');

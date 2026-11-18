@@ -106,7 +106,9 @@ describe('acquire a hosted vendor session', () => {
     });
     await assert.rejects(acquire({ provider: 'steel', env: {} }), {
       status: Status.CONFLICT,
-      message: 'steel is not configured, set STEEL_API_KEY',
+      message:
+        "steel is not configured. Add steel_api_key in Settings > Browsers, or call oya.config.set({ steel_api_key: '...' }). " +
+        'Self-hosting: set STEEL_API_KEY on the server.',
     });
   });
 
