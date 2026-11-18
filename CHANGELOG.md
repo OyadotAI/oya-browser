@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.252](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.252) · 2026-11-18
+
 ### Added
 
 - The Python SDK, `oya-browser` 0.2.2: `Oya(model={"provider": ..., "name": ..., "api_key": ...})` picks the model for one client, as `@oya-ai/browser` does, and `oya.personas.create`, `clone` and `update` take keyword arguments (`create(name="us", max_concurrent=2)`), with a dict still accepted.
