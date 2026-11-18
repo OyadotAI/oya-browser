@@ -9,6 +9,11 @@ methods pass through to that exact tab's own debugger (see "Page-session
 passthrough" below); that is the only place Electron's debugger is used, and
 `OYA_CDP_PASSTHROUGH=0` turns it off.
 
+`Target.createTarget` takes `url`, `browserContextId` and `background`. `background` is
+accepted so clients that send it (browser-use 1.x) connect, but the tab opens as every
+automation tab does, laid out: a tab Oya never lays out has a 0x0 viewport. Options that change
+where or how a tab opens (`newWindow`, a window size) are refused.
+
 ## Page-session passthrough
 
 Playwright, Puppeteer and Stagehand correlate frame, execution-context, node and
