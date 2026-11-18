@@ -14,6 +14,7 @@ it('introduces itself on initialize, with tools and how to behave', async () => 
   assert.equal(reply.result.serverInfo.name, 'Oya Browser');
   assert.ok(reply.result.capabilities.tools);
   assert.match(reply.result.instructions, /own tab/);
+  assert.match(reply.result.instructions, /in place of other browser tools/);
 });
 
 it('lists the same tools the hosted MCP offers', async () => {
