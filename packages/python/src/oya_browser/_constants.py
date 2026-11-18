@@ -47,6 +47,8 @@ MAX_FILE_MB = 10
 """Largest task file: bigger and the server would refuse the body anyway."""
 PRIVATE_FILE = 0o600
 """Owner read and write only: the saved config holds a key."""
+PRIVATE_DIR = 0o700
+"""~/.oya, created owner-only, so no other user can list or replace the key file in it."""
 JSON_INDENT = 2
 """Indent of the saved config, as `oya login` writes it."""
 
