@@ -9,6 +9,7 @@ const DESKTOP = '(min-width: 1024px)';
 /** Resets disclosures on layout changes without leaving document state behind. */
 function useLayoutReset(close: () => void) {
   useEffect(() => {
+    if (!window.matchMedia) return;
     const query = window.matchMedia(DESKTOP);
     query.addEventListener('change', close);
     return () => query.removeEventListener('change', close);

@@ -23,7 +23,8 @@ export const useDocsNav = () => useContext(DocsNav);
 
 /** Scrolls a section into view, if it exists. */
 export function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  document.getElementById(id)?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
 }
 
 /** The last heading at or above the activation line. */

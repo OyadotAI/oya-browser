@@ -48,9 +48,9 @@ export function ControlPlaneOverview() {
             <p>{detail}</p>
             {index === 1 && (
               <div className={styles.controlTags}>
-                <span>Orchestrate</span>
-                <span>Govern</span>
-                <span>Observe</span>
+                <span>Run work</span>
+                <span>Set access</span>
+                <span>Review runs</span>
               </div>
             )}
             {index < CONTROL_STAGE_COUNT - 1 && <ArrowRight className={styles.arrow} size={18} aria-hidden="true" />}

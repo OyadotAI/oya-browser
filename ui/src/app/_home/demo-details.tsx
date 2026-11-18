@@ -58,7 +58,6 @@ export function DemoDetails({ task, step }: DetailsProps) {
           <ListChecks size={16} aria-hidden="true" />
           View audit trail
         </button>
-        <span>Interactive simulation · Synthetic data</span>
       </div>
       <div className={styles.drawer} hidden={!details.open}>
         <button className={styles.close} type="button" aria-label="Close details" onClick={details.close}>

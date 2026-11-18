@@ -89,7 +89,7 @@ export default function ProfileDialog({ open, onClose }: Props) {
           <button
             onClick={() => void s.save()}
             disabled={!s.dirty || s.saving || !s.name.trim()}
-            className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white transition-colors disabled:cursor-default disabled:opacity-40"
+            className="flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-accent-foreground transition-colors disabled:cursor-default disabled:opacity-40"
           >
             {s.saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Save

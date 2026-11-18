@@ -1,0 +1,210 @@
+/** Visual repair branches and document sheets make the story legible before a reader opens technical depth. */
+.story {
+  padding-block: 24px 48px;
+  background: var(--ivory);
+}
+.row {
+  display: grid;
+  gap: 32px;
+  padding-block: 40px;
+  border-top: 1px solid var(--line-strong);
+}
+.row > * {
+  min-width: 0;
+}
+.row h2 {
+  max-width: 14ch;
+}
+.row p {
+  max-width: 58ch;
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.75;
+}
+.row :global(.link) {
+  gap: 8px;
+  margin-top: 20px;
+}
+.repair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  padding: 28px 24px;
+  border-radius: 20px;
+  background: var(--night);
+  color: var(--ivory);
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 19px;
+}
+.step svg,
+.branches svg {
+  flex: none;
+  color: var(--lime);
+}
+.connector {
+  margin-left: 12px;
+  color: var(--lime);
+  transform: rotate(90deg);
+}
+.branches {
+  display: grid;
+  gap: 24px;
+  padding: 16px 0 0 20px;
+  border-top: 1px solid var(--dark-line-strong);
+  border-left: 1px solid var(--lime);
+}
+.branches > div > div {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px 12px;
+}
+.branches strong {
+  font-size: 15px;
+  font-weight: 500;
+}
+.branches span {
+  grid-column: 2;
+  color: var(--night-muted);
+  font-size: 14px;
+}
+.repair figcaption {
+  color: var(--night-muted);
+  font-size: 12px;
+}
+.documents {
+  padding: 28px 20px 20px;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--forest);
+  color: var(--ivory);
+}
+.sheets {
+  display: grid;
+  gap: 12px;
+}
+.sheet {
+  padding: 18px;
+  border-radius: 8px;
+  background: var(--ivory);
+  color: var(--night);
+}
+.sheet:nth-child(2) {
+  border-top: 4px solid var(--lime);
+}
+.sheet > div {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.sheet strong {
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.documentLines {
+  display: none;
+}
+.documents figcaption {
+  margin-top: 24px;
+  color: var(--night-muted);
+  font-size: 13px;
+}
+.sources {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+.sources a {
+  padding-block: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+@media (min-width: 768px) {
+  .story {
+    padding-block: 32px 64px;
+  }
+  .row {
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 64px;
+    align-items: center;
+    padding-block: 56px;
+  }
+  .repair {
+    grid-template-columns: 1fr auto 1fr;
+    gap: 24px 12px;
+    padding: 32px;
+  }
+  .connector {
+    margin: 0;
+    transform: none;
+  }
+  .step {
+    flex-direction: column;
+    align-items: flex-start;
+    font-size: 19px;
+  }
+  .step svg {
+    width: 30px;
+    height: 30px;
+  }
+  .branches {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr 1fr;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .repair figcaption {
+    grid-column: 1 / -1;
+  }
+  .documents {
+    padding: 40px 28px 24px;
+  }
+  .sheets {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: 0;
+    padding-block: 8px 16px;
+  }
+  .sheet {
+    min-height: 200px;
+    padding: 20px 16px;
+    box-shadow: 0 12px 24px #081b1526;
+  }
+  .sheet:nth-child(1) {
+    transform: rotate(-7deg) translateX(10px);
+  }
+  .sheet:nth-child(2) {
+    position: relative;
+    z-index: 1;
+    transform: translateY(-8px);
+  }
+  .sheet:nth-child(3) {
+    transform: rotate(7deg) translateX(-10px);
+  }
+  .sheet > div {
+    display: grid;
+    gap: 16px;
+  }
+  .sheet strong {
+    font-size: 14px;
+  }
+  .documentLines {
+    display: block;
+    height: 28px;
+    border-block: 1px solid var(--line-strong);
+  }
+}
+
+.repair > svg {
+  color: var(--lime);
+}
+.repair {
+  grid-template-columns: minmax(0, 1fr);
+}

@@ -1,4 +1,5 @@
 /** /research: the index of what we measured, each post with its run date and one-line result. */
+import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import styles from '../page.module.css';
@@ -22,8 +23,10 @@ export default function Research() {
       <div className={styles.container}>
         <SiteHeader />
         <main className={notes.main}>
-          <h1>Research</h1>
-          <p className={notes.lead}>What we measured, how, and the raw numbers.</p>
+          <Reveal preset="public">
+            <h1>Research</h1>
+            <p className={notes.lead}>What we measured, how, and the raw numbers.</p>
+          </Reveal>
           {RESEARCH_POSTS.map(({ path, title, date, summary }) => (
             <section key={path} className={notes.release}>
               <h2>

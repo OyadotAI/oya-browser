@@ -1,13 +1,25 @@
-/** Deployment choices and runtime limits remain visible to enterprise evaluators. */
+/** Deployment is a visual destination choice with complete runtime boundaries available on demand. */
 import Link from 'next/link';
+import { Cloud, Server } from 'lucide-react';
+import { Reveal } from '@/components/ui/reveal';
+import { Disclosure } from '@/components/ui/disclosure';
 
-/** These deployment choices describe existing hosting options, not different unverified guarantees. */
+/** Existing descriptions remain complete in the optional comparison. */
 const DEPLOYMENTS = [
-  ['Managed deployment', 'Run browsers on Oya Cloud and connect through the same control interfaces.'],
-  ['Self-hosted deployment', 'Run the control plane and browser runtime in your own infrastructure.'],
+  {
+    title: 'Oya Cloud',
+    short: 'Managed browsers.',
+    full: 'Run browsers on Oya Cloud and connect through the same control interfaces.',
+    icon: Cloud,
+  },
+  {
+    title: 'Your infrastructure',
+    short: 'Control plane and runtime.',
+    full: 'Run the control plane and browser runtime in your own infrastructure.',
+    icon: Server,
+  },
 ];
-
-/** Material limits help technical buyers evaluate the guarantees that apply to their deployment. */
+/** Material limits apply to the existing runtime rather than a new marketing guarantee. */
 const LIMITS = [
   'Strict host-policy enforcement requires the managed runtime. Other providers have different guarantees.',
   'Budget controls use configured rates and estimated spend; they are not provider invoice guarantees.',
@@ -15,21 +27,35 @@ const LIMITS = [
   'Lifecycle webhooks use at-least-once delivery. Consumers must deduplicate events.',
 ];
 
-/** Keeps the existing section export and anchor while adding explicit enterprise deployment detail. */
+/** The existing deployment anchors and evaluation links remain intact. */
 export function Integrations() {
   return (
     <section className="section deployment" id="deployment" aria-labelledby="deployment-h">
       <div className="wrap" id="integrations">
-        <h2 id="deployment-h">Choose where those workflows run.</h2>
-        <p className="deployment-lead">Use Oya Cloud or deploy in your own infrastructure.</p>
+        <Reveal>
+          <h2 id="deployment-h">Choose where the work runs.</h2>
+        </Reveal>
+        <p className="deployment-lead">
+          Use Oya Cloud or your own infrastructure. For work involving PHI, use the covered Oya Cloud or enterprise
+          offering and request the BAA. Connected providers have different runtime guarantees; HIPAA mode uses Oya’s own
+          browsers.
+        </p>
         <div className="deployment-columns">
-          {DEPLOYMENTS.map(([title, body]) => (
-            <div key={title}>
+          {DEPLOYMENTS.map(({ title, short, icon: Icon }, index) => (
+            <Reveal key={title} order={index}>
+              <Icon size={36} aria-hidden="true" />
               <h3>{title}</h3>
-              <p>{body}</p>
-            </div>
+              <p>{short}</p>
+            </Reveal>
           ))}
         </div>
+        <Disclosure summary="Compare deployment options">
+          {DEPLOYMENTS.map(({ title, full }) => (
+            <p key={title}>
+              <strong>{title}.</strong> {full}
+            </p>
+          ))}
+        </Disclosure>
         <div className="control-links">
           <Link className="link" href="/docs#self-hosting">
             Read deployment docs
@@ -38,14 +64,13 @@ export function Integrations() {
             Security and compliance
           </Link>
         </div>
-        <details className="runtime-limits">
-          <summary>Runtime limits</summary>
+        <Disclosure summary="Runtime limits">
           <ul>
             {LIMITS.map((limit) => (
               <li key={limit}>{limit}</li>
             ))}
           </ul>
-        </details>
+        </Disclosure>
       </div>
     </section>
   );

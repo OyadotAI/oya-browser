@@ -11,8 +11,19 @@
  * the page, because a claim nobody can check would be the first thing quoted wrong. Where a vendor
  * does not say, the page says "Not stated", never a guess.
  */
+import { DOWNLOAD_ACTION, BUILD_ACTION, DEMO_ACTION, BAA_ACTION } from './story-actions';
+import { DESKTOP_START, DESKTOP_CHAPTERS } from './desktop-chapters';
+import { WORKFLOW_CHAPTERS, INFRASTRUCTURE_CHAPTERS } from './workflow-chapters';
+import {
+  REGULATED_OPENING,
+  REGULATED_CLOSING,
+  COMPARISON_REQUIREMENTS,
+  PUBLISHED_DIFFERENCES,
+  COMPARISON_CLOSING,
+} from './review-chapters';
 import type { QA } from '@/lib/site';
 import { THROUGHPUT } from '../_home/content';
+import { REPLAY_MODEL_FAQ, PORTAL_CONTEXT, PORTAL_SOURCES } from '../_home/workflow-story-content';
 import {
   AI_BROWSER_ROWS,
   AI_BROWSER_VENDORS,
@@ -41,6 +52,23 @@ export interface AnswerTable {
   rows: string[][];
 }
 
+/** Visual grouping is explicit so editing a chapter heading cannot change its layout. */
+export type AnswerLayout = 'flow' | 'choices' | 'controls' | 'comparison' | 'prose';
+/** Small desktop story scenes reuse the existing illustration system. */
+export type AnswerComposition = 'start' | 'tabs' | 'takeover' | 'saved' | 'deployment';
+/** One next step completes a page's story without introducing a new product action. */
+export interface StoryAction {
+  /** The existing destination described in reader language. */ label: string;
+  /** Existing download, console, demo or trust destination. */ href: string;
+  /** The short concluding invitation before the action. */ invitation: string;
+}
+/** Visible narrative is independent of the established search title and description. */
+export interface AnswerHeroContent {
+  /** A task-led promise scoped to existing capabilities. */ headline: string;
+  /** Complete paragraphs follow the reader's situation and next step. */ paragraphs: string[];
+  /** One primary action is repeated at the end of the story. */ action: StoryAction;
+}
+
 /** One section of an answer page: a heading, a paragraph, and optionally a list or a table. */
 export interface AnswerSection {
   /** The section's heading. */
@@ -51,6 +79,10 @@ export interface AnswerSection {
   items?: string[];
   /** A comparison under the paragraph; a page with one must list its sources. */
   table?: AnswerTable;
+  /** The grouping appropriate to this chapter, independent of its wording. */
+  layout?: AnswerLayout;
+  /** Optional existing desktop illustration for this chapter. */
+  composition?: AnswerComposition;
 }
 
 /** One vendor page a comparison's facts were read from. */
@@ -82,6 +114,8 @@ export interface AnswerPageContent {
   title: string;
   /** The answer, in the first paragraph: what an assistant quotes. */
   lead: string;
+  /** Task-led visible copy; search metadata retains its existing values. */
+  hero?: AnswerHeroContent;
   /** What follows the answer. */
   sections: AnswerSection[];
   /** The questions shown on the page and repeated as FAQPage structured data. */
@@ -111,27 +145,22 @@ export const HIPAA_BROWSER: AnswerPageContent = {
   label: 'HIPAA browser',
   title: 'What is a HIPAA-compliant browser?',
   lead: 'A HIPAA-compliant browser lets people and AI agents work on pages that show protected health information (PHI) under the controls HIPAA expects: a signed business associate agreement (BAA), access control, and a record of who did what. Oya Browser is a HIPAA-compliant browser on Oya Cloud and the enterprise edition, where we sign BAAs. It is also an AI browser and an agentic browser for healthcare teams.',
+  hero: {
+    headline: 'Put controls around browser work involving PHI.',
+    paragraphs: [
+      'For healthcare teams handling protected health information (PHI), the browser is part of the data path. Review Oya’s covered edition, Business Associate Agreement (BAA) and operating controls before running the task.',
+    ],
+    action: BAA_ACTION,
+  },
   sections: [
+    ...REGULATED_OPENING,
     {
-      heading: 'What a HIPAA-compliant browser needs',
-      body: 'When a browser, or an agent driving one, opens a payer portal, an EHR or a registry, it sees PHI. HIPAA then asks for these things.',
-      items: [
-        'A business associate agreement with the company that runs the browsers.',
-        'Access control: only the people and agents you allow, and only the systems you allow them to reach.',
-        'An audit trail of every action, that nobody can quietly change.',
-        'Control over where the data lives: your own network, if you need it.',
-        'A person who can watch and take over.',
-      ],
-    },
-    {
-      heading: 'How Oya Browser does each',
-      body: 'Oya runs browser agents on payer portals, EHRs and registries, and keeps the controls in the browser itself.',
+      heading: 'Agree how the workflow will operate.',
+      body: 'Review access roles, host rules, human intervention, recording and retention settings in the covered deployment. Runtime boundaries depend on how it is run.',
       items: OYA_CONTROLS,
+      layout: 'controls',
     },
-    {
-      heading: 'An AI browser and an agentic browser',
-      body: 'The Oya desktop app for macOS and Windows is an AI browser: you browse, and an agent can take a tab while you can take it back. Oya Cloud and self-hosted Oya are an agentic browser for teams: agents run many browsers at once, each one on the audit trail.',
-    },
+    REGULATED_CLOSING,
   ],
   faq: [
     {
@@ -157,26 +186,14 @@ export const AGENTIC_BROWSER: AnswerPageContent = {
   label: 'Agentic browser',
   title: 'What is an agentic browser?',
   lead: 'An agentic browser is a browser that AI agents run on their own, many at once, in the cloud or in your own infrastructure, with a person able to watch and take over. Oya Cloud and the enterprise edition are an agentic browser for teams: every action by an agent or a person lands on a tamper-evident audit trail, and on both we sign BAAs.',
-  sections: [
-    {
-      heading: 'An agentic browser and an AI browser',
-      body: 'An AI browser is one you use yourself, with an agent beside you in a tab: that is the free Oya desktop app for macOS and Windows. An agentic browser is one agents run on their own, many browsers at once. That is Oya Cloud, the enterprise edition in your own infrastructure, and the source-available community edition, free up to 5 cloud browsers at once.',
-    },
-    {
-      heading: 'Run it once, then replay it with no model',
-      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the inputs as variables), and the playbook replays with no model calls. When a page changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
-      items: [
-        'MCP: Claude Code, Codex, Cursor or any MCP client.',
-        'The TypeScript SDK, @oya-ai/browser.',
-        'Playwright, Puppeteer, Stagehand or browser-use, over the CDP URL each browser gives.',
-      ],
-    },
-    {
-      heading: 'What it gives a regulated team',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: [...OYA_CONTROLS, SEALED],
-    },
-  ],
+  hero: {
+    headline: 'Turn one working automation into repeated browser work.',
+    paragraphs: [
+      'For engineering teams, completing the first task is only the beginning. Oya helps you run it with new inputs, manage browser sessions and inspect what happened.',
+    ],
+    action: BUILD_ACTION,
+  },
+  sections: INFRASTRUCTURE_CHAPTERS,
   faq: [
     {
       q: 'What is the difference between an agentic browser and an AI browser?',
@@ -192,7 +209,7 @@ export const AGENTIC_BROWSER: AnswerPageContent = {
     },
     {
       q: 'Does every run need a model?',
-      a: 'No. The first run does. A saved playbook replays with no model calls, and the agent is called again only when a page has changed, to finish the task from the step that moved.',
+      a: REPLAY_MODEL_FAQ,
     },
     {
       q: 'Can Oya run browsers on other providers?',
@@ -210,25 +227,28 @@ export const VS_BROWSERBASE: AnswerPageContent = {
   // ranked for "browserbase hipaa" but not for it.
   title: 'A HIPAA-compliant Browserbase alternative: Oya vs Browserbase',
   lead: 'Looking for a Browserbase alternative for healthcare? Oya is built for healthcare and regulated work: on Oya Cloud and the enterprise edition it is HIPAA compliant, we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Oya can also run browsers on Browserbase, behind the same API.',
+  hero: {
+    headline: 'Oya vs Browserbase: start with the work you need to run.',
+    paragraphs: [
+      'For teams comparing browser infrastructure, consider how you will repeat tasks, host browsers and handle regulated work. Use the sourced differences below to assess your actual workflow.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'Where Oya fits',
-      body: 'Payer portals, EHRs and registries: the systems revenue-cycle and operations teams still work by hand. An agent does the task once in plain language, Oya saves it as a playbook (Playwright code), and the playbook replays with no model in the loop.',
+      heading: 'Start with the healthcare workflow you need to run.',
+      body: 'Choose one payer-portal task and trace the people, agents and systems it touches. Then decide where its reusable steps, browser runtime and PHI need to live.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'What Oya gives a regulated team',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
-    {
-      heading: 'Use Browserbase through Oya',
-      body: 'One Oya API drives Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome. Keep Browserbase as a provider behind the same API, and move a workload to Oya Cloud or the enterprise edition whenever you choose. The controls and BAA above cover Oya Cloud and the enterprise edition.',
-    },
-    {
-      heading: 'Oya and Browserbase, side by side',
-      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Browserbase lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Oya and Browserbase, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, BROWSERBASE]),
     },
+    {
+      heading: 'Keep Browserbase as an option where it fits.',
+      body: 'Oya can connect to Browserbase for work without PHI, behind the same API. Oya’s HIPAA-mode controls do not automatically extend to that provider; HIPAA mode uses Oya’s own browsers.',
+    },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -258,31 +278,28 @@ export const VS_STEEL: AnswerPageContent = {
   label: 'Oya vs Steel',
   title: 'Oya vs Steel',
   lead: 'Comparing browsers for AI agents? Oya Browser runs agents on Oya Cloud, in your own infrastructure or on your desktop, and saves each finished task as a playbook: Playwright code that replays with no model. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Steel, behind the same API.',
+  hero: {
+    headline: 'Oya vs Steel: plan for repeated browser work.',
+    paragraphs: [
+      'For engineering teams, compare the path from a working agent to repeated execution. Look at saved workflows, hosting choices and the controls required by your deployment.',
+    ],
+    action: BUILD_ACTION,
+  },
   sections: [
     {
-      heading: 'Where Oya runs',
-      body: 'Pick where the browsers live, and keep one API across all of them.',
-      items: [
-        'Oya Cloud: browsers we run for you.',
-        'The enterprise edition: the whole stack in your own infrastructure, on Docker, ECS, GCP or Kubernetes, with a BAA.',
-        'The community edition: source-available and self-hosted, free up to 5 cloud browsers at once, without the HIPAA offering.',
-        'The desktop app for macOS and Windows: free, and signed in as you.',
-      ],
+      heading: 'Start with the working agent you want to run again.',
+      body: 'Take one completed browser task and list what changes on the next run. Compare how you will save the steps, run new inputs and choose where browsers are hosted.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'What Oya gives a regulated team',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
-    {
-      heading: 'Use Steel through Oya',
-      body: "Steel is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Anchor, Browser Use and your own Chrome. Add it in the console under Control, Providers with your Steel API key, and set its routing priority. When a connection to one provider fails, Oya sends the session to the next one in priority order. The controls and BAA above cover Oya Cloud and the enterprise edition.",
-    },
-    {
-      heading: 'Oya and Steel, side by side',
-      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Steel lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Oya and Steel, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, STEEL]),
     },
+    {
+      heading: 'Keep Steel as an option where it fits.',
+      body: 'Oya can connect to Steel for work without PHI, behind the same API. Oya’s HIPAA-mode controls do not automatically extend to that provider; HIPAA mode uses Oya’s own browsers.',
+    },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -315,31 +332,28 @@ export const VS_ANCHOR: AnswerPageContent = {
   label: 'Oya vs Anchor',
   title: 'Oya vs Anchor',
   lead: 'Looking at browsers for AI agents that have to sign in? In Oya Browser an agent works signed in as your staff: stored passwords and TOTP seeds are sealed and never shown to the model, and a person can take over any session and hand it back. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Anchor, behind the same API.',
+  hero: {
+    headline: 'Oya vs Anchor: decide how signed-in work should run.',
+    paragraphs: [
+      'If your automation works behind staff logins, compare how you connect agents, manage browser identity and handle human intervention. Then check the deployment and Business Associate Agreement (BAA) terms.',
+    ],
+    action: BUILD_ACTION,
+  },
   sections: [
     {
-      heading: 'Signed in, without showing the model a password',
-      body: 'Most of the work worth automating sits behind a login, so Oya treats the login as part of the browser.',
-      items: [
-        SEALED,
-        'A persona is one identity: a fingerprint, a cookie jar and a proxy, bound together and stable for its life.',
-        'Sign in once in the desktop app to the sites your agents need, and those cookies move to the browsers Oya runs, which keep the same fingerprint as that identity.',
-        'When a sign-in needs a person, such as a text-message code, staff take over the session and hand it back.',
-      ],
+      heading: 'Start with a task behind a staff login.',
+      body: 'Use a workflow that needs an existing account session. Decide how the browser keeps its identity, how credentials are handled and when a person must take control.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'A record of every step',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
-    {
-      heading: 'Use Anchor through Oya',
-      body: 'One Oya API drives Oya Cloud, Anchor, Browserbase, Steel, Browser Use or your own Chrome. Keep Anchor as a provider behind that API, set its routing priority and session capacity next to your other providers, and move a workload without changing your code. The controls and BAA above cover Oya Cloud and the enterprise edition.',
-    },
-    {
-      heading: 'Oya and Anchor, side by side',
-      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Anchor lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Oya and Anchor, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, ANCHOR]),
     },
+    {
+      heading: 'Keep Anchor as an option where it fits.',
+      body: 'Oya can connect to Anchor for work without PHI, behind the same API. Oya’s HIPAA-mode controls do not automatically extend to that provider; HIPAA mode uses Oya’s own browsers.',
+    },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -370,35 +384,28 @@ export const VS_BROWSER_USE: AnswerPageContent = {
   label: 'Oya vs Browser Use',
   title: 'Oya vs Browser Use',
   lead: 'Weighing Oya against Browser Use for AI agents in a browser? In Oya Browser an agent does a task once in plain language, and Oya saves it as a playbook: Playwright code that replays with no model in the loop. On Oya Cloud and the enterprise edition it is HIPAA compliant and we sign BAAs. Oya can also run browsers on Browser Use, behind the same API.',
+  hero: {
+    headline: 'Oya vs Browser Use: choose how to repeat an agent’s work.',
+    paragraphs: [
+      'For teams already building browser agents, compare how each approach connects your agent, reuses successful tasks and runs on the infrastructure your workflow requires.',
+    ],
+    action: BUILD_ACTION,
+  },
   sections: [
     {
-      heading: 'Run it once with an agent, then replay it with no model',
-      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the inputs as variables), and the playbook replays with no model calls. When a page changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
+      heading: 'Start with the browser agent you already built.',
+      body: 'Choose one task your agent can complete today. Decide how you want to connect that agent, keep its successful steps and run the next case on your chosen infrastructure.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'Bring the agent you already have',
-      body: 'Oya is the browser. The agent can be yours.',
-      items: [
-        'MCP: Claude Code, Codex, Cursor or any MCP client.',
-        'The Ask panel in the desktop app, on the ChatGPT or Claude plan you already pay for, or a model API key.',
-        'The TypeScript SDK, @oya-ai/browser.',
-        'Playwright, Puppeteer, Stagehand or browser-use, over the CDP URL each browser gives.',
-      ],
-    },
-    {
-      heading: 'For regulated work',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
-    {
-      heading: 'Use Browser Use through Oya',
-      body: "Browser Use is one of the providers Oya's API drives, next to Oya Cloud, Browserbase, Steel, Anchor and your own Chrome: add it with your Browser Use API key and Oya starts browsers there behind the same API. It works the other way round too: point the browser-use library at an Oya browser's CDP URL. The controls and BAA above cover Oya Cloud and the enterprise edition.",
-    },
-    {
-      heading: 'Oya and Browser Use, side by side',
-      body: 'What each side\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that Browser Use lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Oya and Browser Use, from each vendor\u2019s own pages', INFRA_ROWS, [OYA, BROWSER_USE]),
     },
+    {
+      heading: 'Keep Browser Use as an option where it fits.',
+      body: 'Oya can connect to Browser Use for work without PHI, behind the same API. Oya’s HIPAA-mode controls do not automatically extend to that provider; HIPAA mode uses Oya’s own browsers.',
+    },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -415,7 +422,7 @@ export const VS_BROWSER_USE: AnswerPageContent = {
     },
     {
       q: 'Does every run need a model?',
-      a: 'No. The first run does. A saved playbook replays with no model calls, and the agent is called again only when a page has changed, to finish the task from the step that moved.',
+      a: REPLAY_MODEL_FAQ,
     },
     {
       q: 'Is there a free way to try it?',
@@ -432,30 +439,14 @@ export const AI_BROWSER: AnswerPageContent = {
   label: 'AI browser',
   title: 'What is an AI browser?',
   lead: 'An AI browser is a web browser with an AI agent that can open pages, fill forms and finish tasks in a tab while you watch. Oya Browser is a free AI browser for macOS and Windows: type a task in the Ask panel or connect Claude Code, Codex or Cursor, and take the tab back at any time.',
-  sections: [
-    {
-      heading: 'What an AI browser does',
-      body: 'You stay in an ordinary browser, with your own tabs and logins. The agent works in a tab of its own.',
-      items: [
-        'It opens pages, clicks, types and fills forms in its tab.',
-        'It works signed in as you, with the logins already in your browser.',
-        'It waits when you take the tab, and carries on when you hand it back.',
-        'A task it finished can be saved as a playbook that replays with no model.',
-      ],
-    },
-    {
-      heading: 'Two ways to start',
-      body: 'The first screen asks which one you want.',
-      items: [
-        'The Ask panel: connect the ChatGPT or Claude plan you already pay for, or paste a model API key, and type the task.',
-        'Your own agent: one click on Connect in the window footer adds Oya to Claude Code, Codex, Cursor or VS Code as an MCP server.',
-      ],
-    },
-    {
-      heading: 'An AI browser and an agentic browser',
-      body: 'The desktop app is an AI browser for one person. When a team needs many browsers at once, Oya Cloud and the enterprise edition run them as an agentic browser, with every action on a tamper-evident audit trail. HIPAA compliance and a signed BAA come with Oya Cloud and the enterprise edition.',
-    },
-  ],
+  hero: {
+    headline: 'Give your next browser chore to an agent.',
+    paragraphs: [
+      'When a web task interrupts your work, ask Oya to handle it in a separate tab. Watch what happens, take over when needed, and keep successful steps for next time. The desktop app is free on macOS and Windows.',
+    ],
+    action: DOWNLOAD_ACTION,
+  },
+  sections: [DESKTOP_START, ...DESKTOP_CHAPTERS],
   faq: [
     {
       q: 'Is Oya Browser a free AI browser?',
@@ -487,28 +478,23 @@ export const HEALTHCARE_BROWSER: AnswerPageContent = {
   label: 'For healthcare',
   title: 'What should a browser for healthcare do?',
   lead: 'A browser for healthcare lets staff and AI agents work on payer portals, EHRs and registries that show protected health information (PHI), under a signed business associate agreement (BAA) and a record of who did what. Oya Browser is a browser for healthcare: on Oya Cloud and the enterprise edition it is HIPAA compliant, and we sign BAAs.',
+  hero: {
+    headline: 'Help your healthcare team repeat portal work.',
+    paragraphs: [
+      'Start with a portal task your staff already performs. Then decide how it should run, who can intervene and which deployment provides the controls your data needs.',
+      'If the task involves protected health information (PHI), request the Business Associate Agreement (BAA) for a covered edition.',
+    ],
+    action: BAA_ACTION,
+  },
   sections: [
+    ...REGULATED_OPENING,
     {
-      heading: 'The work it is for',
-      body: 'Revenue-cycle and operations teams still do this by hand, on portals that have no API.',
-      items: [
-        'Filing and tracking prior authorizations on payer portals.',
-        'Checking eligibility, copays and deductibles before the visit.',
-        'Pulling claim status and remittance detail from each payer.',
-        'Working denials and filing appeals on the payer form.',
-        'Keeping provider enrollment and payer rosters current.',
-        'Searching state registries for immunizations, licences and sanctions.',
-      ],
-    },
-    {
-      heading: 'What it has to prove',
-      body: 'On Oya Cloud and the enterprise edition, these controls live in the browser.',
+      heading: 'Agree how the workflow will operate.',
+      body: 'Review access roles, host rules, human intervention, recording and retention settings in the covered deployment. Runtime boundaries depend on how it is run.',
       items: OYA_CONTROLS,
+      layout: 'controls',
     },
-    {
-      heading: 'A BAA for browser automation',
-      body: 'We sign BAAs for Oya Cloud and the enterprise edition. Write to sales@getoya.ai with how many browsers you need and whether PHI must stay in your own infrastructure. The enterprise edition runs there, on Docker, ECS, GCP or Kubernetes.',
-    },
+    REGULATED_CLOSING,
   ],
   faq: [
     {
@@ -538,36 +524,22 @@ export const HIPAA_AUTOMATION: AnswerPageContent = {
   label: 'HIPAA automation',
   title: 'What is HIPAA-compliant browser automation?',
   lead: 'HIPAA-compliant browser automation is software, often an AI browser agent, that works on web pages showing PHI under a signed BAA, with access control and an audit trail of every action. Oya runs HIPAA-compliant browser automation on Oya Cloud and the enterprise edition: we sign BAAs, and every agent and person action lands on a tamper-evident audit trail.',
+  hero: {
+    headline: 'Plan the controls before automating work involving PHI.',
+    paragraphs: [
+      'If a browser task touches protected health information (PHI), its deployment matters. Oya’s HIPAA offering covers Oya Cloud and the enterprise edition, with a Business Associate Agreement (BAA) and defined operating boundaries.',
+    ],
+    action: BAA_ACTION,
+  },
   sections: [
+    ...REGULATED_OPENING,
     {
-      heading: 'What it needs',
-      body: 'An agent on a payer portal or an EHR sees PHI, so HIPAA asks for these things.',
-      items: [
-        'A BAA with the company that runs the browsers and the agents.',
-        'Agents that reach only the systems you allow.',
-        'Credentials the model never sees.',
-        'An audit trail nobody can quietly change.',
-        'A person who can watch and take over.',
-      ],
+      heading: 'Agree how the workflow will operate.',
+      body: 'Review access roles, host rules, human intervention, recording and retention settings in the covered deployment. Runtime boundaries depend on how it is run.',
+      items: OYA_CONTROLS,
+      layout: 'controls',
     },
-    {
-      heading: 'How Oya does each',
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: [...OYA_CONTROLS, SEALED],
-    },
-    {
-      heading: 'Run it once, then replay it with no model',
-      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the patient details and codes as variables), and the playbook replays with no model calls. When a portal changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
-    },
-    {
-      heading: 'From the tools you already use',
-      body: 'Start an agent or a playbook from your own stack.',
-      items: [
-        'MCP: Claude Code, Codex, Cursor or any MCP client.',
-        'The TypeScript SDK, @oya-ai/browser.',
-        'Playwright, over the CDP URL each browser gives.',
-      ],
-    },
+    REGULATED_CLOSING,
   ],
   faq: [
     {
@@ -593,25 +565,20 @@ export const PRIOR_AUTH: AnswerPageContent = {
   label: 'Prior auth',
   title: 'Prior authorization automation on payer portals',
   lead: 'Prior authorization automation files and tracks prior auths on payer portals that have no API, the way staff do by hand. With Oya, an AI agent files one prior auth on the portal, signed in as your staff, and Oya saves it as a playbook that files the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.',
+  hero: {
+    headline: 'Turn a prior-authorization task into reusable steps.',
+    paragraphs: [
+      'For teams repeating prior authorizations on payer portals, start with one representative request. Show the steps, save a successful run and reuse it with the next case’s inputs.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every payer portal.',
-      items: [
-        'Run it once: an agent files the prior auth on the payer portal while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the member ID, CPT code, diagnosis and ordering NPI as variables.',
-        'Replay with no model: one SDK call or one MCP request runs it again with new inputs.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one representative prior-authorization request and identify the portal steps and inputs. An agent can attempt it while a person watches.',
+      layout: 'flow',
     },
-    {
-      heading: 'When the portal changes',
-      body: 'The replay stops at the step that moved, the agent finishes the request from there, and its fix becomes the playbook, so the next run makes no model calls again.',
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    ...WORKFLOW_CHAPTERS,
   ],
   faq: [
     {
@@ -648,32 +615,23 @@ export const PAYER_PORTALS: AnswerPageContent = {
   label: 'Payer portals',
   title: 'Payer portal automation for portals with no API',
   lead: 'Payer portal automation does the work revenue-cycle staff do by hand on payer websites that have no API: prior authorizations, eligibility checks, claim status, denials and appeals. With Oya, an AI agent does the task once on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.',
+  hero: {
+    headline: 'Reuse the portal work your team does every day.',
+    paragraphs: [
+      'For revenue-cycle teams, authorizations, eligibility checks and claim lookups often repeat the same browser steps. Start with one task and build a workflow your team can inspect.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'The portal work it takes off your team',
-      body: 'The same tasks, on every payer that has a website and no API.',
-      items: [
-        'Filing and tracking prior authorizations.',
-        'Checking eligibility, copays and deductibles before the visit.',
-        'Pulling claim status and remittance detail.',
-        'Working denials and filing appeals on the payer form.',
-        'Keeping provider enrollment and payer rosters current.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Choose one authorization, eligibility check or claim lookup your staff already performs. Identify its steps and inputs, then watch an agent attempt it.',
+      layout: 'flow',
     },
-    {
-      heading: 'Run it once, then replay it with no model',
-      body: 'An agent does the task once in plain language. Oya saves it as a playbook (Playwright code, with the member ID and other details as variables), and the playbook replays with no model calls. When a portal changes, the replay stops at the step that moved, the agent finishes from there, and its fix becomes the playbook.',
-    },
-    {
-      heading: 'Signed in as your staff',
-      body: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    { ...PORTAL_CONTEXT, heading: 'When a status needs context, check the available documents.' },
+    ...WORKFLOW_CHAPTERS,
   ],
+  sources: PORTAL_SOURCES,
   faq: [
     {
       q: 'Can an AI agent work a payer portal that has no API?',
@@ -681,7 +639,7 @@ export const PAYER_PORTALS: AnswerPageContent = {
     },
     {
       q: 'Do we pay for a model on every run?',
-      a: 'No. The agent works a task out once; the saved playbook replays it with no model calls. The model comes back only for a step a portal changed.',
+      a: REPLAY_MODEL_FAQ,
     },
     { q: 'How much faster is it?', a: THROUGHPUT },
     {
@@ -698,25 +656,20 @@ export const ELIGIBILITY: AnswerPageContent = {
   label: 'Eligibility checks',
   title: 'Eligibility verification automation on payer portals',
   lead: "Eligibility verification automation checks a patient's coverage, copay and deductible on the payer's portal before the visit, the way front-desk staff do by hand. With Oya, an AI agent runs one check on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next checks with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  hero: {
+    headline: 'Make the next eligibility check easier to repeat.',
+    paragraphs: [
+      'For teams checking coverage, copays and deductibles on payer portals, begin with one representative check. Save its successful steps and supply new inputs for the next patient.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every payer portal.',
-      items: [
-        'Run it once: an agent looks up one member on the payer portal while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the member ID and date of birth as variables.',
-        'Replay with no model: one SDK call or one MCP request checks the next patient with new inputs.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one eligibility check on a payer portal. Identify the member details and steps your staff uses, then watch an agent attempt the check.',
+      layout: 'flow',
     },
-    {
-      heading: 'When the portal changes',
-      body: 'The replay stops at the step that moved, the agent finishes the check from there, and its fix becomes the playbook, so the next run makes no model calls again.',
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    ...WORKFLOW_CHAPTERS,
   ],
   faq: [
     {
@@ -741,26 +694,23 @@ export const CLAIM_STATUS: AnswerPageContent = {
   label: 'Claim status',
   title: 'Claim status automation on payer portals',
   lead: "Claim status automation reads where each claim stands, and its remittance detail, from the payer's portal, the way billing staff check them by hand. With Oya, an AI agent checks one claim on the portal, signed in as your staff, and Oya saves it as a playbook that checks the rest on a schedule with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  hero: {
+    headline: 'Follow the claim from status to supporting context.',
+    paragraphs: [
+      'For billing teams checking payer portals, repeat a successful claim-status lookup with new claim details. Where available, portal documents can add context alongside your electronic status feeds.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every payer portal.',
-      items: [
-        'Run it once: an agent finds one claim on the payer portal and reads its status while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the claim number and member ID as variables.',
-        'Replay with no model: run it on a schedule, and every read lands on the audit trail.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one claim-status lookup on the payer portal. Identify the claim details and information your staff needs, then watch an agent attempt it.',
+      layout: 'flow',
     },
-    {
-      heading: 'From status to denial work',
-      body: 'The same approach works the denials a status check turns up: an agent files the appeal on the payer form once, and the playbook files the next ones.',
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    { ...PORTAL_CONTEXT, heading: 'When a status needs context, check the available documents.' },
+    ...WORKFLOW_CHAPTERS,
   ],
+  sources: PORTAL_SOURCES,
   faq: [
     {
       q: 'Does the payer need an API?',
@@ -784,26 +734,23 @@ export const DENIALS: AnswerPageContent = {
   label: 'Denials and appeals',
   title: 'Denial management automation: appeals on payer portals',
   lead: "Denial management automation collects the denial reason, gathers the records and files the appeal on the payer's own form before the deadline, the way billing staff do by hand. With Oya, an AI agent files one appeal on the portal, signed in as your staff, and Oya saves it as a playbook that files the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  hero: {
+    headline: 'Build a repeatable path through denial and appeal work.',
+    paragraphs: [
+      'For billing teams working denials, start with the steps used to collect a reason and prepare an appeal on the payer’s portal. Save what works for similar cases.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every payer portal.',
-      items: [
-        'Run it once: an agent reads the denial reason and files the appeal on the payer form while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the claim number, denial reason and attachment as variables.',
-        'Replay with no model: one SDK call or one MCP request files the next appeal with new inputs.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one denial your staff knows how to work. Identify the payer’s form, required records and review points before an agent attempts the task.',
+      layout: 'flow',
     },
-    {
-      heading: 'When the portal changes',
-      body: 'The replay stops at the step that moved, the agent finishes the appeal from there, and its fix becomes the playbook, so the next run makes no model calls again.',
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    { ...PORTAL_CONTEXT, heading: 'When a status needs context, check the available documents.' },
+    ...WORKFLOW_CHAPTERS,
   ],
+  sources: PORTAL_SOURCES,
   faq: [
     {
       q: 'Can AI file an appeal on a payer portal?',
@@ -827,25 +774,20 @@ export const ENROLLMENT: AnswerPageContent = {
   label: 'Provider enrollment',
   title: 'Provider enrollment automation and payer rosters',
   lead: "Provider enrollment automation keeps provider enrollment and payer rosters current on each payer's portal without retyping them, and runs attestations and renewals on their dates. With Oya, an AI agent makes one roster update on the portal, signed in as your staff, and Oya saves it as a playbook that makes the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
+  hero: {
+    headline: 'Reuse the steps behind your next roster update.',
+    paragraphs: [
+      'For teams maintaining provider enrollment, begin with one payer-portal update. Capture a successful run, change its inputs and use those steps for the next update or renewal.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every payer portal.',
-      items: [
-        'Run it once: an agent updates one provider on the payer roster while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the NPI, practice location and effective date as variables.',
-        'Replay with no model: run it for the next provider, or on the date an attestation or renewal is due.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one provider enrollment or roster update. Identify the payer-portal steps and changing details, then watch an agent attempt the update.',
+      layout: 'flow',
     },
-    {
-      heading: 'Signed in as your staff',
-      body: `${SEALED} When a sign-in needs a person, such as a text-message code, staff can take over the session and hand it back.`,
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    ...WORKFLOW_CHAPTERS,
   ],
   faq: [
     {
@@ -870,25 +812,20 @@ export const REGISTRIES: AnswerPageContent = {
   label: 'State registries',
   title: 'State registry automation for immunizations and licences',
   lead: 'State registry automation looks up immunizations, licences and sanctions in state registries that only have a login page, the way staff search them by hand. With Oya, an AI agent runs one search on the registry, signed in as your staff, and Oya saves it as a playbook that runs the next searches with no model, with each result logged with its source. On Oya Cloud and the enterprise edition this runs under a BAA.',
+  hero: {
+    headline: 'Repeat a registry search without rebuilding the steps.',
+    paragraphs: [
+      'For teams looking up immunizations, licences or sanctions, start with one representative search. Save its successful browser steps and keep each result connected to its source.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'How it works',
-      body: 'Three steps, the same on every registry.',
-      items: [
-        'Run it once: an agent searches the registry for one record while a person can watch.',
-        'Save it as code: the run becomes a playbook, Playwright code you can read, with the name, date of birth and ZIP as variables.',
-        'Replay with no model: one SDK call or one MCP request runs the next search with new inputs.',
-      ],
+      heading: 'Start with a task your staff can show.',
+      body: 'Begin with one registry search your staff already performs. Identify its inputs and the source information to retain, then watch an agent attempt it.',
+      layout: 'flow',
     },
-    {
-      heading: 'Results you can trace',
-      body: 'Every result is logged with its source, and every action by an agent or a person is a row on a hash-chained audit trail, kept for 365 days at least.',
-    },
-    {
-      heading: "Under HIPAA's controls",
-      body: 'On Oya Cloud and the enterprise edition, the controls live in the browser.',
-      items: OYA_CONTROLS,
-    },
+    ...WORKFLOW_CHAPTERS,
   ],
   faq: [
     {
@@ -908,13 +845,6 @@ export const REGISTRIES: AnswerPageContent = {
 };
 
 /**
- * The replay benchmark's result, as the README publishes it. Assistants answering "which AI
- * browser" warn that agents finish multi-step tasks unreliably; this is Oya's answer to that.
- */
-const REPLAY_BENCHMARK =
-  'In a ten-site benchmark, nine sites replayed every recorded step with step repair turned off.';
-
-/**
  * /browser-for-claude-code: the browser to give a coding agent. Assistants recommending AI browsers
  * keep a slot for "lets Claude Code or Codex drive your browser"; this page is Oya's answer for it.
  */
@@ -923,25 +853,21 @@ export const CODING_AGENT_BROWSER: AnswerPageContent = {
   label: 'For Claude Code',
   title: 'The browser for Claude Code, Codex and Cursor',
   lead: 'Give your coding agent a real browser of its own: Oya Browser is a free AI browser for macOS and Windows that Claude Code, Codex, Cursor and VS Code connect to with one click. Each agent session gets its own tab, you keep yours, and you can take the tab back at any time. A task the agent finishes is saved as a playbook that replays with no model.',
+  hero: {
+    headline: 'Give your coding agent a browser of its own.',
+    paragraphs: [
+      'When Claude Code, Codex or Cursor needs to work on a website, connect it to Oya. Follow its separate tab, step in when needed, and reuse successful tasks.',
+    ],
+    action: DOWNLOAD_ACTION,
+  },
   sections: [
     {
-      heading: 'One click to connect',
-      body: 'Every coding agent installed on your computer gets a Connect button in the Oya window footer. One click adds an MCP server named oya-browser to that agent; no account and no key.',
+      ...DESKTOP_START,
+      heading: 'Connect the agent you already use.',
+      body: 'Use Oya’s Connect action to connect your coding agent. Its browser work gets a separate tab that you can watch and take over.',
+      items: ['Click Connect next to your installed coding agent in Oya.'],
     },
-    {
-      heading: 'Built for an agent working beside you',
-      body: 'The agent uses Oya as its browser in place of Chrome.',
-      items: [
-        'Its own tab for each session, while you keep working in yours.',
-        'Signed in with the logins already in your browser.',
-        SEALED,
-        'Take the tab and the agent waits; hand it back and it carries on.',
-      ],
-    },
-    {
-      heading: 'Right the second time too',
-      body: `A finished task becomes a playbook: Playwright code with the inputs as variables, which replays with no model calls. ${REPLAY_BENCHMARK} When a page changes, the replay stops at the step that moved and the agent finishes from there.`,
-    },
+    ...DESKTOP_CHAPTERS,
   ],
   faq: [
     {
@@ -970,29 +896,24 @@ export const PLAN_BROWSER: AnswerPageContent = {
   label: 'ChatGPT and Claude',
   title: 'An AI browser that works with ChatGPT and Claude',
   lead: 'Oya Browser is a free AI browser for macOS and Windows that runs on the ChatGPT or Claude plan you already pay for: connect it in the Ask panel, type a task, and an agent does it in a tab of its own while you watch. Take the tab back at any time.',
+  hero: {
+    headline: 'Put your existing AI plan to work in the browser.',
+    paragraphs: [
+      'Connect your ChatGPT or Claude plan in Oya’s Ask panel. Describe a web task and watch an agent work in its own tab while you keep yours.',
+    ],
+    action: DOWNLOAD_ACTION,
+  },
   sections: [
     {
-      heading: 'Bring the plan you have',
-      body: 'The first screen asks how you want to start.',
+      ...DESKTOP_START,
+      heading: 'Connect your plan in the Ask panel.',
+      body: 'Choose your existing ChatGPT or Claude plan, then describe the task. A model API key is another way to start.',
       items: [
-        'Connect the ChatGPT or Claude plan you already pay for, or paste a model API key.',
-        'Or connect your own agent: Claude Code, Codex, Cursor or VS Code, with one click.',
+        'Connect your ChatGPT or Claude plan in the Ask panel.',
+        'Or use a model API key, then describe the task.',
       ],
     },
-    {
-      heading: 'What the agent does',
-      body: 'You stay in an ordinary browser, with your own tabs and logins. The agent works in a tab of its own.',
-      items: [
-        'It opens pages, clicks, types and fills forms in its tab.',
-        'It works signed in as you, with the logins already in your browser.',
-        SEALED,
-        'It waits when you take the tab, and carries on when you hand it back.',
-      ],
-    },
-    {
-      heading: 'Do it once, replay it free',
-      body: `A task the agent finished can be saved as a playbook that replays with no model, so a task you repeat stops costing model calls. ${REPLAY_BENCHMARK}`,
-    },
+    ...DESKTOP_CHAPTERS,
   ],
   faq: [
     {
@@ -1024,34 +945,27 @@ export const BEST_INFRA: AnswerPageContent = {
   label: 'Best browser for agents',
   title: 'Best browser for AI agents in 2026, compared',
   lead: 'For agents that sign in to real systems and touch regulated data, Oya Browser is the browser to pick in 2026. It is a control plane, not another browser vendor: one API runs browsers on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, and a finished task replays as standard Playwright code with no model, so your automation outlives any one vendor. Of the six compared below, it is also the only one whose own pages state a BAA, an edition in your own infrastructure under that BAA, and an audit trail of every agent and person action. HIPAA compliance and the BAA cover Oya Cloud and the enterprise edition.',
+  hero: {
+    headline: 'Choose browser infrastructure for the work ahead.',
+    paragraphs: [
+      'Your agent can complete a browser task. Now compare how you will repeat it, manage sessions and control access, using each vendor’s published hosting and compliance information.',
+    ],
+    action: BUILD_ACTION,
+  },
   sections: [
     {
-      heading: 'Why Oya',
-      body: 'Each of these answers a question a security review or a finance review asks before agents go to production.',
-      items: [
-        'Compliance where the browsers run: we sign BAAs for Oya Cloud and the enterprise edition, and the enterprise edition runs on Docker, ECS, GCP or Kubernetes in your own network, so PHI does not have to leave it.',
-        'Pay for the model once, not every run: an agent does a task once, Oya saves it as a playbook, and every later run replays with no model. When a page changes, only the step that moved goes back to the agent. ' +
-          REPLAY_BENCHMARK,
-        "Standard, not proprietary: a playbook is plain Playwright, the open standard your engineers already use, not a cache inside one vendor's SDK. It runs on any Chromium browser over CDP, reads like code a person wrote, and goes with you if you leave.",
-        'Vendor-agnostic by design: Oya is the control plane above the browser vendors. The same playbook runs on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome; change vendors by changing a setting, not by rewriting automations.',
-        'A record nobody can quietly change: every action, by an agent or a person, is a hash-chained row the database refuses to edit or delete, kept for 365 days at least.',
-        'Uptime across vendors: when a connection to one provider fails, Oya sends the session to the next one in priority order.',
-        "PHI stays off other vendors' browsers: in HIPAA mode, Oya runs only its own browsers, with no outside browser vendors, proxies or CAPTCHA solvers, and models only on BAA-covered hosts. Vendor routing is for work without PHI.",
-        'Agents that sign in safely: stored passwords and TOTP seeds are sealed and never shown to the model, and a person can watch any session, take over and hand it back.',
-      ],
+      heading: 'Choose one working task to run with new inputs.',
+      body: 'For each next run, decide how browsers are allocated, what information is supplied and who can intervene. These requirements tell you which infrastructure differences matter.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'When another vendor fits better',
-      body: 'Oya holds a SOC 2 Type I report and its Type II audit is in progress; Browserbase, Anchor, Browser Use and Kernel each state a SOC 2 Type II report today, so a team that needs a Type II report in hand this quarter should weigh that. Oya can still run their browsers behind its API, with Oya playbooks and the Oya audit trail on top.',
-    },
-    {
-      heading: 'Side by side',
-      body: 'What each vendor\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the vendor lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Browsers for AI agents, compared from each vendor’s own pages', INFRA_ROWS, [
         OYA,
         ...INFRA_VENDORS,
       ]),
     },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -1084,31 +998,27 @@ export const BEST_PORTAL: AnswerPageContent = {
   label: 'Best portal automation',
   title: 'Best payer portal automation in 2026, compared',
   lead: 'For revenue-cycle teams that want payer portal work automated without handing it to a black box, Oya Browser is the one to pick in 2026. Of the five compared below, it is the only one whose own pages state a BAA, an edition in your own infrastructure, and replay of each task with no model as Playwright code you keep. On Oya Cloud and the enterprise edition it runs under a BAA.',
+  hero: {
+    headline: 'Choose automation for the portal work your team repeats.',
+    paragraphs: [
+      'For revenue-cycle teams, start with a representative task. Compare how vendors approach reusable workflows, deployment and regulated data before choosing how to automate it.',
+    ],
+    action: DEMO_ACTION,
+  },
   sections: [
     {
-      heading: 'Why Oya',
-      body: 'Prior auth, eligibility, claim status, denials, enrollment and registry lookups all happen on portals with no API. These are the differences that decide whether that work stays cheap and auditable.',
-      items: [
-        'You own the automation, in a standard format: each task becomes a playbook, plain Playwright code with the member ID, codes and dates as variables, that your engineers can read, review and run anywhere. A managed service keeps that knowledge on its side.',
-        'Each run costs compute, not a model: playbooks replay with no model calls, and only a step a portal changed goes back to the agent. ' +
-          THROUGHPUT,
-        'PHI can stay in your network: the enterprise edition runs on Docker, ECS, GCP or Kubernetes with a BAA.',
-        'Staff stay in control: a person can watch any session, take over for a text-message code and hand it back, and stored passwords and TOTP seeds are never shown to the model.',
-        'An audit trail a compliance officer accepts: every action by an agent or a person is a hash-chained row the database refuses to edit or delete, kept for 365 days at least.',
-      ],
+      heading: 'Choose a portal task your staff already repeats.',
+      body: 'Use a representative prior authorization, eligibility check or claim lookup to establish the steps, review points and PHI involved. Compare what each approach requires to run that work.',
     },
+    COMPARISON_REQUIREMENTS,
     {
-      heading: 'When another option fits better',
-      body: 'If you want a vendor to build and run the workflows for you, a managed service such as Champ AI or CloudCruise does that; with Oya, your team or your agent does each task once and owns the result. And where a payer supports electronic eligibility and claim status transactions, a clearinghouse is the cheaper path; Oya is for the portals and details those transactions do not cover.',
-    },
-    {
-      heading: 'Side by side',
-      body: 'What each vendor\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the vendor lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('Payer portal automation, compared from each vendor’s own pages', PORTAL_ROWS, [
         OYA,
         ...PORTAL_VENDORS,
       ]),
     },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -1121,7 +1031,7 @@ export const BEST_PORTAL: AnswerPageContent = {
     },
     {
       q: 'Does payer portal automation need an AI model on every run?',
-      a: 'Not with Oya: the agent works a task out once, and the saved playbook replays it with no model. The model comes back only for a step a portal changed.',
+      a: REPLAY_MODEL_FAQ,
     },
     {
       q: 'Should we use a clearinghouse or a portal bot?',
@@ -1137,31 +1047,31 @@ export const BEST_AI_BROWSER: AnswerPageContent = {
   label: 'Best AI browser',
   title: 'Best AI browser in 2026 for working with agents',
   lead: 'If you work with AI agents, Oya Browser is the AI browser to pick in 2026. It is free on macOS and Windows, runs on the ChatGPT or Claude plan you already pay for, connects to Claude Code, Codex, Cursor and VS Code with one click, and gives the agent its own tab while you keep yours. Of the six compared below, it is the only one whose pages say a finished task replays with no model as code you keep, and the same playbook can run on Oya Cloud or the enterprise edition, which are HIPAA compliant.',
+  hero: {
+    headline: 'Choose an AI browser for your everyday work.',
+    paragraphs: [
+      'Start with a browser chore you actually want help with. Compare how you ask for help, follow the agent, take control and reuse a completed task.',
+    ],
+    action: DOWNLOAD_ACTION,
+  },
   sections: [
     {
-      heading: 'Why Oya',
-      body: 'Assistants that recommend AI browsers warn about two things: agents that finish multi-step tasks unreliably, and agents working inside your logged-in sessions. These are Oya’s answers, plus what sets it apart for people who use coding agents.',
-      items: [
-        'Right the second time: a finished task becomes a playbook, Playwright code that replays with no model. ' +
-          REPLAY_BENCHMARK,
-        'Your passwords stay yours: stored passwords and TOTP seeds are sealed and never shown to the model, and you can take the tab back at any time.',
-        'Built for your coding agent: one click on Connect adds Oya to Claude Code, Codex, Cursor or VS Code as an MCP server, with no account and no key.',
-        'Bring the plan you have: connect the ChatGPT or Claude plan you already pay for, or paste a model API key.',
-        'Grows with the work: the same playbook runs on Oya Cloud or in your own infrastructure when one browser is not enough, and those editions are HIPAA compliant with a BAA.',
-      ],
+      heading: 'Try a browser chore you would otherwise do yourself.',
+      body: 'Choose a task with pages to open, information to collect or a form to complete. Use it to compare how each browser accepts instructions and lets you follow the work.',
     },
     {
-      heading: 'When another browser fits better',
-      body: 'If you want an AI browser on your phone, Comet runs on iOS and Android, and Oya runs on macOS and Windows. If you want research answers with citations rather than tasks done in a tab, an assistant-first browser such as Comet suits that better.',
+      heading: 'Follow the task from request to result.',
+      body: 'Look at how you start, what the agent can do in its tab, when you can take control and whether successful steps can be reused.',
+      layout: 'controls',
     },
     {
-      heading: 'Side by side',
-      body: 'What each browser\'s own pages say, read on the date under Sources. "Not stated" means the pages read did not say, not that the browser lacks it.',
+      ...PUBLISHED_DIFFERENCES,
       table: compareTable('AI browsers, compared from each vendor’s own pages', AI_BROWSER_ROWS, [
         OYA_DESKTOP,
         ...AI_BROWSER_VENDORS,
       ]),
     },
+    COMPARISON_CLOSING,
   ],
   faq: [
     {
@@ -1178,7 +1088,7 @@ export const BEST_AI_BROWSER: AnswerPageContent = {
     },
     {
       q: 'Is there a HIPAA-compliant AI browser?',
-      a: 'Oya Cloud and the enterprise edition are HIPAA compliant, and we sign BAAs. Dia states it is not HIPAA compliant; Claude in Chrome is off by default under HIPAA.',
+      a: 'Oya Cloud and the enterprise edition are HIPAA compliant, and we sign Business Associate Agreements (BAAs). Dia states it is not HIPAA compliant; Claude in Chrome is off by default under HIPAA.',
     },
     {
       q: 'Is Oya Browser free?',
@@ -1198,9 +1108,16 @@ export const BAA: AnswerPageContent = {
   label: 'BAA',
   title: 'Oya Browser BAA: HIPAA mode and how to get a Business Associate Agreement',
   lead: 'Oya signs a Business Associate Agreement (BAA) for HIPAA mode: on Oya Cloud the BAA is available on request, and self-hosted HIPAA mode runs entirely in your own cloud. HIPAA mode keeps PHI on Oya’s own browsers, with no outside browser vendors, proxies or CAPTCHA solvers, and models only on BAA-covered hosts. Request the BAA, the HIPAA Security Rule evidence pack and the Security Risk Assessment from the trust center at enterprise.oyabrowser.com/trust.',
+  hero: {
+    headline: 'Review the BAA before your first PHI workflow.',
+    paragraphs: [
+      'Your security and legal teams need to understand where the work runs and which parties handle protected health information (PHI). Request Oya’s Business Associate Agreement (BAA) and evidence pack for HIPAA mode.',
+    ],
+    action: BAA_ACTION,
+  },
   sections: [
     {
-      heading: 'Two ways to run HIPAA mode',
+      heading: 'First, decide where the workflow will run.',
       body: 'Both run the same browsers, agents and playbooks.',
       items: [
         'Oya Cloud in HIPAA mode: browsers we run for you, with a BAA on request.',
@@ -1208,7 +1125,7 @@ export const BAA: AnswerPageContent = {
       ],
     },
     {
-      heading: 'What HIPAA mode changes',
+      heading: 'Then check which services can handle PHI.',
       body: 'HIPAA mode narrows where PHI can go, so every party on its path is covered.',
       items: [
         'Models run only on hosts covered by a BAA.',
@@ -1217,7 +1134,7 @@ export const BAA: AnswerPageContent = {
       ],
     },
     {
-      heading: 'Where Oya Cloud runs PHI',
+      heading: 'For Oya Cloud, follow the hosted data path.',
       body: 'HIPAA mode on Oya Cloud runs on Google Cloud, under Google Cloud\u2019s BAA. Oya signed BAAs with Google Cloud, Vertex AI (under the Google Cloud BAA) and Sentry on 2026-10-07.',
       items: [
         'Browsers run on a dedicated GKE cluster that enforces network policy.',
@@ -1226,7 +1143,7 @@ export const BAA: AnswerPageContent = {
       ],
     },
     {
-      heading: 'An audit trail built for HIPAA',
+      heading: 'Agree how access and intervention will be recorded.',
       body: 'The audit log is append-only and tamper-evident, and audit records are kept for six years.',
       items: [
         'Every read of ePHI is audited.',
@@ -1235,7 +1152,7 @@ export const BAA: AnswerPageContent = {
       ],
     },
     {
-      heading: 'Evidence you can check',
+      heading: 'Review the dated evidence before you begin.',
       body: '14 of 15 HIPAA Security Rule controls are verified, from evidence regenerated on 2026-10-11. The trust center offers these on request.',
       items: [
         'The Business Associate Agreement.',

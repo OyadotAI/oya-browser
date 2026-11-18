@@ -4,6 +4,7 @@
  * table is read from compliance/evidence.json when the site is built, so the page
  * never claims a control the generated pack does not.
  */
+import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Metadata } from 'next';
@@ -101,27 +102,31 @@ function Controls() {
         Generated from the code on {generated.slice(0, 'YYYY-MM-DD'.length)}. Read the full{' '}
         <a href={EVIDENCE_PACK}>evidence pack</a>, with the check behind each verdict.
       </p>
-      <table className={trust.table}>
-        <thead>
-          <tr>
-            <th scope="col">Control</th>
-            <th scope="col">Requirement</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {controls.map((c) => (
-            <tr key={c.id}>
-              <td>
-                <strong>{c.title}</strong>
-                <span className={trust.ref}>§{c.id}</span>
-              </td>
-              <td>{c.requirement}</td>
-              <td className={c.verdict === 'PASS' ? trust.pass : trust.gap}>{c.verdict === 'PASS' ? 'Met' : 'Gap'}</td>
+      <div className={trust.scroll} role="region" aria-label="Security controls table" tabIndex={0}>
+        <table className={trust.table}>
+          <thead>
+            <tr>
+              <th scope="col">Control</th>
+              <th scope="col">Requirement</th>
+              <th scope="col">Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {controls.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <strong>{c.title}</strong>
+                  <span className={trust.ref}>§{c.id}</span>
+                </td>
+                <td>{c.requirement}</td>
+                <td className={c.verdict === 'PASS' ? trust.pass : trust.gap}>
+                  {c.verdict === 'PASS' ? 'Met' : 'Gap'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -134,26 +139,28 @@ function Subprocessors() {
       <p className={trust.note}>
         Third parties that process customer data for Oya Cloud. Self-hosted deployments use none of them.
       </p>
-      <table className={trust.table}>
-        <thead>
-          <tr>
-            <th scope="col">Company</th>
-            <th scope="col">Purpose</th>
-            <th scope="col">Data</th>
-          </tr>
-        </thead>
-        <tbody>
-          {SUBPROCESSORS.map((s) => (
-            <tr key={s.name}>
-              <td>
-                <strong>{s.name}</strong>
-              </td>
-              <td>{s.purpose}</td>
-              <td>{s.data}</td>
+      <div className={trust.scroll} role="region" aria-label="Subprocessors table" tabIndex={0}>
+        <table className={trust.table}>
+          <thead>
+            <tr>
+              <th scope="col">Company</th>
+              <th scope="col">Purpose</th>
+              <th scope="col">Data</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {SUBPROCESSORS.map((s) => (
+              <tr key={s.name}>
+                <td>
+                  <strong>{s.name}</strong>
+                </td>
+                <td>{s.purpose}</td>
+                <td>{s.data}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -180,11 +187,13 @@ export default function TrustCenter() {
       <div className={styles.container}>
         <SiteHeader />
         <main className={trust.main}>
-          <h1>Trust center</h1>
-          <p className={trust.lead}>
-            Oya runs browsers that sign in to the systems your business depends on. Here is how we protect what they
-            see.
-          </p>
+          <Reveal preset="public">
+            <h1>Trust center</h1>
+            <p className={trust.lead}>
+              Oya runs browsers that sign in to the systems your business depends on. Here is how we protect what they
+              see.
+            </p>
+          </Reveal>
           <StatusCards />
           <Practices />
           <Controls />

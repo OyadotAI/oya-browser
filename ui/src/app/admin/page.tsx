@@ -63,7 +63,7 @@ function Sections({ s }: { /** Authorized page state. */ s: AdminState }) {
   const { tab, open } = useTab();
   const l = useLookup(s.lookup, s.scope);
   return (
-    <div className="min-h-screen bg-bg">
+    <div className="workspace-page min-h-screen bg-bg">
       <TopBar tab={tab} open={open} l={l} />
       <main
         role="tabpanel"

@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Extended the forest, ivory and lime design across the website, documentation, authentication and console. Mobile navigation and full scrolling tables keep every destination and column available; the landing diagram has a separate routing lane, and documentation anchors honor reduced motion.
+- Added qualified workflow-maintenance and portal-document stories, with primary sources and a founder-led invitation to scope an SOP or screen recording.
+- Gave all 22 answer pages subject-specific visual heroes and clearer feature, setup and comparison layouts. Added finite section entrances and disclosure feedback, with visible server content, reduced-motion support and immediate settling on interaction.
+- Simplified the maintenance story to plain server and desktop outcomes, keeping the technical repair details available on demand.
+- Rewrote the landing page and all 22 answer pages as task-led narratives: start with one case, explain reusable steps and intervention, then end with the relevant next action. Search metadata, comparison evidence and dated BAA facts stay intact.
+
 ## [1.0.252](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.252) · 2026-11-18
 
 ### Added

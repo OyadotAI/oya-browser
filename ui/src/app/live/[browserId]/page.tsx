@@ -21,7 +21,7 @@ export default function LiveBrowserPage() {
   const { browserId } = useParams<RouteParams>();
   const { apiKey, live, control, send, reconnect } = useLivePage(browserId);
   return (
-    <main className="mx-auto max-w-[1600px] p-4 sm:p-8">
+    <main className="workspace-page mx-auto max-w-[1600px] p-4 sm:p-8">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link href="/dashboard" className="inline-flex items-center gap-2 text-xs text-text-muted hover:text-text">

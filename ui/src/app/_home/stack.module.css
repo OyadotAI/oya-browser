@@ -1,14 +1,12 @@
-/* The "change one line" list: who it is for beside the one line, the line scrolling sideways on a phone rather than
-   wrapping, since a wrapped line of code is no longer the line someone pastes. */
+/** Optional connection examples share one surface; code scrolls locally while prose wraps. */
 .lead {
   max-width: 640px;
-  margin-top: 12px;
+  margin-top: 24px;
   color: var(--muted);
 }
 .lines {
   display: grid;
-  gap: 10px;
-  margin-top: 28px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -17,12 +15,58 @@
   grid-template-columns: 220px minmax(0, 1fr);
   gap: 6px 20px;
   align-items: baseline;
-  padding: 14px 16px;
-  /* The landing page's own tokens: the global --card and --border are the dark theme's, which put dark text on a
-     near-black card here. */
+  min-width: 0;
+  padding: 24px;
+  border-top: 1px solid var(--line);
+}
+.line > * {
+  min-width: 0;
+}
+.examples {
+  margin-top: 28px;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  border-radius: var(--radius-window);
+  background: var(--surface-soft);
+}
+.examples summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 76px;
+  padding: 20px 28px;
+  color: var(--brand);
+  font-weight: 500;
+  list-style: none;
+  cursor: pointer;
+}
+.examples summary::-webkit-details-marker {
+  display: none;
+}
+.examples summary svg {
+  flex: none;
+  transition: transform 350ms var(--ease-out);
+}
+.examples[open] summary svg {
+  transform: rotate(180deg);
+}
+.examples[open] {
+  --focus: var(--lime);
+  background: var(--night);
+  border-color: var(--night);
+  color: var(--ivory);
+}
+.examples[open] summary {
+  color: var(--ivory);
+}
+.examples[open] .line {
+  border-color: var(--dark-line);
+}
+.examples[open] .code {
+  color: var(--lime);
+}
+.examples[open] :is(.note, .lang) {
+  color: var(--night-muted);
 }
 .who {
   font-weight: 500;
@@ -42,6 +86,7 @@
   grid-column: 2;
   color: var(--muted);
   font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 @media (max-width: 760px) {
   .line {

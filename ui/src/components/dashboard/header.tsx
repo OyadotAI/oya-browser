@@ -32,21 +32,24 @@ export default function Header({ apiKey, setApiKey, onOpenSettings }: HeaderProp
     // browser renders the detail panel as `fixed inset-0 z-40` below the lg
     // breakpoint, and an unpositioned header sits under it, the buttons were
     // still there, the overlay was just swallowing every click.
-    <header className="relative z-50 flex flex-wrap items-center gap-3 px-4 py-2 lg:px-6 min-h-[52px] shrink-0 bg-bg border-b border-border">
-      <OyaWordmark href="/dashboard" />
-      <HealthBadge />
-      <div className="flex-1" />
-      <ProjectSwitcher apiKey={apiKey} setApiKey={setApiKey} />
-      <DownloadMenu />
-      <ThemeToggle />
-      <button
-        onClick={onOpenSettings}
-        className="p-2 hover:bg-text/5 rounded-md text-text-dim hover:text-text transition-colors"
-        title="Settings"
-      >
-        <Settings className="w-4 h-4" />
-      </button>
-      <UserMenu onOpenProfile={() => setShowProfile(true)} />
+    <header className="workspace-header relative z-50 shrink-0 bg-bg border-b border-border">
+      <div className="workspace-header-brand">
+        <OyaWordmark href="/dashboard" />
+        <HealthBadge />
+      </div>
+      <div className="workspace-header-actions">
+        <ProjectSwitcher apiKey={apiKey} setApiKey={setApiKey} />
+        <DownloadMenu />
+        <ThemeToggle />
+        <button
+          onClick={onOpenSettings}
+          className="min-h-11 min-w-11 p-2 hover:bg-text/5 rounded-md text-text-dim hover:text-text transition-colors"
+          title="Settings"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
+        <UserMenu onOpenProfile={() => setShowProfile(true)} />
+      </div>
       <ProfileDialog open={showProfile} onClose={() => setShowProfile(false)} />
     </header>
   );

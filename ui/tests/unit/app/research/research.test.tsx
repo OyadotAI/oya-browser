@@ -1,7 +1,7 @@
 /**
  * Unit tests for /research, its posts and the /vs index: every number on a post appears in the
  * document it is copied from, the tables are readable by a screen reader, each page is in the
- * sitemap, and Compare and Research are one click from every page header and footer.
+ * sitemap, and Compare and Research remain reachable through the site navigation and home footer.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -16,7 +16,6 @@ import { ANSWER_PAGES } from '@/app/_answers/content';
 import { SiteHeader } from '@/app/_home/site-header';
 import { SiteFooter } from '@/app/_home/site-footer';
 import { Closing } from '@/app/_home/closing';
-import { WORDS } from '@/app/_home/nav-content';
 import { SITE_URL } from '@/lib/site';
 import sitemap from '@/app/sitemap';
 
@@ -81,8 +80,8 @@ describe('/vs', () => {
     const main = within(screen.getByRole('main'));
     const comparisons = ANSWER_PAGES.filter(({ path: p }) => p.startsWith('/vs/'));
     expect(main.getAllByRole('link')).toHaveLength(comparisons.length);
-    for (const { title, path: href } of comparisons) {
-      expect(main.getByRole('link', { name: title }).getAttribute('href')).toBe(href);
+    for (const { title, hero, path: href } of comparisons) {
+      expect(main.getByRole('link', { name: hero?.headline ?? title }).getAttribute('href')).toBe(href);
     }
   });
 
@@ -100,19 +99,6 @@ describe('/vs', () => {
 
 describe('navigation', () => {
   it.each([
-    [
-      'the home navigation',
-      () =>
-        render(
-          <ul>
-            {WORDS.map(({ word, href }) => (
-              <a key={word} href={href}>
-                {word}
-              </a>
-            ))}
-          </ul>,
-        ),
-    ],
     ['the site header', () => render(<SiteHeader />)],
     ['the site footer', () => render(<SiteFooter />)],
     ['the home footer', () => render(<Closing />)],

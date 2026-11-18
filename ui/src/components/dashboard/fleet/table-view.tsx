@@ -1,6 +1,7 @@
 /**
  * The scrolling table area: the empty state, or the table and its "show more".
  */
+import { DataRegion } from '../data-region';
 import type { MouseEvent } from 'react';
 import type { BrowserRow } from '../types';
 import type { FleetTableProps } from '../fleet-table';
@@ -22,7 +23,7 @@ interface Props extends FleetTableProps {
 export default function FleetTableView({ view, onMenu, rows, onStart, ...p }: Props) {
   const { visible, limit, setLimit } = view;
   return (
-    <div className="data-scroll mx-4 mb-4 min-h-0 flex-initial overflow-auto rounded-xl border border-border bg-bg-card/25 lg:mx-6 lg:mb-6">
+    <DataRegion label="Browser fleet table">
       {rows.length === 0 ? (
         <Empty onStart={onStart} />
       ) : (
@@ -49,6 +50,6 @@ export default function FleetTableView({ view, onMenu, rows, onStart, ...p }: Pr
         </table>
       )}
       {visible.length > limit && <ShowMore limit={limit} total={visible.length} setLimit={setLimit} />}
-    </div>
+    </DataRegion>
   );
 }

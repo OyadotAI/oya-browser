@@ -1,4 +1,4 @@
-/* Research posts: the table's scrolling frame and caption; everything else is the release notes' column. */
+/** Research posts: the table's scrolling frame and caption; everything else is the release notes' column. */
 .scroll {
   margin-top: 24px;
   overflow-x: auto;
@@ -12,4 +12,13 @@
   margin-top: 4px;
   color: var(--muted);
   font-size: 14px;
+}
+
+.scroll {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.scroll table {
+  min-width: 640px;
 }

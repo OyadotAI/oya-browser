@@ -7,10 +7,13 @@ import type { Metadata } from 'next';
 import styles from '../page.module.css';
 import trust from '../trust/trust.module.css';
 import answers from './answers.module.css';
+import { AnswerHero } from './answer-hero';
+import { AnswerSection } from './answer-section';
+import { AnswerInvitation } from './answer-action';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
 import { faqJsonLd, SITE_NAME, type QA } from '@/lib/site';
-import type { AnswerPageContent, AnswerSection, AnswerSources, AnswerTable } from './content';
+import type { AnswerPageContent, AnswerSources, AnswerTable } from './content';
 
 /** The card image every page shares; Next replaces openGraph and twitter whole, so it is repeated here. */
 const CARD_IMAGE = '/oya-ask-poster.jpg';
@@ -40,7 +43,7 @@ const jsonLd = (data: object): string => JSON.stringify(data).replace(/</g, '\\u
  */
 function CompareTable({ caption, columns, rows }: AnswerTable) {
   return (
-    <div className={answers.scroll}>
+    <div className={answers.scroll} role="region" aria-label={caption} tabIndex={0}>
       <table className={`${trust.table} ${answers.compare}`}>
         <caption>{caption}</caption>
         <thead>
@@ -64,24 +67,6 @@ function CompareTable({ caption, columns, rows }: AnswerTable) {
         </tbody>
       </table>
     </div>
-  );
-}
-
-/** One section: heading, paragraph, and its list and table when it has them. */
-function Section({ heading, body, items, table }: AnswerSection) {
-  return (
-    <section className={trust.section}>
-      <h2>{heading}</h2>
-      <p>{body}</p>
-      {items && (
-        <ul>
-          {items.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      )}
-      {table && <CompareTable {...table} />}
-    </section>
   );
 }
 
@@ -110,7 +95,7 @@ function Sources({ checked, links }: AnswerSources) {
 /** The questions, each answer shown. */
 function Questions({ faq }: { /** The questions and answers. */ faq: QA[] }) {
   return (
-    <section className={trust.section} aria-labelledby="questions">
+    <section className={`${trust.section} ${answers.questions}`} aria-labelledby="questions">
       <h2 id="questions">Questions</h2>
       {faq.map(({ q, a }) => (
         <div key={q}>
@@ -128,14 +113,16 @@ export function AnswerPage({ content }: { /** What the page says. */ content: An
     <div className={styles.page}>
       <div className={styles.container}>
         <SiteHeader />
-        <main className={trust.main}>
-          <h1>{content.title}</h1>
-          <p className={trust.lead}>{content.lead}</p>
+        <main className={`${trust.main} ${answers.answerMain}`}>
+          <AnswerHero content={content} />
           {content.sections.map((section) => (
-            <Section key={section.heading} {...section} />
+            <AnswerSection key={section.heading} section={section} path={content.path}>
+              {section.table && <CompareTable {...section.table} />}
+            </AnswerSection>
           ))}
-          <Questions faq={content.faq} />
           {content.sources && <Sources {...content.sources} />}
+          <AnswerInvitation content={content} />
+          <Questions faq={content.faq} />
         </main>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(faqJsonLd(content.faq)) }} />
         <SiteFooter />

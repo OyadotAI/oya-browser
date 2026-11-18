@@ -1,5 +1,6 @@
 /** A single product scene lets technical buyers inspect three existing healthcare workflows. */
 'use client';
+import { Reveal } from '@/components/ui/reveal';
 import { DEMO_EXAMPLES } from './demo-content';
 import { DemoScene } from './demo-scene';
 import { useWorkflow } from './use-workflow';
@@ -11,7 +12,12 @@ export function ProductDemo() {
   return (
     <section className={styles.demo} id="workflows" aria-labelledby="demo-h">
       <div className={styles.demoHeading} id="playbooks">
-        <h2 id="demo-h">Your first task becomes a reusable playbook.</h2>
+        <h2 id="demo-h">Start with one task your team already does.</h2>
+        <p>
+          Choose a prior authorization, eligibility check or claim-status lookup. Watch an agent work through the task
+          in a browser, with a person able to take control.
+        </p>
+        <p>Interactive simulation · Synthetic data</p>
       </div>
       <div className={styles.taskTabs} role="tablist" aria-label="Workflows">
         {DEMO_EXAMPLES.map(({ task, label }, index) => (
@@ -38,7 +44,11 @@ export function ProductDemo() {
           aria-labelledby={`demo-tab-${index}`}
           hidden={selection.active !== index}
         >
-          {selection.active === index && <DemoScene key={example.task.file} example={example} />}
+          {selection.active === index && (
+            <Reveal>
+              <DemoScene key={example.task.file} example={example} />
+            </Reveal>
+          )}
         </div>
       ))}
     </section>

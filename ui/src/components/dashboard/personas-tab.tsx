@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { DataRegion } from './data-region';
 import { useState } from 'react';
 import { Globe, Layers, Plus, Users } from 'lucide-react';
 import type { Persona, BrowserRow } from './types';
@@ -178,7 +179,7 @@ export default function PersonasTab({
   return (
     <div className="workspace-list flex h-full min-h-0 min-w-0 flex-col">
       <Toolbar count={personas.length} onTool={setTool} onCreate={() => setCreating(true)} />
-      <div className="data-scroll mx-4 mb-4 min-h-0 flex-initial overflow-auto rounded-xl border border-border bg-bg-card/25 lg:mx-6 lg:mb-6">
+      <DataRegion label="Profiles table">
         <table className="data-table profile-data w-full table-fixed border-collapse text-[13px]" aria-label="Profiles">
           <Head />
           <tbody>
@@ -189,7 +190,7 @@ export default function PersonasTab({
         </table>
         {personas.length === 0 && status === 'ready' && <Empty onCreate={() => setCreating(true)} />}
         {personas.length === 0 && status !== 'ready' && <NotLoaded failed={status === 'failed'} onRetry={refresh} />}
-      </div>
+      </DataRegion>
       <ToolDialogs
         tool={tool}
         onClose={() => setTool(null)}

@@ -11,7 +11,7 @@ export function Faq() {
     <section className="section" id="faq" aria-labelledby="faq-h">
       <div className="wrap grid">
         <div className="span-5">
-          <h2 id="faq-h">Check the details before you deploy.</h2>
+          <h2 id="faq-h">Resolve the remaining questions before you start.</h2>
           <a className="link" href="#contact">
             Talk to the founders
           </a>

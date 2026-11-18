@@ -4,6 +4,8 @@
  * of lists rather than prose.
  */
 
+import { REPAIR_FAQ } from './workflow-story-content';
+
 /** The public repository. */
 export const repository = 'https://github.com/OyadotAI/oya-browser';
 
@@ -195,7 +197,7 @@ export const FAQ = [
   },
   {
     q: 'What happens when a portal changes?',
-    a: 'The replay stops at the step that moved, the agent finishes the task from there, and its fix becomes the playbook, so the next run is model-free again.',
+    a: REPAIR_FAQ,
   },
   {
     q: 'How much does it cost?',

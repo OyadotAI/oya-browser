@@ -1,4 +1,4 @@
-/* The legal pages: the trust center's column, plus a contents list, numbered headings and readable lists. */
+/** The legal pages: the trust center's column, plus a contents list, numbered headings and readable lists. */
 .effective {
   margin-top: 8px;
   color: var(--muted);
@@ -8,9 +8,9 @@
   max-width: 640px;
   margin-top: 32px;
   padding: 18px 22px;
-  border: 1px solid #e5e9e1;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--card);
 }
 .contents ol {
   margin: 0;
@@ -29,13 +29,13 @@
 }
 .section {
   max-width: 720px;
-  scroll-margin-top: 24px;
+  scroll-margin-top: 104px;
 }
 .section ul {
   margin-top: 10px;
   padding-left: 20px;
   color: var(--muted);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.7;
 }
 .section li + li {

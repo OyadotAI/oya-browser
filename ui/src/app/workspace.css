@@ -1,0 +1,68 @@
+/** Operational pages share the brand while keeping bounded workspaces and dense data readable. */
+.workspace-page {
+  min-width: 0;
+}
+.workspace-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px 24px;
+}
+.workspace-header-brand,
+.workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.workspace-header-actions {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.workspace-page .data-scroll {
+  background: var(--card);
+  border-radius: 16px;
+}
+.workspace-page :is(input, textarea, select) {
+  border-radius: 8px;
+}
+.workspace-page main > h1 {
+  letter-spacing: -0.04em;
+}
+@media (max-width: 767px) {
+  .workspace-header {
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  .workspace-header-brand {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .workspace-header-actions {
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+  }
+  .workspace-header-actions > :first-child {
+    margin-right: auto;
+  }
+  .workspace-page :is(input, textarea, select) {
+    font-size: 16px;
+  }
+  :is(.workspace-page, .docs-page) :is(.btn-primary, .btn-ghost, .btn-icon, .btn-danger) {
+    min-height: 44px;
+  }
+  .workspace-page .btn-icon,
+  .docs-page .btn-icon {
+    min-width: 44px;
+  }
+  [role='dialog'] :is(button, input:not([type='checkbox']):not([type='radio']), select) {
+    min-height: 44px;
+  }
+  [role='dialog'] input {
+    font-size: 16px;
+  }
+  [role='dialog'] {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

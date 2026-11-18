@@ -1,14 +1,12 @@
-/**
- * Leads with the platform loop: build a browser automation on the desktop, deploy it anywhere,
- * replay it with no model. No other browser vendor can say "anywhere", because each one is the
- * cloud; Oya is the layer above them. The eyebrow and the trust line keep healthcare, Oya's first
- * market, as the proof. Its actions lead into the existing demo and developer entry point.
- */
+/** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
+import Image from 'next/image';
 import { COMPLIANCE_LINE, foundersCall } from './content';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
-import styles from './landing.module.css';
+import { HERO_ART_HEIGHT, HERO_ART_WIDTH } from './constants';
+import styles from './hero.module.css';
+import { Reveal } from '@/components/ui/reveal';
 
 /** The two actions: a demo first, since regulated buyers evaluate before they build, then the console. */
 export function Actions({ place }: { /** Where the buttons sit, for analytics. */ place: string }) {
@@ -35,30 +33,53 @@ export function Actions({ place }: { /** Where the buttons sit, for analytics. *
   );
 }
 
-/** The hero section. */
+/** Original glass artwork echoes Oya's interlocking rings without implying a live product view. */
+function HeroArtwork() {
+  return (
+    <div className={styles.artwork} aria-hidden="true">
+      <Reveal preset="artwork">
+        <Image
+          src="/oya-routing-sculpture.png"
+          alt=""
+          width={HERO_ART_WIDTH}
+          height={HERO_ART_HEIGHT}
+          sizes="(max-width: 899px) 100vw, 58vw"
+          preload
+        />
+      </Reveal>
+    </div>
+  );
+}
+
+/** A two-scale headline leads into an asymmetric product-art composition and the existing actions. */
 export function Hero() {
   return (
-    <section className="hero hero--product" id="hero" data-enter aria-labelledby="hero-h">
+    <section className={`hero ${styles.hero}`} id="hero" aria-labelledby="hero-h">
       <div className="wrap">
-        <div className="hero-text hero__in">
-          <div className="hero__head">
-            <div>
-              <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
-              <h1 id="hero-h">
-                Build browser automations on your desktop.{' '}
-                <span className={styles.heroAccent}>Deploy them anywhere.</span>
-              </h1>
-              <p className="hero__lead">
-                An agent does the task once. Oya keeps it as Playwright code that replays with no model, on Oya Cloud or
-                your own infrastructure.
-              </p>
-            </div>
+        <Reveal preset="intro">
+          <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
+          <h1 id="hero-h" className={styles.title}>
+            <span className={styles.intro}>Turn repeated portal work into</span>{' '}
+            <span className={styles.accent}>a workflow you can reuse.</span>
+          </h1>
+        </Reveal>
+        <div className={styles.composition}>
+          <Reveal preset="intro" order={1} className={styles.copy}>
+            <p className={styles.lead}>
+              Your team already knows how to work the portal. Have Oya complete one task on your desktop, save its steps
+              as readable code, and run those steps again with new inputs.
+            </p>
+            <p className={styles.scope}>
+              Use synthetic data while developing on desktop. For protected health information (PHI), use Oya Cloud or
+              the enterprise edition under a Business Associate Agreement (BAA).
+            </p>
             <Actions place="hero" />
-          </div>
-          <a className={styles.trustLine} href="/trust">
-            <ShieldCheck size={18} aria-hidden="true" />
-            {COMPLIANCE_LINE}
-          </a>
+            <a className={styles.trustLine} href="/trust">
+              <ShieldCheck size={18} aria-hidden="true" />
+              {COMPLIANCE_LINE}
+            </a>
+          </Reveal>
+          <HeroArtwork />
         </div>
       </div>
     </section>

@@ -28,6 +28,14 @@ describe('trust center', () => {
     for (const { name } of SUBPROCESSORS) expect(screen.getByText(name)).toBeTruthy();
   });
 
+  it('keeps every control requirement in a keyboard-accessible scrolling region', () => {
+    render(<TrustCenter />);
+    const region = screen.getByRole('region', { name: 'Security controls table' });
+    expect(region.tabIndex).toBe(0);
+    for (const control of evidence.controls) expect(within(region).getByText(control.requirement)).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Subprocessors table' }).tabIndex).toBe(0);
+  });
+
   it('is linked from the site footer', () => {
     render(<TrustCenter />);
     const footer = screen.getByRole('navigation', { name: 'Footer navigation' });

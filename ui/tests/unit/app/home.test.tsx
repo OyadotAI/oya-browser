@@ -2,7 +2,7 @@
  * Unit tests for the landing page, through what a visitor sees: the replay and its audit
  * strip, the steps, the workflow tabs, the trail, the questions, and the claims it may make.
  */
-import { STACK_HEADING, STACK_LINES } from '@/app/_home/stack-content';
+import { STACK_LINES } from '@/app/_home/stack-content';
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,10 +22,14 @@ vi.stubGlobal('IntersectionObserver', NoIntersections);
 
 /** Tracks the header's layout listener so route cleanup is observable. */
 const layoutListeners = new Set<() => void>();
-vi.stubGlobal('matchMedia', () => ({
-  matches: true,
-  addEventListener: (_event: string, listener: () => void) => layoutListeners.add(listener),
-  removeEventListener: (_event: string, listener: () => void) => layoutListeners.delete(listener),
+vi.stubGlobal('matchMedia', (query: string) => ({
+  matches: query.includes('min-width') || motion.reduced,
+  addEventListener: (_event: string, listener: () => void) => {
+    if (query.includes('min-width')) layoutListeners.add(listener);
+  },
+  removeEventListener: (_event: string, listener: () => void) => {
+    if (query.includes('min-width')) layoutListeners.delete(listener);
+  },
 }));
 
 /** An observer that reports everything on screen at once, so in-view motion starts. */
@@ -69,15 +73,15 @@ const replay = () => screen.getByRole('figure', { name: /Example replay:/ });
 describe('landing page', () => {
   afterEach(() => cleanup());
 
-  it('leads with build on the desktop, deploy anywhere, keeps healthtech and RCM as its audience, and the existing actions', async () => {
+  it('introduces reusable portal work to healthtech teams and preserves the existing actions', async () => {
     await page();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
-      'Build browser automations on your desktop. Deploy them anywhere.',
+      'Turn repeated portal work into a workflow you can reuse.',
     );
     expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
       screen.getByText(
-        'An agent does the task once. Oya keeps it as Playwright code that replays with no model, on Oya Cloud or your own infrastructure.',
+        'Your team already knows how to work the portal. Have Oya complete one task on your desktop, save its steps as readable code, and run those steps again with new inputs.',
       ),
     ).toBeTruthy();
     const demos = screen.getAllByRole('link', { name: /Book a demo/ });
@@ -91,9 +95,20 @@ describe('landing page', () => {
     expect(screen.getByRole('link', { name: COMPLIANCE_CLAIMS.join(' · ') }).getAttribute('href')).toBe('/trust');
   });
 
+  it('keeps original hero artwork decorative while preserving the accessible headline and actions', async () => {
+    const { container } = await page();
+    const image = container.querySelector<HTMLImageElement>('img[src*="oya-routing-sculpture"]');
+    expect(image?.alt).toBe('');
+    expect(image?.closest('[aria-hidden="true"]')).toBeTruthy();
+    expect(image?.getAttribute('width')).toBe('1536');
+    expect(image?.getAttribute('height')).toBe('1024');
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Start building' }).getAttribute('href')).toBe('/dashboard');
+  });
+
   it('starts on prior authorization and exposes three existing workflows through accessible tabs', async () => {
     await page();
-    expect(screen.getByRole('heading', { name: 'Your first task becomes a reusable playbook.' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Start with one task your team already does.' })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: 'Workflows' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(DEMO_LABELS);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
@@ -152,12 +167,20 @@ describe('landing page', () => {
   });
 
   it('shows each stack the one line that moves it onto Oya, from the content the docs share', async () => {
+    const user = userEvent.setup();
     await page();
-    const section = screen.getByRole('region', { name: STACK_HEADING });
+    const section = screen.getByRole('region', { name: 'Connect the workflow to the tools you already use.' });
+    const summary = within(section).getByText('View connection examples');
+    const disclosure = summary.closest('details');
+    expect(disclosure?.open).toBe(false);
+    await user.click(summary);
+    expect(disclosure?.open).toBe(true);
     for (const { line, who } of STACK_LINES) {
       expect(section.textContent).toContain(line);
       expect(section.textContent).toContain(who);
     }
+    await user.click(summary);
+    expect(disclosure?.open).toBe(false);
   });
 
   it('connects the first workflow and its results to operating, controlling and deploying more workflows', async () => {
@@ -166,10 +189,10 @@ describe('landing page', () => {
       'hero',
       'workflows',
       'stack',
-      'results',
       'control-plane',
       'capabilities',
       'deployment',
+      'results',
       'faq',
       'contact',
     ];
@@ -178,16 +201,18 @@ describe('landing page', () => {
       .filter((id) => journey.includes(id));
     expect(order).toEqual(journey);
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
-      'Your first task becomes a reusable playbook.',
-      'Already have a stack? Change one line.',
-      'See what customers report.',
-      'Operate those workflows across agents and browsers.',
-      'Control how the work runs.',
-      'Choose where those workflows run.',
-      'Check the details before you deploy.',
-      'Bring us your first workflow.',
+      'Start with one task your team already does.',
+      'When a page changes, review where the run stopped.',
+      'When a status needs context, check the available documents.',
+      'Connect the workflow to the tools you already use.',
+      'Keep browser connections and run history together.',
+      'Decide how each run should work.',
+      'Choose where the work runs.',
+      'Compare the result with your current process.',
+      'Resolve the remaining questions before you start.',
+      'Scope your first workflow with the founders.',
     ]);
-    const architecture = screen.getByRole('region', { name: 'Operate those workflows across agents and browsers.' });
+    const architecture = screen.getByRole('region', { name: 'Keep browser connections and run history together.' });
     expect(
       within(architecture)
         .getAllByRole('heading', { level: 3 })
@@ -204,7 +229,8 @@ describe('landing page', () => {
     expect(audit.textContent).toContain('Filled Date of birth');
     expect(audit.textContent).not.toContain('Filled diagnosis M54.50');
     expect(audit.textContent).not.toContain(REPLAY.ledger[0].hash);
-    expect(screen.getByText('Interactive simulation · Synthetic data')).toBeTruthy();
+    const label = screen.getByText('Interactive simulation · Synthetic data');
+    expect(label.compareDocumentPosition(replay()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('wraps task arrow navigation and keeps selection, focus and the single tab stop together', async () => {
@@ -242,7 +268,12 @@ describe('landing page', () => {
     try {
       await page();
       expect(screen.queryByRole('button', { name: /Pause replay|Play replay/ })).toBeNull();
-      for (const name of ['Describe the task', 'Record once', 'Save the playbook', 'Replay new inputs']) {
+      for (const name of [
+        'Describe the task you already know.',
+        'Watch the agent work through it.',
+        'Keep the steps, not just the result.',
+        'Use those steps for the next case.',
+      ]) {
         expect(within(replay()).getByRole('heading', { level: 3, name })).toBeTruthy();
       }
       expect(screen.getByRole('group', { name: 'Saved playbook' }).textContent).toContain(REPLAY.file);
@@ -320,6 +351,26 @@ describe('landing page', () => {
       expect(downloads.getByRole('link', { name: new RegExp(platform) }).getAttribute('href')).toBe(href);
   });
 
+  it('keeps the main navigation focused and secondary destinations reachable in the footer and Product menu', async () => {
+    await page();
+    const main = within(screen.getByRole('navigation', { name: 'Main' }));
+    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Product',
+      'Workflows',
+      'Docs',
+      'Security',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show Product links' }));
+    expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('#control-plane');
+    const footer = within(screen.getByRole('contentinfo'));
+    for (const [name, href] of [
+      ['Compare', '/vs'],
+      ['Research', '/research'],
+      ['Questions', '#faq'],
+    ])
+      expect(footer.getByRole('link', { name }).getAttribute('href')).toBe(href);
+  });
+
   it('opens Product destinations and restores trigger focus on Escape', async () => {
     await page();
     const toggle = screen.getByRole('button', { name: 'Show Product links' });
@@ -343,7 +394,7 @@ describe('landing page', () => {
     expect(document.activeElement).toBe(navigation.getByRole('link', { name: 'Product' }));
     await user.tab();
     await user.tab();
-    expect(document.activeElement).toBe(navigation.getByRole('link', { name: 'Control plane' }));
+    expect(document.activeElement).toBe(navigation.getByRole('link', { name: 'Workflows' }));
     await user.keyboard('{Escape}');
     expect(menu.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(menu);
@@ -367,15 +418,15 @@ describe('landing page', () => {
   it('reveals enterprise governance and observability detail without losing the other group summaries', async () => {
     await page();
     const tabs = within(screen.getByRole('tablist', { name: 'Control plane capabilities' }));
-    const govern = tabs.getByRole('tab', { name: /^Govern/ });
+    const govern = tabs.getByRole('tab', { name: /^Set access/ });
     fireEvent.click(govern);
-    expect(screen.getByRole('tabpanel', { name: /^Govern/ }).textContent).toContain(
+    expect(screen.getByRole('tabpanel', { name: /^Set access/ }).textContent).toContain(
       'Administrator, operator and viewer',
     );
-    expect(screen.getByRole('tabpanel', { name: /^Govern/ }).textContent).toContain('managed runtime');
+    expect(screen.getByRole('tabpanel', { name: /^Set access/ }).textContent).toContain('managed runtime');
     fireEvent.keyDown(govern, { key: 'ArrowDown' });
-    expect(screen.getByRole('tabpanel', { name: /^Observe/ }).textContent).toContain('Signed lifecycle webhooks');
-    expect(document.activeElement).toBe(tabs.getByRole('tab', { name: /^Observe/ }));
+    expect(screen.getByRole('tabpanel', { name: /^Review runs/ }).textContent).toContain('Signed lifecycle webhooks');
+    expect(document.activeElement).toBe(tabs.getByRole('tab', { name: /^Review runs/ }));
     expect(tabs.getAllByRole('tab')).toHaveLength(3);
   });
 
@@ -441,8 +492,8 @@ describe('landing page', () => {
     expect(container.querySelector('style')?.textContent).not.toContain(':root');
     expect(screen.getByRole('figure', { name: /Oya architecture/ })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: 'Control plane capabilities' }));
-    for (const name of ['Orchestrate', 'Govern', 'Observe'])
+    for (const name of ['Run work', 'Set access', 'Review runs'])
       expect(tabs.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Choose where those workflows run.' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Choose where the work runs.' })).toBeTruthy();
   });
 });

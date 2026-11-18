@@ -2,13 +2,15 @@
  * The page's closing footer: a clean bordered CTA card with a standard primary button,
  * followed by the five-column directory and legal row. Carries the #download anchor.
  */
-import { Fragment } from 'react';
+import { Reveal } from '@/components/ui/reveal';
 import Link from 'next/link';
 import { ANSWER_PAGES } from '../_answers/content';
 import { OyaLogo } from '@/components/oya-logo';
 import { browserDownloads } from '@/lib/browser-downloads';
 import { discord, foundersCall, repository } from './content';
 import { Arrow } from './arrow';
+import { CLOSING_MARK_SIZE } from './constants';
+import styles from './closing.module.css';
 
 /** The directory's columns: a heading and its links. */
 const COLUMNS: [string, [string, string][]][] = [
@@ -34,6 +36,7 @@ const COLUMNS: [string, [string, string][]][] = [
     'Company',
     [
       ['Security', '/trust'],
+      ['Questions', '#faq'],
       ['GitHub', repository],
       ['Discord', discord],
     ],
@@ -63,9 +66,9 @@ function AnswerLinks() {
   return (
     <nav aria-label="Answers">
       {ANSWER_PAGES.map(({ path, label }) => (
-        <Fragment key={path}>
-          <Link href={path}>{label}</Link> &nbsp;{' '}
-        </Fragment>
+        <Link key={path} href={path}>
+          {label}
+        </Link>
       ))}
     </nav>
   );
@@ -112,12 +115,15 @@ function Directory() {
 /** The closing footer. */
 export function Closing() {
   return (
-    <footer className="footer closing" id="contact" aria-labelledby="close-h">
-      <div className="wrap">
-        <div className="closing__cta">
+    <footer className={styles.footer} id="contact" aria-labelledby="close-h">
+      <div className="closing__panel">
+        <Reveal className="wrap closing__cta">
+          <span className="closing__mark" aria-hidden="true">
+            <OyaLogo size={CLOSING_MARK_SIZE} />
+          </span>
           <div className="section-head">
-            <h2 id="close-h">Bring us your first workflow.</h2>
-            <p className="t-lead">Discuss it with the founders in a 30-minute call.</p>
+            <h2 id="close-h">Scope your first workflow with the founders.</h2>
+            <p className="t-lead">Bring your SOP or screen recording. Scope your first workflow with the founders.</p>
           </div>
           <a
             className="btn btn--primary"
@@ -128,7 +134,9 @@ export function Closing() {
             Book a demo
             <Arrow />
           </a>
-        </div>
+        </Reveal>
+      </div>
+      <div className="wrap">
         <Directory />
       </div>
     </footer>

@@ -1,10 +1,12 @@
 /** Enterprise buyers see every capability summary and can select the supporting technical detail. */
 'use client';
+import { Reveal } from '@/components/ui/reveal';
 import Link from 'next/link';
 import { ArrowUpRight, Check } from 'lucide-react';
 import { CAPABILITY_GROUPS } from './enterprise-content';
 import { useWorkflow } from './use-workflow';
 import styles from './control-plane.module.css';
+import { Disclosure } from '@/components/ui/disclosure';
 
 /** The platform's three jobs remain visible while the selected group reveals its depth. */
 export function EnterpriseCapabilities() {
@@ -12,17 +14,18 @@ export function EnterpriseCapabilities() {
   return (
     <section className="section" id="capabilities" aria-labelledby="capabilities-h">
       <div className="wrap" id="audit">
-        <div className={styles.sectionHeading}>
-          <h2 id="capabilities-h">Control how the work runs.</h2>
-          <p>Choose how tasks are queued, who can act and what your team can review.</p>
-        </div>
+        <Reveal className={styles.sectionHeading}>
+          <h2 id="capabilities-h">Decide how each run should work.</h2>
+        </Reveal>
         <div className={styles.explorer}>
           <div
             className={styles.capabilityTabs}
             role="tablist"
             aria-label="Control plane capabilities"
             aria-orientation="vertical"
+            style={{ '--selected': active, '--groups': CAPABILITY_GROUPS.length } as import('react').CSSProperties}
           >
+            <span className={styles.selectionMarker} aria-hidden="true" />
             {CAPABILITY_GROUPS.map((group, index) => (
               <button
                 key={group.id}
@@ -68,18 +71,25 @@ function CapabilityPanel({
       aria-labelledby={`cap-tab-${group.id}`}
       hidden={!selected}
     >
-      <p className={styles.panelLead}>{group.detail}</p>
-      <ul>
-        {group.items.map(([title, body]) => (
+      <ul className={styles.capabilityOutline}>
+        {group.items.map(([title]) => (
           <li key={title}>
             <Check size={17} aria-hidden="true" />
             <div>
               <h3>{title}</h3>
-              <p>{body}</p>
             </div>
           </li>
         ))}
       </ul>
+      {group.id === 'govern' && <p className={styles.scopeNote}>Host rules: managed runtime.</p>}
+      <Disclosure summary="Capability details">
+        <p>{group.detail}</p>
+        {group.items.map(([title, body]) => (
+          <p key={title}>
+            <strong>{title}.</strong> {body}
+          </p>
+        ))}
+      </Disclosure>
       <Link className="link" href={group.href}>
         Read technical details
       </Link>

@@ -1,47 +1,28 @@
 /**
  * The landing header.
  */
-import Link from 'next/link';
+'use client';
+import { Menu, X } from 'lucide-react';
 import { OyaWordmark } from '@/components/oya-logo';
-import { discord, repository } from './content';
+import { SiteLinks } from './site-header-links';
 import styles from '../page.module.css';
+import { useNavigation } from './use-navigation';
 
 /** Wordmark and main navigation, with Download always in reach as the header sticks. */
 export function SiteHeader() {
+  const { state, close, toggle, escape } = useNavigation();
   return (
-    <header className={styles.header}>
+    <header className={styles.header} onKeyDown={escape}>
       <OyaWordmark />
-      <nav aria-label="Main navigation" className={styles.navigation}>
-        <Link href="/vs" className={styles.wide} data-track="cta_clicked" data-track-label="header_compare">
-          Compare
-        </Link>
-        <Link href="/research" className={styles.wide} data-track="cta_clicked" data-track-label="header_research">
-          Research
-        </Link>
-        <Link href="/docs" data-track="cta_clicked" data-track-label="header_docs">
-          Docs
-        </Link>
-        <Link href="/trust" className={styles.roomy} data-track="cta_clicked" data-track-label="header_security">
-          Security
-        </Link>
-        <a href={repository} className={styles.roomy} data-track="cta_clicked" data-track-label="header_github">
-          GitHub
-        </a>
-        <a href={discord} className={styles.roomy} data-track="cta_clicked" data-track-label="header_discord">
-          Discord
-        </a>
-        <Link
-          href="/#download"
-          className={styles.headerDownload}
-          data-track="cta_clicked"
-          data-track-label="header_download"
-        >
-          Download
-        </Link>
-        <Link href="/dashboard" className={styles.console} data-track="cta_clicked" data-track-label="header_console">
-          Open console
-        </Link>
-      </nav>
+      <button
+        className={styles.menuToggle}
+        aria-expanded={state.menu}
+        aria-controls="main-links"
+        onClick={() => toggle('menu')}
+      >
+        {state.menu ? <X size={18} /> : <Menu size={18} />} Menu
+      </button>
+      <SiteLinks open={state.menu} close={close} />
     </header>
   );
 }

@@ -1,633 +1,185 @@
+/** Public pages share an editorial ivory canvas, forest navigation and a generous reading hierarchy. */
 .page {
-  --primary: #16733b;
-  --foreground: #1a261e;
-  --muted: #454f47;
-  color-scheme: light;
+  --background: #f6f4e8;
+  --foreground: #10251c;
+  --primary: #235d3a;
+  --primary-foreground: #f6f4e8;
+  --card: #fffdf4;
+  --elevated: #e9eddd;
+  --sunken: #eff1e5;
+  --border: #143f2530;
+  --secondary: #3a4e40;
+  --muted: #526457;
+  --dim: #647565;
+  --info: #1d4ed8;
+  --warning: #92400e;
+  --destructive: #b91c1c;
   min-height: 100dvh;
-  background: #fff;
-  color: #1a261e;
+  background: var(--background);
+  color: var(--foreground);
+  color-scheme: light;
   font-family: var(--font-dm-sans), sans-serif;
+  overflow-x: clip;
 }
 .container {
-  width: min(1200px, calc(100% - 64px));
-  margin: 0 auto;
+  width: min(1200px, calc(100% - 32px));
+  margin-inline: auto;
 }
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 90px;
-  border-bottom: 1px solid #e5e9e1;
-}
-.navigation {
-  display: flex;
-  align-items: center;
-  gap: 30px;
-  font-size: 13px;
-  font-weight: 500;
-}
-.navigation a:hover,
-.footer a:hover {
-  color: #16733b;
-}
-.console {
-  white-space: nowrap;
-  padding: 10px 15px;
-  border: 1px solid #cfd7ca;
-  border-radius: 5px;
-}
-.footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 28px 0 36px;
-  border-top: 1px solid #e5e9e1;
-  font-size: 12px;
-  color: #454f47;
-}
-.footer nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-}
-.page :focus-visible {
-  outline: 2px solid #16733b;
-  outline-offset: 4px;
-}
-
-/* See it run: the clips. */
-/* Before play, the poster is a short band: a tall empty frame read as a broken section. */
-
-@media (max-width: 960px) {
-  .container {
-    width: min(700px, calc(100% - 40px));
-  }
-}
-@media (max-width: 500px) {
-  .header {
-    height: 72px;
-    gap: 12px;
-  }
-  .navigation {
-    gap: 13px;
-    font-size: 12px;
-  }
-  .console {
-    padding: 7px 9px;
-  }
-  .footer {
-    align-items: flex-start;
-  }
-  .footer nav {
-    gap: 15px;
-  }
-  .footer > a span span {
-    display: none;
-  }
-}
-@media (max-width: 380px) {
-  .container {
-    width: calc(100% - 28px);
-  }
-  .navigation {
-    gap: 9px;
-  }
-  .header > a span span {
-    display: none;
-  }
-  .footer {
-    flex-direction: column;
-    gap: 16px;
-  }
-}
-
-/* The landing page stays light even when the app's saved theme is dark. */
-.page .container :global(code.syntax-code .token.comment),
-.page .container :global(code.syntax-code .token.prolog) {
-  color: #687364;
-}
-.page .container :global(code.syntax-code .token.keyword),
-.page .container :global(code.syntax-code .token.atrule) {
-  color: #7849a1;
-}
-.page .container :global(code.syntax-code .token.string),
-.page .container :global(code.syntax-code .token.char),
-.page .container :global(code.syntax-code .token.attr-value) {
-  color: #3d6a2a;
-}
-.page .container :global(code.syntax-code .token.function),
-.page .container :global(code.syntax-code .token.function-name) {
-  color: #226797;
-}
-.page .container :global(code.syntax-code .token.number),
-.page .container :global(code.syntax-code .token.boolean),
-.page .container :global(code.syntax-code .token.constant) {
-  color: #99541f;
-}
-.page .container :global(code.syntax-code .token.property),
-.page .container :global(code.syntax-code .token.class-name) {
-  color: #80601b;
-}
-.page .container :global(code.syntax-code .token.operator),
-.page .container :global(code.syntax-code .token.punctuation) {
-  color: #65695f;
-}
-.page .container :global(code.syntax-code .token.variable),
-.page .container :global(code.syntax-code .token.builtin) {
-  color: #21746b;
-}
-
-/* A header link the footer repeats, dropped where the header has no room for it. */
-@media (max-width: 420px) {
-  .roomy {
-    display: none;
-  }
-}
-
-/*
- * Reading sizes. The landing page is read on phones and laptops alike, so body
- * copy sits at 16 to 19px and labels never drop under 13px.
- */
-.navigation {
-  font-size: 15px;
-}
-.footer,
-.footer nav {
-  font-size: 14px;
-}
-@media (max-width: 500px) {
-  .navigation {
-    font-size: 14px;
-  }
-}
-@media (max-width: 380px) {
-  .navigation {
-    gap: 7px;
-    font-size: 13px;
-  }
-  .console {
-    padding: 6px 8px;
-  }
-}
-
-/*
- * Premium finish. The same clean theme, with the details that make it feel
- * made: a frosted header that stays, balanced headings, a soft halo behind the
- * product, cards and buttons that answer the pointer, and quieter hairlines.
- */
-.page {
-  /* The halos reach past the edges; clip, unlike hidden, keeps the header sticky. */
-  overflow-x: clip;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-}
-.page ::selection {
-  background: #c7f7a4;
-  color: #1a331d;
-}
-
-/* The header stays, frosted, across the full width of the window. */
 .header {
   position: sticky;
   top: 0;
   z-index: 40;
-  height: 76px;
-  border-bottom-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 80px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
 }
 .header::before {
   content: '';
   position: absolute;
-  inset: 0 50%;
+  inset: 0 -48px;
   z-index: -1;
-  width: 100vw;
-  transform: translateX(-50%);
-  border-bottom: 1px solid rgba(26, 38, 30, 0.08);
-  /* Solid, as the home page's nav is: a see-through header showed scrolled text under its links wherever the
-     browser draws no backdrop blur. */
-  background: #fff;
+  background: var(--background);
 }
-.console {
-  border-radius: 999px;
-  padding: 9px 16px;
-  transition:
-    border-color 0.2s ease,
-    background 0.2s ease;
-}
-.console:hover {
-  border-color: #16733b;
-  background: #f6fbf2;
-}
-
-/* The dark card: a quiet glow, and each step on its own pane. */
-
-/* The closing, on a soft wash. */
-@media (max-width: 500px) {
-  .header {
-    height: 64px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .console {
-    transition: none;
-  }
-}
-
-/* The walkthrough poster: the dark card's own colours and one play button. */
-
-/* The FAQ beside its heading, which stays in view while the questions scroll. */
-
-/* The replay window. */
-.showcase {
-  overflow: hidden;
-  border: 1px solid #e4e4e7;
-  border-radius: 10px;
-  background: #fff;
-  box-shadow:
-    0 1px 3px rgba(9, 9, 11, 0.05),
-    0 12px 24px -12px rgba(9, 9, 11, 0.08);
-}
-.windowBar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr auto;
-  align-items: center;
-  gap: 16px;
-  height: 46px;
-  padding: 0 16px;
-  border-bottom: 1px solid #e5e9e1;
-  background: #f7f9f5;
-}
-.dots {
-  display: flex;
-  gap: 7px;
-}
-.dots i {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: #dde3d8;
-}
-.address {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 16px;
-  border: 1px solid #e2e8dc;
-  border-radius: 999px;
-  background: #fff;
-  color: #535d55;
-  font-size: 12.5px;
-}
-.liveChip {
-  display: inline-flex;
-  align-items: center;
-  justify-self: end;
-  gap: 8px;
-  color: #16733b;
-  font-size: 12.5px;
-  font-weight: 500;
-}
-.liveChip i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #22a052;
-  box-shadow: 0 0 0 0 rgba(34, 160, 82, 0.5);
-  animation: live 1.8s ease-out infinite;
-}
-@keyframes live {
-  to {
-    box-shadow: 0 0 0 8px rgba(34, 160, 82, 0);
-  }
-}
-.showcaseBody {
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  min-height: 380px;
-}
-
-/* The portal: a plain form, filled as the lines run. */
-.portalPane {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  padding: 28px 30px;
-}
-.portalTitle {
-  margin-bottom: 4px;
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-.field {
-  display: grid;
-  gap: 6px;
-  font-size: 12.5px;
-  color: #535d55;
-}
-.fieldBox {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 38px;
-  padding: 0 12px;
-  border: 1px solid #dfe5da;
-  border-radius: 8px;
-  background: #fbfcfa;
-  color: #1a261e;
-  font-size: 14px;
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
-}
-.field[data-active='true'] .fieldBox {
-  border-color: #16733b;
-  box-shadow: 0 0 0 3px rgba(22, 115, 59, 0.12);
-}
-.typed {
-  white-space: nowrap;
-  animation: type 0.7s steps(14, end) both;
-}
-@keyframes type {
-  from {
-    clip-path: inset(0 100% 0 0);
-  }
-  to {
-    clip-path: inset(0 0 0 0);
-  }
-}
-.portalButton {
-  justify-self: start;
-  margin-top: 6px;
-  padding: 10px 18px;
-  border-radius: 8px;
-  background: #16733b;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
-  transition: transform 0.15s ease;
-}
-.portalButton[data-active='true'] {
-  transform: scale(0.96);
-  box-shadow: 0 0 0 4px rgba(22, 115, 59, 0.18);
-}
-.portalResult {
+.menuToggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  justify-self: start;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 14px;
+}
+.navigation {
+  position: absolute;
+  inset: 79px 0 auto;
+  display: none;
+  gap: 4px;
+  max-height: calc(100dvh - 104px);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 0 0 16px 16px;
+  background: var(--background);
+  font-size: 14px;
+}
+.navigation[data-open='true'] {
+  display: grid;
+}
+.navigation a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   padding: 8px 12px;
-  border: 1px solid #cde8c4;
+}
+.navigation a:hover {
+  color: var(--primary);
+  background: var(--elevated);
   border-radius: 8px;
-  background: #effaea;
-  color: #16733b;
-  font-size: 14px;
-  font-weight: 600;
-  opacity: 0;
-  transform: translateY(6px);
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
 }
-.portalResult[data-shown='true'] {
-  opacity: 1;
-  transform: none;
+.navigation .console {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  justify-content: center;
 }
-
-/* The playbook: dark, the running line lit, the finished ones ticked. */
-.codePane {
-  min-width: 0;
-  padding: 22px 0 22px;
-  background: #15251b;
-  color: #dbe4dd;
-}
-.codeFile {
-  padding: 0 24px 14px;
-  color: #8fa18a;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.codePane ol {
-  overflow-x: auto;
-  list-style: none;
-}
-.codePane li {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: max-content;
-  padding: 6px 24px 6px 20px;
-  border-left: 2px solid transparent;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 1.6;
-  white-space: pre;
-  transition:
-    background 0.3s ease,
-    opacity 0.3s ease;
-}
-.codePane li[data-state='next'] {
-  opacity: 0.42;
-}
-.codePane li[data-state='running'] {
-  border-left-color: #c7f7a4;
-  background: rgba(199, 247, 164, 0.09);
-}
-.codePane em {
-  font-style: normal;
-  color: #c7f7a4;
-}
-.gutter {
-  display: inline-grid;
-  place-items: center;
-  width: 16px;
-  color: #65705f;
-  font-size: 11.5px;
-}
-.codePane li[data-state='done'] .gutter {
-  color: #c7f7a4;
-}
-
-.codeDone {
-  margin-top: 18px;
-  padding: 0 24px 0 50px;
-  color: #8fa18a;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-.codeDone[data-shown='true'] {
-  opacity: 1;
-}
-
-/* The meter: what the run has cost. */
-
-/* The closing, dark, as the page's last word. */
-
-@media (max-width: 860px) {
-  .showcaseBody {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-@media (max-width: 560px) {
-  .windowBar {
-    grid-template-columns: auto 1fr auto;
-    gap: 10px;
-  }
-  .address {
-    display: none;
-  }
-  .portalPane {
-    padding: 22px 18px;
-  }
-  .codePane li {
-    align-items: start;
-    min-width: 0;
-    padding: 5px 18px 5px 14px;
-    font-size: 12px;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .codeDone {
-    padding: 0 18px 0 44px;
-    font-size: 12px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .liveChip i,
-  .typed {
-    animation: none;
-  }
-  .fieldBox,
-  .portalButton,
-  .portalResult,
-  .codeDone,
-  .codePane li {
-    transition: none;
-  }
-}
-
-/*
- * Phone pass. A phone gets its own composition, not the desktop squeezed:
- * a two-item header, full-width actions, a replay that shows only the running
- * line, benefits stacked under their icons, and the comparison as one card
- * per question.
- */
-@media (max-width: 560px) {
-  /* The header: the wordmark, Docs and the console. */
-  .navigation {
-    gap: 16px;
-  }
-  .console {
-    padding: 7px 14px;
-    font-size: 14px;
-  }
-
-  /* The replay: the form, then only the line that is running. */
-  .portalPane {
-    gap: 10px;
-  }
-  .fieldBox {
-    height: 36px;
-  }
-  .codePane {
-    padding: 16px 0 18px;
-  }
-  .codeFile {
-    padding: 0 18px 10px;
-  }
-  .codePane li:not([data-state='running']) {
-    display: none;
-  }
-  .codePane li[data-state='running'] {
-    min-height: 60px;
-  }
-  .codeDone {
-    margin-top: 0;
-    padding: 0 18px;
-  }
-  .codeDone[data-shown='false'] {
-    display: none;
-  }
-  .codeDone[data-shown='true'] {
-    min-height: 60px;
-  }
-
-  /* The closing, and a footer that stacks. */
-  .footer {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 18px;
-  }
-  .footer nav {
-    gap: 10px 20px;
-  }
-}
-
-/* Get started: the desktop download and the steps to a first task, quiet enough to sit in the page's flow. */
-.headerDownload {
-  white-space: nowrap;
-  padding: 10px 15px;
-  border-radius: 5px;
-  background: #16733b;
-  color: #fff;
-  font-weight: 600;
+.navigation .headerDownload {
+  justify-content: center;
+  background: var(--foreground);
+  color: var(--background);
+  border-radius: 999px;
 }
 .navigation .headerDownload:hover {
-  background: #105c2e;
-  color: #fff;
+  background: var(--primary);
+  color: var(--background);
 }
-
-/* The compliance line under the hero headline and in the footer: a quiet link to the evidence. */
-.complianceLine {
-  display: inline-block;
-  margin: 14px 0 0;
-  color: #454f47;
-  font-size: 13px;
-  text-decoration: none;
+.footer {
+  display: grid;
+  gap: 24px;
+  padding-block: 40px 48px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--muted);
 }
-
-.complianceLine:hover {
-  color: #16733b;
-  text-decoration: underline;
+.footer > a:first-child {
+  color: var(--foreground);
 }
-
-.complianceLine:focus-visible {
-  outline: 2px solid #16733b;
-  outline-offset: 2px;
+.footer nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 24px;
 }
-
-/* The replay's pause control, at the right of the window bar, in the bar's fourth column: a fifth child of the three-column grid wrapped onto a second row and lay over the form's title. */
-.pause {
-  grid-column: 4;
-  display: inline-flex;
+.footer nav a {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  margin-left: 8px;
-  padding: 3px 8px;
-  border: 1px solid #e5e9e1;
-  border-radius: 5px;
-  background: #fff;
-  color: #454f47;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+  min-height: 44px;
+  line-height: 1.5;
 }
-
-.pause:hover {
-  color: #16733b;
+.footer a:hover {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
-
-.pause:focus-visible {
-  outline: 2px solid #16733b;
-  outline-offset: 2px;
+.complianceLine {
+  max-width: 60ch;
+  font-size: 13px;
+  line-height: 1.7;
 }
-
-/* A header link the footer repeats, dropped below laptop width where the header would overflow with it. */
-@media (max-width: 960px) {
-  .wide {
+.page :focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+.page ::selection {
+  background: #c8f56b;
+  color: #081b15;
+}
+.page main :is(h1, h2, h3) {
+  text-wrap: balance;
+}
+.page main :is(h1, h2, h3, section)[id] {
+  scroll-margin-top: 104px;
+}
+@media (min-width: 768px) {
+  .container {
+    width: min(1200px, calc(100% - 48px));
+  }
+  .footer nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .container {
+    width: min(1200px, calc(100% - 96px));
+  }
+  .menuToggle {
     display: none;
+  }
+  .navigation,
+  .navigation[data-open='true'] {
+    position: static;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow: visible;
+    max-height: none;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .navigation a {
+    padding-inline: 9px;
+  }
+  .footer {
+    grid-template-columns: 1fr 3fr;
+    gap: 16px 64px;
+  }
+  .footer nav {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 }
