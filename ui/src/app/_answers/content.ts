@@ -92,7 +92,7 @@ export interface AnswerPageContent {
 
 /** How an agent and a person act on a page under HIPAA's controls, in Oya's own words. */
 const OYA_CONTROLS = [
-  'We sign BAAs. Our SOC 2 Type II audit is in progress.',
+  'We sign BAAs. We hold a SOC 2 Type I report, and our Type II audit is in progress.',
   'Every action, by an agent or a person, is a hash-chained audit row the database refuses to edit or delete, kept for 365 days at least.',
   'Oya Cloud, or the enterprise edition in your own infrastructure (Docker, ECS, GCP or Kubernetes), so PHI can stay in your network.',
   'A person can watch any session live, take over and hand it back.',
@@ -143,7 +143,7 @@ export const HIPAA_BROWSER: AnswerPageContent = {
       a: 'Under a BAA and with the right controls, yes. Oya records every action on a hash-chained audit trail, lets browsers reach only the hosts you allow, and lets a person take over any session. Self-hosted, pages, recordings and audit records stay in your network. Recordings are not yet redacted for PHI in the community edition; turn recording off for sessions that show PHI.',
     },
     { q: 'Does Oya sign a BAA?', a: 'Yes. We sign BAAs. Write to sales@getoya.ai.' },
-    { q: 'Is Oya SOC 2 certified?', a: 'Our SOC 2 Type II audit is in progress.' },
+    { q: 'Is Oya SOC 2 compliant?', a: 'Oya holds a SOC 2 Type I report, and its Type II audit is in progress.' },
     SELF_HOST,
   ],
 };
@@ -303,7 +303,7 @@ export const VS_STEEL: AnswerPageContent = {
     },
     {
       q: 'Is Oya HIPAA compliant?',
-      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Our SOC 2 Type II audit is in progress.',
+      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. We hold a SOC 2 Type I report, and our Type II audit is in progress.',
     },
   ],
   sources: { checked: CHECKED, links: STEEL.sources },
@@ -357,7 +357,7 @@ export const VS_ANCHOR: AnswerPageContent = {
     },
     {
       q: 'Is Oya HIPAA compliant?',
-      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs. Our SOC 2 Type II audit is in progress.',
+      a: 'On Oya Cloud and the enterprise edition, yes: we sign BAAs. We hold a SOC 2 Type I report, and our Type II audit is in progress.',
     },
     SELF_HOST,
   ],
@@ -519,7 +519,7 @@ export const HEALTHCARE_BROWSER: AnswerPageContent = {
       q: 'Which editions of Oya are HIPAA compliant?',
       a: 'Oya Cloud and the enterprise edition. The source-available community edition self-hosts without the HIPAA offering.',
     },
-    { q: 'Is Oya SOC 2 certified?', a: 'Our SOC 2 Type II audit is in progress.' },
+    { q: 'Is Oya SOC 2 compliant?', a: 'Oya holds a SOC 2 Type I report, and its Type II audit is in progress.' },
     {
       q: 'Can staff watch what the agent does?',
       a: 'Yes. A person can watch any session live, take over and hand it back. Every action by an agent or a person is a row on a hash-chained audit trail, kept for 365 days at least.',
@@ -1042,7 +1042,7 @@ export const BEST_INFRA: AnswerPageContent = {
     },
     {
       heading: 'When another vendor fits better',
-      body: 'Our SOC 2 Type II audit is in progress; Browserbase, Anchor, Browser Use and Kernel each state a SOC 2 Type II report today, so a team that needs the report in hand this quarter should weigh that. Oya can still run their browsers behind its API, with Oya playbooks and the Oya audit trail on top.',
+      body: 'Oya holds a SOC 2 Type I report and its Type II audit is in progress; Browserbase, Anchor, Browser Use and Kernel each state a SOC 2 Type II report today, so a team that needs a Type II report in hand this quarter should weigh that. Oya can still run their browsers behind its API, with Oya playbooks and the Oya audit trail on top.',
     },
     {
       heading: 'Side by side',
@@ -1214,6 +1214,15 @@ export const BAA: AnswerPageContent = {
         'Models run only on hosts covered by a BAA.',
         'No outside CAPTCHA solvers, proxies or browser vendors: PHI stays on Oya’s own browsers.',
         'Oya holds BAAs with every subprocessor on the ePHI path.',
+      ],
+    },
+    {
+      heading: 'Where Oya Cloud runs PHI',
+      body: 'HIPAA mode on Oya Cloud runs on Google Cloud, under Google Cloud\u2019s BAA. Oya signed BAAs with Google Cloud, Vertex AI (under the Google Cloud BAA) and Sentry on 2026-10-07.',
+      items: [
+        'Browsers run on a dedicated GKE cluster that enforces network policy.',
+        'The database is Cloud SQL for PostgreSQL, reachable only over a private network and only over encrypted connections, with point-in-time recovery.',
+        'Models run on Vertex AI, under the Google Cloud BAA.',
       ],
     },
     {

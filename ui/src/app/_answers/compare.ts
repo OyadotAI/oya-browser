@@ -62,7 +62,7 @@ export const OYA: Vendor = {
   name: 'Oya',
   cells: {
     baa: 'Yes: HIPAA mode on Oya Cloud (BAA on request) or self-hosted in your own cloud',
-    soc2: 'Type II audit in progress',
+    soc2: 'Type I report issued; Type II audit in progress',
     selfHost:
       'Enterprise edition on Docker, ECS, GCP or Kubernetes, with a BAA; community edition free up to 5 browsers',
     replay: 'Yes: playbooks, and the agent repairs only a step that moved',

@@ -146,10 +146,10 @@ export const MEASURED = { before: '152.7s', after: '14.2s' };
 /**
  * What Oya may say about compliance, one claim each (owner decision, 2026-11-08):
  * HIPAA compliant, BAAs signed (Google Cloud, Vertex AI and Sentry, 2026-10-07), and
- * the SOC 2 Type II audit in progress through Rippling. Never "SOC 2 certified" or a
- * SOC 2 mark until the report is issued.
+ * SOC 2: the Type I report is issued (owner, 2026-11-18) and the Type II audit is in progress
+ * through Rippling. Never "SOC 2 certified", a Type II claim or a Type II mark until that report is issued.
  */
-export const COMPLIANCE_CLAIMS = ['HIPAA compliant', 'We sign BAAs', 'SOC 2 Type II audit in progress'];
+export const COMPLIANCE_CLAIMS = ['HIPAA compliant', 'We sign BAAs', 'SOC 2 Type I'];
 
 /** The compliance claims as one line, for the footer. */
 export const COMPLIANCE_LINE = COMPLIANCE_CLAIMS.join(' · ');
@@ -183,7 +183,7 @@ export const AUDIT_ROWS: AuditRow[] = [
 export const FAQ = [
   {
     q: 'Do you sign a BAA?',
-    a: 'Yes. We sign BAAs. Our SOC 2 Type II audit is in progress.',
+    a: 'Yes. We sign BAAs. We hold a SOC 2 Type I report, and our Type II audit is in progress.',
   },
   {
     q: 'Can it touch PHI?',
