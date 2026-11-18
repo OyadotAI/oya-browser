@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from ._constants import DEFAULT_BASE_URL, JSON_INDENT, PRIVATE_FILE
+from ._constants import DEFAULT_BASE_URL, JSON_INDENT, PRIVATE_DIR, PRIVATE_FILE
 
 NO_KEY = "No API key. Get one at https://oyabrowser.com, then set OYA_API_KEY or pass api_key=..."
 
@@ -47,12 +47,28 @@ def save_key(api_key: str, base_url: str) -> bool:
     if _saved().get("apiKey"):
         return False
     path = config_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=PRIVATE_DIR, parents=True, exist_ok=True)
     text = json.dumps({**_saved(), "apiKey": api_key, "baseUrl": base_url}, indent=JSON_INDENT)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE)
-    with os.fdopen(fd, "w") as f:
-        f.write(text)
+    _write_private(path, text)
     return True
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Writes `text` to `path` readable by its owner only, whatever was there before.
+
+    Opening the file itself with O_TRUNC would keep the mode of a file that already exists (a config left
+    world-readable stays so) and would follow a symlink planted at the path. So the key goes to a new file,
+    created exclusively and not through a link, and is renamed over the config in one step.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), PRIVATE_FILE)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def resolve(api_key: str | None = None, base_url: str | None = None) -> Origin:
