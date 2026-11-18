@@ -12,19 +12,19 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || 'https://oyabrowser
 export const SITE_NAME = 'Oya Browser';
 
 /** The one-line promise, used in titles: who it is for and what it is, after the name. */
-export const SITE_TAGLINE = 'the browser control plane for healthcare and regulated work';
+export const SITE_TAGLINE = 'the HIPAA-compliant browser for AI agents';
 
 /**
  * The description every page and card shares unless it has its own, and the one every public
  * listing repeats (llms.txt, README, npm, the MCP registry). Answer engines merge what each
  * source says into one picture, so the sources must agree; it names the three things people ask
  * for (a HIPAA-compliant browser, an AI browser, an agentic browser) within the first 160
- * characters, where search results cut a description.
+ * characters, where search results cut a description. The whole of it fits in 160: Bing flagged the
+ * longer one as an error, and a cut description loses its last claim.
  */
 export const SITE_DESCRIPTION =
-  'Oya Browser is a HIPAA-compliant browser for healthcare and regulated work: an AI browser on your desktop, ' +
-  'and an agentic browser your agents run in the cloud or self-hosted, with every action on a tamper-evident ' +
-  'audit trail. We sign BAAs.';
+  'Oya Browser is a HIPAA-compliant browser for healthcare: an AI browser on your desktop and an agentic browser ' +
+  'in the cloud or self-hosted. We sign BAAs.';
 
 /** One question and its answer, as a page shows it and as FAQPage structured data repeats it. */
 export interface QA {
