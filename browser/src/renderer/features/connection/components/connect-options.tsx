@@ -30,10 +30,12 @@ function Accounts({ vm }: { /** Setup owner. */ vm: SetupViewModel }) {
     <div className="connect-accounts">
       <button type="button" className="connect-account" onClick={() => void vm.onboarding.connectChatgpt()}>
         Continue with ChatGPT
+        <small>Uses your ChatGPT plan</small>
       </button>
       <button type="button" className="connect-account" onClick={() => void vm.onboarding.technical.signIn()}>
         <BrandMark logo="oya" />
         Continue with Oya
+        <small>Your Oya control panel, for developers</small>
       </button>
     </div>
   );
@@ -106,7 +108,7 @@ export function ConnectOptions({ vm }: { /** Setup owner. */ vm: SetupViewModel 
       <h1 tabIndex={-1}>Connect the browser your way to enable AI mode</h1>
       <fieldset className="connect-options" disabled={busy}>
         <Accounts vm={vm} />
-        <Divider label="or use an AI app on this computer" />
+        <Divider label="or use your Claude plan or another AI app on this computer" />
         <Apps vm={vm} />
         <Divider label="or" />
         <MoreWays vm={vm} />
