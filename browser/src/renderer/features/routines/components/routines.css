@@ -138,7 +138,7 @@
   height: 28px;
   padding: 0 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 12px;
@@ -163,7 +163,7 @@
   height: 28px;
   padding: 0 8px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   font-size: 12px;
@@ -254,7 +254,7 @@
 .run-status {
   flex: none;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--muted-surface);
   color: var(--secondary);
   font-size: 10.5px;
@@ -388,7 +388,7 @@
   height: 26px;
   padding: 0 10px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   font-size: 12px;
@@ -452,7 +452,7 @@
 .routine-cloud-badge {
   padding: 1px 6px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--secondary);
   font-size: 10px;
 }

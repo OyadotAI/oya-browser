@@ -9,7 +9,7 @@
   padding: 0;
   list-style: none;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--surface);
   overflow: hidden;
 }
@@ -116,7 +116,7 @@
   max-width: 55%;
   overflow: hidden;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--logo-green) 12%, transparent);
   color: var(--logo-green);
   font-size: 11px;

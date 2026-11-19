@@ -35,7 +35,7 @@ body.mode-browsing .toolbar {
   flex: 1;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 6px 12px;
   color: var(--text);
   font-size: 13px;
@@ -227,7 +227,7 @@ body.mode-browsing .toolbar {
   width: auto;
   padding: 0 12px 0 10px;
   gap: 6px;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 12.5px;
@@ -298,7 +298,7 @@ body.mode-browsing .toolbar {
 .address-wrap {
   height: 32px;
   border: 0;
-  border-radius: 10px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 6%, var(--bg));
   box-shadow: inset 0 0 0 0.5px var(--hairline);
 }
@@ -336,7 +336,7 @@ body.mode-browsing .toolbar {
 .agent-button {
   height: 30px;
   padding: 0 13px 0 11px;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--accent) 13%, transparent);
   color: var(--accent);
   font-weight: 600;
@@ -381,7 +381,7 @@ body.mode-browsing .toolbar {
 }
 /* ── Address ── */
 .address-wrap {
-  border-radius: 11px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 .address-wrap:hover {
@@ -495,7 +495,7 @@ body.mode-browsing .toolbar {
   margin-right: 2px;
   padding: 0 8px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: none;
   color: var(--secondary);
   font-size: 12px;
@@ -550,7 +550,7 @@ body.mode-browsing .toolbar {
   padding: 0 7px;
   margin-right: 2px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 7%, transparent);
   color: var(--secondary);
   font: inherit;
@@ -584,7 +584,7 @@ body.mode-browsing .toolbar {
   align-items: center;
   height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text);
   font: 600 var(--text-sm) / 1 var(--font);

@@ -160,7 +160,7 @@ body.mode-browsing .tab-bar {
 .tab-icon .tab-mark {
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 .tab-icon svg.icon {
   width: 14px;
@@ -307,7 +307,7 @@ body.mode-browsing .tab-bar {
   position: absolute;
   inset: -3px;
   border: 1.5px solid var(--danger);
-  border-radius: 5px;
+  border-radius: 0;
 }
 /* ── Opening, closing and dragging ── */
 .tab-item.opening {
@@ -385,7 +385,7 @@ body.mode-browsing .tab-bar {
   z-index: 300;
   max-width: 340px;
   padding: 6px 12px;
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: var(--shadow);
   pointer-events: none;

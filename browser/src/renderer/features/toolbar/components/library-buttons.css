@@ -5,7 +5,7 @@
   flex: none;
   gap: 2px;
   padding: 0 2px;
-  border-radius: 6px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 3%, transparent);
 }
 .library-button {
@@ -16,7 +16,7 @@
   height: 24px;
   padding: 0 8px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   font: 500 var(--text-sm) / 1 var(--font);

@@ -42,7 +42,7 @@
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   box-shadow: var(--shadow);
 }
 .shell-dialog header {

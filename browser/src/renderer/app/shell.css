@@ -202,7 +202,7 @@ button:active:not(:disabled) {
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--border);
   transition: background 160ms var(--ease);
 }
@@ -277,7 +277,7 @@ button:active:not(:disabled) {
 }
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: 10px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 22%, transparent) padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -285,7 +285,7 @@ button:active:not(:disabled) {
 }
 kbd {
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 7%, transparent);
   font:
     500 11px -apple-system,
@@ -293,11 +293,9 @@ kbd {
     sans-serif;
   letter-spacing: 0.04em;
 }
-/* ── Setup: a calm card under a soft Oya glow ── */
+/* ── Setup: a calm card on the flat page ── */
 body.mode-setup {
-  background:
-    radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--logo-green) 12%, transparent), transparent 70%),
-    var(--bg);
+  background: var(--bg);
 }
 /* A theme change lands at once; nothing fades between the two themes. */
 :root[data-theme-switching] *,

@@ -1,7 +1,6 @@
 /**
- * The Oya orb (styled by orb.css): the spinning halo and rim, the tilted
- * orbit, the glass lens with the Oya mark, and the pulse ring. Its `state`
- * says what the agent is doing; `pulse` sends one ring of light out.
+ * The Oya orb (styled by orb.css): the Oya mark drawn flat, and the pulse ring. Its `state`
+ * says what the agent is doing; `pulse` sends one ring out.
  */
 import { useEffect, useRef } from 'react';
 import './orb.css';
@@ -57,7 +56,7 @@ function usePulse(pulse: number) {
   return ring;
 }
 
-/** The Oya mark inside the lens (it turns while Oya thinks, so it is drawn here). */
+/** The Oya mark, drawn flat (its back ring turns while Oya works, so it is drawn here). */
 function OrbMark() {
   return (
     <svg className="oya-orb-mark" viewBox={MARK.viewBox}>
@@ -79,20 +78,7 @@ export function Orb({ size = '', state, id, className, pulse = 0 }: OrbProps) {
       data-state={orbState(state)}
       aria-hidden="true"
     >
-      <span className="oya-orb-spin">
-        <span className="oya-orb-halo" />
-        <span className="oya-orb-rim" />
-      </span>
-      <span className="oya-orb-orbit">
-        <i />
-      </span>
-      <span className="oya-orb-lens">
-        <span className="oya-orb-core">
-          <i />
-          <i />
-        </span>
-        <OrbMark />
-      </span>
+      <OrbMark />
       <span className="oya-orb-pulse" ref={ring} />
     </span>
   );
