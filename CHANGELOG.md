@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.260](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.260) · 2026-11-19
+
 ### Changed
 
 - Updated new-subscription billing choices to Developer $500/month and Startup $2,500/month, and preserved existing subscribers' plan recognition when Stripe price IDs change.
