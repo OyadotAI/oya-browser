@@ -1,6 +1,6 @@
 /**
  * The Oya start page (start-page.tsx). It fills the space a tab's page would, on
- * a stage of soft light: the orb, one question, one task box, and a few example
+ * a flat stage: the mark, one question, one task box, and a few example
  * tasks.
  */
 /* ── The start page ── */
@@ -26,44 +26,6 @@ body:not(.mode-browsing) .start-page {
     bottom: calc(var(--panel-reveal, 0px) + var(--footer-height));
   }
 }
-/* A soft field of Oya light behind the orb. It holds still: the frosted glass over it re-blurs whatever moves behind it on every frame (a sixth of a core on a 120 Hz screen). */
-.start-aura {
-  position: absolute;
-  top: 38%;
-  left: 50%;
-  width: min(900px, 120vmin);
-  aspect-ratio: 1;
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-.start-aura i {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(
-    from 90deg,
-    transparent,
-    color-mix(in srgb, var(--oya) 20%, transparent),
-    transparent 35%,
-    color-mix(in srgb, var(--cyan) 14%, transparent),
-    transparent 70%
-  );
-  filter: blur(70px);
-  opacity: 0.35;
-}
-:root[data-theme='dark'] .start-aura i {
-  opacity: 0.45;
-}
-/* A faint holographic lattice that fades towards the edges. */
-.start-lattice {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--text) 14%, transparent) 0.7px, transparent 1.2px) 0 0 /
-    22px 22px;
-  mask: radial-gradient(60% 55% at 50% 40%, #000, transparent);
-  opacity: 0.25;
-}
 .start-center {
   position: relative;
   display: flex;
@@ -79,6 +41,7 @@ body:not(.mode-browsing) .start-page {
 .start-title {
   margin: 0;
   font-family: var(--font-display);
+  text-transform: uppercase;
   font-size: clamp(28px, 3.4vw, 38px);
   font-weight: 400;
   line-height: 1.12;
@@ -104,7 +67,7 @@ body:not(.mode-browsing) .start-page {
   width: 100%;
   min-height: 60px;
   padding: 10px 10px 10px 22px;
-  border-radius: 20px;
+  border-radius: 0;
   background: var(--glass-strong);
   backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-edge), var(--shadow);
@@ -171,7 +134,7 @@ body:not(.mode-browsing) .start-page {
 .start-examples button {
   padding: 7px 14px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--glass);
   backdrop-filter: var(--glass-blur);
   box-shadow: var(--glass-edge);
@@ -197,7 +160,7 @@ body:not(.mode-browsing) .start-page {
 }
 .start-foot kbd {
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: 0;
   background: var(--glass);
   box-shadow: var(--glass-edge);
   font-family: var(--mono);
@@ -225,15 +188,6 @@ body:not(.mode-browsing) .start-page {
   }
 }
 
-/** Light mode keeps the existing composition with quiet white surfaces. */
-:root:not([data-theme='dark']) .start-aura,
-:root:not([data-theme='dark']) .start-lattice {
-  display: none;
-}
-:root:not([data-theme='dark']) .start-title {
-  font-family: var(--font);
-  font-weight: 600;
-}
 :root:not([data-theme='dark']) .start-page {
   background: var(--surface);
 }

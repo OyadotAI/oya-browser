@@ -49,12 +49,12 @@
   padding: 28px 12px;
   text-align: center;
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: 0;
 }
 .empty-icon {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   margin: 0 auto 16px;
@@ -360,7 +360,7 @@
   margin: 0 18px 14px;
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 8px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--accent) 5%, var(--surface));
   flex-shrink: 0;
 }
@@ -409,7 +409,7 @@
 }
 .count-badge {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--muted-surface);
   font-size: 11px;
   line-height: 16px;

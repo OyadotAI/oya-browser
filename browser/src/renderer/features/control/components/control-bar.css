@@ -62,7 +62,7 @@
   height: 26px;
   padding: 0 11px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   font-size: 12px;
@@ -86,7 +86,7 @@
   gap: 8px;
   padding: 0 4px 0 10px;
   height: 30px;
-  border-radius: 999px;
+  border-radius: 0;
   transition:
     background-color var(--t-base) var(--ease),
     box-shadow var(--t-base) var(--ease),
@@ -139,7 +139,7 @@
   gap: 2px;
   height: 30px;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--hover);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
 }
@@ -154,7 +154,7 @@
   height: 26px;
   padding: 0 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: var(--secondary);

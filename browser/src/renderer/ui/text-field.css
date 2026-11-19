@@ -20,7 +20,7 @@
   width: 100%;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px 12px;
   color: var(--text);
   font-size: 13px;

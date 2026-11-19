@@ -3,7 +3,7 @@
   margin: 16px 0;
   padding: 22px;
   border: 1px solid var(--hairline);
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 3px 16px #00000006;
@@ -22,7 +22,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 9px;
+  border-radius: 0;
   background: color-mix(in srgb, #80a950 14%, var(--surface));
   color: #658d37;
 }
@@ -59,7 +59,7 @@
   margin: 20px 0 14px;
   padding: 12px 14px;
   border: 1px solid #71984a;
-  border-radius: 9px;
+  border-radius: 0;
   background: #d4ecb9;
   color: #263c12;
   font: inherit;

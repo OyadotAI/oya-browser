@@ -13,7 +13,7 @@
   z-index: 100;
   max-height: min(360px, 60dvh);
   overflow: auto;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   /* Close to the bar, not the modal shadow: a dropdown that casts a wide halo looks like it floats off the page. */
   box-shadow:
@@ -28,7 +28,7 @@
   gap: 10px;
   height: 32px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: 0;
   cursor: pointer;
   font-size: 13px;
   min-width: 0;

@@ -22,7 +22,7 @@
 .chat-msg {
   max-width: 85%;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: 0;
   font-size: 12px;
   line-height: 1.5;
   word-break: break-word;
@@ -62,7 +62,7 @@
   font-size: 12px;
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 .chat-msg pre {
   background: var(--muted-surface);
@@ -90,7 +90,7 @@
   right: 4px;
   background: var(--hover);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--secondary);
   font-size: 12px;
   padding: 2px 6px;
@@ -117,7 +117,7 @@
   font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent-hover);
   font-family: ui-monospace, monospace;
@@ -128,7 +128,7 @@
   padding: 8px 12px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   border-bottom-left-radius: 3px;
   font-size: 12px;
   color: var(--secondary);
@@ -177,7 +177,7 @@
   flex: 1;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 8px 10px;
   color: var(--text);
   font-size: 12px;
@@ -194,7 +194,7 @@
   height: 34px;
   background: var(--accent);
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
   color: var(--surface);
   font-size: 13px;
   cursor: pointer;
@@ -251,7 +251,7 @@
   resize: vertical;
   min-height: 64px;
   max-height: 180px;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px;
   font-size: 13px;
   background: var(--muted-surface);
@@ -286,7 +286,7 @@
   width: 40px;
   height: 40px;
   margin-bottom: 14px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -327,7 +327,7 @@
 .chat-msg.error {
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--danger-soft);
   color: var(--danger);
 }
@@ -374,14 +374,14 @@
 }
 .chat-msg code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--muted-surface);
   font: 12px var(--mono);
 }
 .chat-msg pre {
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--muted-surface);
   white-space: pre;
   overflow-x: auto;
@@ -462,7 +462,7 @@
   gap: 4px;
   padding: 8px 6px 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: 0 1px 2px #0000000d;
   transition:
@@ -491,7 +491,7 @@
 .chat-send {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: 0;
 }
 .chat-send svg {
   width: 15px;
@@ -557,7 +557,7 @@
   gap: 2px;
   max-width: 100%;
   padding: 2px 2px 2px 9px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--muted-surface);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
   font-size: 12px;
@@ -573,7 +573,7 @@
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
@@ -622,6 +622,7 @@
 .chat-empty h2 {
   margin: 0 0 6px;
   font-family: var(--font-display);
+  text-transform: uppercase;
   font-size: 19px;
   font-weight: 400;
   letter-spacing: -0.005em;
@@ -646,7 +647,7 @@
 .chat-examples button {
   padding: 6px 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--secondary);
   font: inherit;
@@ -670,7 +671,7 @@
   align-self: stretch;
   max-width: none;
   padding: 10px 14px 12px;
-  border-radius: 14px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 5%, transparent);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
   font-size: var(--text-lg);
@@ -695,7 +696,7 @@
   gap: 7px;
   margin-bottom: 8px;
   padding: 3px 10px 3px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   font: 600 10px/16px var(--mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -718,7 +719,7 @@
 .chat-msg.error {
   padding: 10px 12px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
@@ -759,7 +760,7 @@
 .run-plan {
   margin-bottom: 10px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 .run-plan li {
@@ -878,7 +879,7 @@
   margin: 0 0 4px -2px;
   padding: 2px 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   font: 11px var(--mono);
@@ -910,7 +911,7 @@
 }
 .chat-composer {
   border: 0;
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--glass-strong);
   box-shadow: var(--glass-edge), var(--shadow-sm);
   transition: box-shadow var(--t-base) var(--ease);

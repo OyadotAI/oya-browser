@@ -60,7 +60,6 @@ function IncognitoStartPage({ vm }: StartPageProps) {
   const { page } = useArrival(arrivals);
   return (
     <main className="start-page" id="start-page" aria-labelledby="start-title" hidden={!home} ref={page}>
-      <div className="start-lattice" aria-hidden="true"></div>
       <div className="start-center">
         <h1 className="start-title" id="start-title">
           {INCOGNITO_TEXT.title}
@@ -80,10 +79,6 @@ function TaskStartPage({ vm }: StartPageProps) {
   const send = () => vm.ask(task) && setTask('');
   return (
     <main className="start-page" id="start-page" aria-labelledby="start-title" hidden={!home} ref={page}>
-      <div className="start-aura" aria-hidden="true">
-        <i></i>
-      </div>
-      <div className="start-lattice" aria-hidden="true"></div>
       <div className="start-center">
         <Orb size="xl" id="start-orb" />
         <h1 className="start-title" id="start-title">

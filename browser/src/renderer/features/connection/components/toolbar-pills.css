@@ -9,7 +9,7 @@
   gap: 6px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
@@ -41,7 +41,7 @@
   gap: 6px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
@@ -129,7 +129,7 @@
   color: var(--accent);
   background: var(--accent-soft);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 6px 12px;
   cursor: pointer;
   transition: filter 0.15s;
@@ -166,7 +166,7 @@
 /* Status: quiet text with a living dot; its action is a small capsule. */
 .conn-pill {
   gap: 6px;
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--secondary);
   font-weight: 500;
 }
