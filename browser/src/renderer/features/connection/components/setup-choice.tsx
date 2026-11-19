@@ -1,16 +1,16 @@
-/** Illustrated native buttons show the outcome of each choice before asking for technical details. */
+/** Native buttons that show which tools each choice works with, so people pick by what they already have. */
 import { Icon } from '../../../ui/index.ts';
-import { SetupIllustration, type SetupScene } from './setup-illustration.tsx';
+import { BrandChips, type Brand } from './brand-marks.tsx';
 import type { SetupPath } from '../view-models/onboarding-view-model.ts';
 
-/** Choice content stays short while the picture explains the connection. */
+/** Choice content stays short; the tool logos do the recognising. */
 interface Props {
   /** Requested path label or recognizable provider name. */
   title: string;
-  /** One short explanation that remains accessible without the illustration. */
+  /** One short line, usually what the person needs to have. */
   caption: string;
-  /** A substantial local drawing rather than a standalone icon. */
-  scene: SetupScene;
+  /** The tools this choice works with, shown as logos and names. */
+  brands: Brand[];
   /** Existing navigation handler. */
   onClick: () => void;
   /** Retains Back focus restoration for the initial paths. */
@@ -22,19 +22,17 @@ interface Props {
 }
 
 /** The whole picture is a keyboard-accessible choice with visible focus. */
-export function SetupChoice({ title, caption, scene, onClick, path, compact = false, disabled }: Props) {
+export function SetupChoice({ title, caption, brands, onClick, path, compact = false, disabled }: Props) {
   return (
     <button
       type="button"
       className={compact ? 'setup-choice setup-choice-compact' : 'setup-choice'}
       disabled={disabled}
       data-path={path}
-      aria-label={`${title}: ${caption}`}
+      aria-label={`${title}. Works with ${brands.map((brand) => brand.name).join(', ')}. ${caption}`}
       onClick={onClick}
     >
-      <span className="setup-choice-art">
-        <SetupIllustration scene={scene} />
-      </span>
+      <BrandChips brands={brands} />
       <span className="setup-choice-copy">
         <strong>{title}</strong>
         <span>{caption}</span>

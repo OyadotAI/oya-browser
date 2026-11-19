@@ -290,13 +290,16 @@ function Connect() {
     <>
       {/* ============ CONNECT ============ */}
       <SectionHeading id="connect">Connect a desktop browser</SectionHeading>
-      <p className="mb-3 text-[15px] leading-relaxed">Open Oya Browser. The first screen asks how you want to start.</p>
-      <Step n={1} title="Pick a starting point">
+      <p className="mb-3 text-[15px] leading-relaxed">
+        Open Oya Browser. The first screen asks how you want to connect it.
+      </p>
+      <Step n={1} title="Pick a way to connect">
         <p className="mb-3 text-[15px] leading-relaxed">
-          <strong>Technical</strong>: sign in with Oya, connect a local agent (Claude Code, Codex, Cursor or VS Code) or
-          paste a model API key. <strong>Non-technical</strong>: connect the assistant you already pay for, ChatGPT or
-          Claude, and type tasks in Oya&apos;s Ask panel. <strong>AI expert</strong>: sign in to your Oya workspace and
-          walk through the control plane; a server URL and Oya key is still there as the second button.
+          <strong>Use an AI app on this computer</strong>: sign in with Oya, connect Claude Code, Codex, Cursor or VS
+          Code, or paste your own AI key from Gemini, Claude or OpenRouter.{' '}
+          <strong>Use the AI plan you already pay for</strong>: connect ChatGPT, or Claude through Claude Code, and type
+          tasks in Oya&apos;s Ask panel. <strong>Use your Oya workspace</strong>: sign in to your Oya workspace and walk
+          through the control plane; connecting to your own server with an Oya key is still there as the second button.
         </p>
       </Step>
       <ConnectSteps />

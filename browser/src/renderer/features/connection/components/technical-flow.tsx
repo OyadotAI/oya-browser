@@ -4,9 +4,26 @@ import { useEffect } from 'react';
 import { Button } from '../../../ui/index.ts';
 import type { SetupViewModel } from '../view-models/setup-view-model.ts';
 import { SetupChoice } from './setup-choice.tsx';
+import type { Brand } from './brand-marks.tsx';
 import { TechnicalAgents } from './technical-agents.tsx';
 import { TechnicalModel } from './technical-model.tsx';
 import './technical-setup.css';
+
+/** Signing in works with Oya itself. */
+const OYA: Brand[] = [{ name: 'Oya', logo: 'oya' }];
+/** The AI apps Oya can plug into on this computer. */
+const AI_APPS: Brand[] = [
+  { name: 'Claude Code', logo: 'claude' },
+  { name: 'Codex' },
+  { name: 'Cursor', logo: 'cursor' },
+  { name: 'VS Code' },
+];
+/** Where an AI key can come from. */
+const KEY_PROVIDERS: Brand[] = [
+  { name: 'Gemini', logo: 'gemini' },
+  { name: 'Claude', logo: 'claude' },
+  { name: 'OpenRouter', logo: 'openrouter' },
+];
 
 /** Technical-only detail navigation preserves the other onboarding paths. */
 export function TechnicalFlow({ vm }: { /** Existing manual connection and technical state. */ vm: SetupViewModel }) {
@@ -33,7 +50,7 @@ export function TechnicalFlow({ vm }: { /** Existing manual connection and techn
 function TechnicalBack({ vm }: { /** The technical view owns its active attempt. */ vm: SetupViewModel }) {
   return (
     <Button className="welcome-back" onClick={() => vm.onboarding.technical.show('choices')}>
-      ← Technical options
+      ← Back
     </Button>
   );
 }
@@ -43,29 +60,29 @@ function TechnicalChoices({ vm }: { /** Shared setup owner. */ vm: SetupViewMode
   const s = useViewModel(flow);
   return (
     <>
-      <h2 tabIndex={-1}>Connect Oya your way.</h2>
+      <h2 tabIndex={-1}>How do you want to connect?</h2>
       <div className="technical-choices">
         <SetupChoice
           compact
           title="Sign in with Oya"
-          caption="Connect your workspace automatically"
-          scene="oya"
+          caption="You need an Oya account"
+          brands={OYA}
           disabled={s.busy}
           onClick={() => void flow.signIn()}
         />
         <SetupChoice
           compact
-          title="Connect a local agent"
-          caption="Claude Code, Codex, Cursor or VS Code"
-          scene="tools"
+          title="Use an AI app on this computer"
+          caption="You need one of these installed"
+          brands={AI_APPS}
           disabled={s.busy}
           onClick={() => flow.show('agents')}
         />
         <SetupChoice
           compact
-          title="Use a model API key"
-          caption="Gemini, Claude API or OpenRouter"
-          scene="models"
+          title="Use your own AI key"
+          caption="You need a key from one of these, and an Oya account"
+          brands={KEY_PROVIDERS}
           disabled={s.busy}
           onClick={() => flow.show('model')}
         />
@@ -83,7 +100,7 @@ function TechnicalChoices({ vm }: { /** Shared setup owner. */ vm: SetupViewMode
         </div>
       )}
       <Button className="technical-advanced" disabled={s.busy} onClick={() => vm.show('manual')}>
-        Advanced connection
+        Connect to my own server
       </Button>
     </>
   );

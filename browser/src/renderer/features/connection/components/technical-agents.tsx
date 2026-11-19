@@ -5,7 +5,6 @@ import { Button } from '../../../ui/index.ts';
 import type { LocalAgent } from '../../../../shared/ipc.ts';
 import type { AgentsViewModel } from '../view-models/agents-view-model.ts';
 import { FIRST_TASK } from '../model/setup-constants.ts';
-import { SetupIllustration } from './setup-illustration.tsx';
 
 /** Configuration lights have explicit text; opening an agent never counts as a browser test. */
 function AgentStatus({
@@ -102,10 +101,7 @@ export function TechnicalAgents({
   }, [vm]);
   return (
     <>
-      <div className="technical-heading">
-        <SetupIllustration scene="tools" />
-        <h2 tabIndex={-1}>Connect a local agent</h2>
-      </div>
+      <h2 tabIndex={-1}>Connect an AI app on this computer</h2>
       {s.loading ? (
         <p role="status">Checking installed agents…</p>
       ) : s.error ? (

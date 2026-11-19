@@ -2,7 +2,6 @@
 import { useViewModel } from '../../../hooks/index.ts';
 import { Button } from '../../../ui/index.ts';
 import type { LibraryImportViewModel } from '../view-models/library-import-view-model.ts';
-import { SetupIllustration } from './setup-illustration.tsx';
 
 /** Bookmarks/history import works offline and never claims protected sessions were transferred. */
 export function LibraryImportPanel({ vm }: { /** Local-only import state. */ vm: LibraryImportViewModel }) {
@@ -10,7 +9,6 @@ export function LibraryImportPanel({ vm }: { /** Local-only import state. */ vm:
   const source = s.sources.find((item) => item.id === s.source);
   return (
     <section className="library-import-panel" aria-label="Import from another browser">
-      <SetupIllustration scene="import" />
       <h3>Bring bookmarks and history</h3>
       {source && !source.sessions && <p>Windows sessions can’t transfer. Sign in again in Oya.</p>}
       {s.loading ? (

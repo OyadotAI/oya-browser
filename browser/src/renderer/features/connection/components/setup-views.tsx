@@ -10,7 +10,6 @@ import { Button, TextField } from '../../../ui/index.ts';
 import type { SetupField, SetupViewModel } from '../view-models/setup-view-model.ts';
 import type { ViewProps } from '../model/models.ts';
 import { TEXT } from '../model/constants.ts';
-import { SetupIllustration } from './setup-illustration.tsx';
 
 /** One labelled field of the manual form. */
 interface FieldProps extends ViewProps<SetupViewModel> {
@@ -67,7 +66,6 @@ export function WaitingView({ vm }: ViewProps<SetupViewModel>) {
     <div className="welcome-view" data-view="waiting" id="setup-waiting">
       <SetupBack vm={vm} />
       <h2 tabIndex={-1}>Approve this browser</h2>
-      <SetupIllustration scene="waiting" />
       <p className="sub">Sign in, select Connect, then return here.</p>
       <p className="waiting-status" role="status">
         <span className="welcome-orbit" aria-hidden="true" />
@@ -85,17 +83,16 @@ export function ManualView({ vm }: ViewProps<SetupViewModel>) {
   const busy = useViewModel(vm).busy;
   const keyHint = (
     <div className="hint">
-      From your workspace&apos;s dashboard.{' '}
+      Find it on your Oya dashboard.{' '}
       <Button type="button" id="open-console" onClick={() => vm.openConsole()}>
-        Open it
+        Open dashboard
       </Button>
     </div>
   );
   return (
     <div className="welcome-view" data-view="manual">
       <SetupBack vm={vm} />
-      <h2 tabIndex={-1}>Use your Oya key</h2>
-      <SetupIllustration scene="key" />
+      <h2 tabIndex={-1}>Connect to your own server</h2>
       <Field
         vm={vm}
         field="server"
@@ -108,19 +105,19 @@ export function ManualView({ vm }: ViewProps<SetupViewModel>) {
         vm={vm}
         field="apiKey"
         id="cfg-key"
-        label="Oya workspace API key"
+        label="Your Oya key"
         type="password"
-        placeholder="Enter API key"
+        placeholder="Paste your Oya key"
         hint={keyHint}
       />
       <Field
         vm={vm}
         field="name"
         id="cfg-name"
-        label="Browser name"
+        label="Name this browser"
         type="text"
         placeholder="Oya Browser"
-        hint={<div className="hint">How this browser shows up in the dashboard</div>}
+        hint={<div className="hint">This is the name you’ll see on your dashboard</div>}
       />
       <button className="btn-connect setup-primary" id="btn-connect" disabled={busy} onClick={() => void vm.connect()}>
         {busy ? TEXT.connecting : TEXT.connect}
