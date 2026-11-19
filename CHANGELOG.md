@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.255](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.255) · 2026-11-19
+
 ### Fixed
 
 - The website's macOS and Windows download buttons download again. They had pointed at a 1.0.83 file that no longer exists; they now always fetch the newest installer.
