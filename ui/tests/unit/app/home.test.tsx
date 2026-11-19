@@ -384,6 +384,26 @@ describe('landing page', () => {
     expect(document.activeElement).toBe(toggle);
   });
 
+  it('keeps the menu open when a tap blurs focus without moving it, as Safari does', async () => {
+    await page();
+    const menu = screen.getByRole('button', { name: 'Menu' });
+    fireEvent.click(menu);
+    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Product' });
+    fireEvent.blur(product, { relatedTarget: null });
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Show Product links' }));
+    expect(screen.getByRole('button', { name: 'Show Product links' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('closes navigation when focus moves outside the header', async () => {
+    await page();
+    const menu = screen.getByRole('button', { name: 'Menu' });
+    fireEvent.click(menu);
+    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Product' });
+    fireEvent.blur(product, { relatedTarget: document.body });
+    expect(menu.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('moves forward through revealed menu destinations and restores Menu on Escape', async () => {
     const user = userEvent.setup();
     await page();
