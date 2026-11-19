@@ -4,16 +4,17 @@ import { useViewModel } from '../../../hooks/index.ts';
 import { Button } from '../../../ui/index.ts';
 import type { TechnicalModelViewModel, TechnicalProvider } from '../view-models/technical-model-view-model.ts';
 import { FIRST_TASK } from '../model/setup-constants.ts';
+import { BrandMark, type BrandLogo } from './brand-marks.tsx';
 
 /** Names distinguish an API credential from the separate coding-agent subscription path. */
 const PROVIDERS: {
   /** Stable server ID. */ id: TechnicalProvider;
   /** Visible provider name. */ label: string;
-  /** Small decorative mark. */ mark: string;
+  /** The provider's logo, so people find theirs by sight. */ logo: BrandLogo;
 }[] = [
-  { id: 'gemini', label: 'Gemini', mark: 'G' },
-  { id: 'anthropic', label: 'Claude API', mark: 'C' },
-  { id: 'openrouter', label: 'OpenRouter', mark: 'OR' },
+  { id: 'gemini', label: 'Gemini', logo: 'gemini' },
+  { id: 'anthropic', label: 'Claude API', logo: 'claude' },
+  { id: 'openrouter', label: 'OpenRouter', logo: 'openrouter' },
 ];
 /** Choosing any provider has identical visual weight and no default selection. */
 function ProviderChoices({ vm }: { /** Draft provider state. */ vm: TechnicalModelViewModel }) {
@@ -29,7 +30,7 @@ function ProviderChoices({ vm }: { /** Draft provider state. */ vm: TechnicalMod
           onClick={() => vm.choose(provider.id)}
         >
           <span className="technical-provider-mark" aria-hidden="true">
-            {provider.mark}
+            <BrandMark logo={provider.logo} />
           </span>
           <strong>{provider.label}</strong>
         </button>
@@ -50,13 +51,13 @@ function ModelField({ vm }: { /** Catalog-derived default and optional override.
   const s = useViewModel(vm);
   return (
     <details className="setup-help">
-      <summary>Advanced model</summary>
+      <summary>Pick a specific model</summary>
       <label className="technical-model-field">
-        Model ID
+        Model name
         <input
           value={s.model}
           disabled={s.busy}
-          placeholder="Use the provider default"
+          placeholder="Leave empty to let Oya pick"
           onChange={(event) => vm.setModel(event.target.value)}
         />
       </label>
@@ -78,7 +79,7 @@ function Credentials({ vm }: { /** Selected provider and key live only in this f
       }}
     >
       <label className="technical-model-field" htmlFor="technical-model-key">
-        {provider.id === 'anthropic' ? 'Claude API key' : `${provider.label} API key`}
+        {provider.id === 'anthropic' ? 'Your Claude key' : `Your ${provider.label} key`}
         <input
           ref={input}
           id="technical-model-key"
@@ -93,17 +94,17 @@ function Credentials({ vm }: { /** Selected provider and key live only in this f
       </label>
       <p className="setup-detail" id="technical-key-help">
         {s.provider === 'anthropic'
-          ? 'Use an API key, not a Claude Code setup token.'
-          : 'Your key is saved to your Oya workspace.'}
+          ? 'Use a key from console.anthropic.com. A Claude Code sign-in won’t work here.'
+          : 'We keep your key in your Oya account.'}
       </p>
-      <p className="setup-detail">{s.model ? `Model: ${s.model}` : 'Uses the provider’s default model.'}</p>
+      <p className="setup-detail">{s.model ? `Model: ${s.model}` : 'Oya picks the best model for you.'}</p>
       <ModelField vm={vm} />
       {!s.ready && (
         <>
           <Button type="submit" variant="primary" disabled={s.busy}>
-            {s.busy ? 'Connecting…' : s.saved ? 'Retry test' : 'Connect and test'}
+            {s.busy ? 'Connecting…' : s.saved ? 'Try again' : 'Connect'}
           </Button>
-          <p className="setup-detail">Sends one small test request. Sign in with Oya if needed.</p>
+          <p className="setup-detail">We’ll send one quick message to check that your key works.</p>
         </>
       )}
     </form>
@@ -119,7 +120,7 @@ export function TechnicalModel({
     provider = PROVIDERS.find((item) => item.id === s.provider);
   return (
     <>
-      <h2 tabIndex={-1}>Choose your model provider.</h2>
+      <h2 tabIndex={-1}>Where is your AI key from?</h2>
       <ProviderChoices vm={vm} />
       <Credentials vm={vm} />
       {s.progress && <p role="status">{s.progress}</p>}
@@ -130,8 +131,8 @@ export function TechnicalModel({
       )}
       {s.ready && (
         <section className="setup-first-task">
-          <strong role="status">{provider?.label} ready.</strong>
-          <p>Try this in Oya’s Ask panel:</p>
+          <strong role="status">{provider?.id === 'anthropic' ? 'Claude' : provider?.label} is connected.</strong>
+          <p>Try asking Oya this:</p>
           <p>{FIRST_TASK}</p>
           <Button variant="primary" onClick={() => vm.finish()}>
             Open browser

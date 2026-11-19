@@ -45,7 +45,7 @@ it('a successful save followed by a refused test remains saved but never ready',
   await vm.connect();
   assert.equal(vm.state.saved, true);
   assert.equal(vm.state.ready, false);
-  assert.match(vm.state.error, /Key saved.*Test did not pass.*Key refused/);
+  assert.match(vm.state.error, /Your key was saved, but the check failed.*Key refused/);
   await vm.connect();
   assert.equal(fake.called('saveModelKey').length, 1);
   assert.equal(fake.called('testModelKey').length, 2);

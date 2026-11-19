@@ -5,7 +5,6 @@ import { Button } from '../../../ui/index.ts';
 import type { AgentsViewModel } from '../view-models/agents-view-model.ts';
 import type { OnboardingViewModel } from '../view-models/onboarding-view-model.ts';
 import { FIRST_TASK } from '../model/setup-constants.ts';
-import { SetupIllustration } from './setup-illustration.tsx';
 
 /** The same list renderer is shared by technical and subscription setup. */
 interface AgentListProps {
@@ -45,29 +44,25 @@ function AgentList({ vm, claude }: AgentListProps) {
 function ClaudeInstructions({ setup }: { /** Fixed documentation actions. */ setup: OnboardingViewModel }) {
   return (
     <>
-      <p className="sub">Type tasks in Claude Code.</p>
+      <p className="sub">Then give Claude Code tasks as usual. It uses this browser.</p>
       <ol className="setup-mini-steps">
         <li>
           <strong>Sign in</strong>
-          <code>claude auth login</code>
+          <span>Open Claude Code and sign in with your Claude account</span>
         </li>
         <li>
           <strong>Connect Oya</strong>
-          <span>Use the button below</span>
+          <span>Press Connect below</span>
         </li>
         <li>
           <strong>Restart</strong>
-          <span>Open Claude Code again</span>
+          <span>Close Claude Code and open it again</span>
         </li>
       </ol>
       <details className="setup-help">
-        <summary>Use a setup token</summary>
-        <p>
-          Run <code>claude setup-token</code> in your terminal. Configure the generated token as{' '}
-          <code>CLAUDE_CODE_OAUTH_TOKEN</code> for Claude Code. Keep it private; enter it only in Claude Code’s
-          environment.
-        </p>
-        <Button onClick={() => setup.help('claude-auth')}>Token setup instructions</Button>
+        <summary>Can’t sign in from a browser?</summary>
+        <p>If Claude Code runs on a server or without a screen, follow the guide to sign it in another way.</p>
+        <Button onClick={() => setup.help('claude-auth')}>Open the guide</Button>
       </details>
     </>
   );
@@ -90,8 +85,7 @@ export function SetupAgents({
   const agents = s.agents.filter((agent) => !claude || agent.id === 'claude-code');
   return (
     <>
-      <h2 tabIndex={-1}>{claude ? 'Connect Claude Code' : 'Connect a local agent'}</h2>
-      <SetupIllustration scene={claude ? 'claude' : 'tools'} />
+      <h2 tabIndex={-1}>{claude ? 'Connect Claude Code' : 'Connect an AI app on this computer'}</h2>
       {claude ? <ClaudeInstructions setup={setup} /> : <p className="sub">Add Oya, then restart your agent.</p>}
       <AgentList vm={vm} claude={claude} />
       {s.note && <p role="status">{s.note}</p>}
