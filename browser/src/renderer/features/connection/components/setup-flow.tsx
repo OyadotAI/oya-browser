@@ -9,7 +9,7 @@ import { SetupAgents } from './setup-agents.tsx';
 import { GuideSteps } from './setup-guide.tsx';
 import { LibraryImportPanel } from './library-import-panel.tsx';
 import { SetupChoice } from './setup-choice.tsx';
-import { SetupIllustration, type SetupScene } from './setup-illustration.tsx';
+import type { Brand } from './brand-marks.tsx';
 import { TechnicalFlow } from './technical-flow.tsx';
 
 /** The requested three paths, in their intended order. */
@@ -17,21 +17,26 @@ const PATHS: {
   /** Stable path. */ id: SetupPath;
   /** Heading. */ title: string;
   /** Explanation. */ detail: string;
-  /** Picture of the resulting workflow. */ scene: SetupScene;
+  /** The tools this path works with. */ brands: Brand[];
 }[] = [
   {
     id: 'technical',
-    title: 'Technical',
-    detail: 'Oya, model key or local agent',
-    scene: 'tools',
+    title: 'Use an AI app on this computer',
+    detail: 'You need one of these installed, an AI key, or an Oya account',
+    brands: [{ name: 'Claude Code', logo: 'claude' }, { name: 'Codex' }, { name: 'Cursor', logo: 'cursor' }],
   },
   {
     id: 'nontechnical',
-    title: 'Non-technical',
-    detail: 'Connect your assistant',
-    scene: 'assistant',
+    title: 'Use the AI plan you already pay for',
+    detail: 'You need a ChatGPT plan, or a Claude plan with Claude Code',
+    brands: [{ name: 'ChatGPT' }, { name: 'Claude', logo: 'claude' }],
   },
-  { id: 'expert', title: 'AI expert', detail: 'Explore the control plane', scene: 'fleet' },
+  {
+    id: 'expert',
+    title: 'Use your Oya workspace',
+    detail: 'You need an Oya account',
+    brands: [{ name: 'Oya', logo: 'oya' }],
+  },
 ];
 /** Shared models for each path. */
 interface Props {
@@ -47,8 +52,8 @@ interface Props {
 function Choices({ vm }: Pick<Props, 'vm'>) {
   return (
     <>
-      <h1 tabIndex={-1}>Your browser. Your way.</h1>
-      <p className="sub">Choose how to get started.</p>
+      <h1 tabIndex={-1}>Connect the browser your way to enable AI mode</h1>
+      <p className="sub">Pick the way that fits you.</p>
       <div className="setup-choices">
         {PATHS.map((p) => (
           <SetupChoice
@@ -56,7 +61,7 @@ function Choices({ vm }: Pick<Props, 'vm'>) {
             path={p.id}
             title={p.title}
             caption={p.detail}
-            scene={p.scene}
+            brands={p.brands}
             onClick={() => vm.onboarding.choose(p.id)}
           />
         ))}
@@ -78,15 +83,15 @@ function Assistant({ vm }: Pick<Props, 'vm'>) {
       <p className="sub">Use the subscription you already have.</p>
       <div className="setup-provider-choices">
         <SetupChoice
-          title="ChatGPT"
-          caption="Sign in and approve Oya"
-          scene="chatgpt"
+          title="Sign in with ChatGPT"
+          caption="You need a ChatGPT plan"
+          brands={[{ name: 'ChatGPT' }]}
           onClick={() => void vm.onboarding.connectChatgpt()}
         />
         <SetupChoice
-          title="Claude Code"
-          caption="Use your Claude subscription"
-          scene="claude"
+          title="Use Claude Code"
+          caption="You need a Claude plan and Claude Code installed"
+          brands={[{ name: 'Claude Code', logo: 'claude' }]}
           onClick={() => vm.onboarding.show('claude')}
         />
       </div>
@@ -99,7 +104,6 @@ function Expert({ vm }: Pick<Props, 'vm'>) {
   return (
     <>
       <h2 tabIndex={-1}>Connect your workspace</h2>
-      <SetupIllustration scene="fleet" />
       <p className="sub">Sign in, then approve this browser.</p>
       <Button variant="primary" onClick={() => void vm.signIn()}>
         Connect workspace
@@ -117,7 +121,6 @@ function ProviderWaiting({ vm }: Pick<Props, 'vm'>) {
   return (
     <>
       <h2 tabIndex={-1}>Approve access in ChatGPT</h2>
-      <SetupIllustration scene="chatgpt" />
       <p className="sub">Approve access, then return here.</p>
       <p role="status">
         {s.error
@@ -140,7 +143,6 @@ function Connected({ vm }: Pick<Props, 'vm'>) {
   return (
     <>
       <h2 tabIndex={-1}>{s.connected ? 'You’re connected.' : 'Connection lost'}</h2>
-      <SetupIllustration scene={s.connected ? 'connected' : 'waiting'} />
       <p className="sub">
         {!s.connected
           ? 'Reconnect to finish setup, or browse for now.'
@@ -211,11 +213,14 @@ function Current(props: Props) {
 export function SetupFlow(props: Props) {
   const { vm } = props;
   const s = useViewModel(vm.onboarding);
+  // One back button at a time: card 1's inner screens have their own, one step back.
+  const technical = useViewModel(vm.onboarding.technical);
+  const inner = s.page === 'technical' && technical.view !== 'choices';
   return (
     <div className="setup-flow">
-      {s.page !== 'choices' && (
+      {s.page !== 'choices' && !inner && (
         <Button className="welcome-back" onClick={() => vm.onboarding.choose(null)}>
-          ← Change starting point
+          ← Back to start
         </Button>
       )}
       <Current {...props} />

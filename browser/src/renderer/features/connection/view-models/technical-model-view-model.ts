@@ -88,7 +88,7 @@ export class TechnicalModelViewModel extends ViewModel<State> {
   private validKey(): boolean {
     if (!this.state.provider) return false;
     if (this.state.key.trim() || this.state.saved) return true;
-    this.set({ error: 'Paste your provider API key.', code: 'model_key_refused' });
+    this.set({ error: 'Paste your key first.', code: 'model_key_refused' });
     return false;
   }
   /** Navigation invalidates errors as well as successful replies. */
@@ -110,7 +110,7 @@ export class TechnicalModelViewModel extends ViewModel<State> {
   }
   /** A server-confirmed provider response, not a save or sign-in, establishes readiness. */
   private async verify(signal: AbortSignal): Promise<void> {
-    this.set({ progress: 'Testing provider…' });
+    this.set({ progress: 'Checking your key…' });
     const answer = await this.bridge.testModelKey(this.state.provider);
     signal.throwIfAborted();
     if (answer.error) throw Object.assign(Error(answer.error), { code: answer.code });
@@ -125,7 +125,7 @@ export class TechnicalModelViewModel extends ViewModel<State> {
     const catalog = Array.isArray(status.catalog) ? (status.catalog as CatalogEntry[]) : [];
     const entry = catalog.find((item) => item.id === this.state.provider);
     if (!entry?.model) throw Error('This server needs an update to support this provider.');
-    this.set({ catalog, model: this.state.model || entry.model, progress: 'Saving model key…' });
+    this.set({ catalog, model: this.state.model || entry.model, progress: 'Saving your key…' });
     await this.write(signal);
   }
   /** Workspace-bound main validation prevents a late catalog read from targeting another project. */
@@ -142,7 +142,7 @@ export class TechnicalModelViewModel extends ViewModel<State> {
     const failure = error as DiagnosticFailure | null;
     const code = failure?.code || '';
     const detail = failureMessage(failure);
-    this.set({ error: `${this.state.saved ? 'Key saved. Test did not pass. ' : ''}${detail}`, code });
+    this.set({ error: `${this.state.saved ? 'Your key was saved, but the check failed. ' : ''}${detail}`, code });
   }
 
   /** A successful tested model can enter the existing Ask experience immediately. */
