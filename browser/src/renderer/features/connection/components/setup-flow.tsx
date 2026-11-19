@@ -1,43 +1,15 @@
 /** Each starting point reuses supported services and ends with an explicit next action. */
+import type { ReactElement } from 'react';
 import { useViewModel } from '../../../hooks/index.ts';
 import { Button } from '../../../ui/index.ts';
 import type { SetupViewModel } from '../view-models/setup-view-model.ts';
-import type { SetupPath } from '../view-models/onboarding-view-model.ts';
 import type { AgentsViewModel } from '../view-models/agents-view-model.ts';
 import type { ImportViewModel } from '../view-models/import-view-model.ts';
-import { SetupAgents } from './setup-agents.tsx';
 import { GuideSteps } from './setup-guide.tsx';
 import { LibraryImportPanel } from './library-import-panel.tsx';
-import { SetupChoice } from './setup-choice.tsx';
-import type { Brand } from './brand-marks.tsx';
+import { ConnectOptions } from './connect-options.tsx';
 import { TechnicalFlow } from './technical-flow.tsx';
 
-/** The requested three paths, in their intended order. */
-const PATHS: {
-  /** Stable path. */ id: SetupPath;
-  /** Heading. */ title: string;
-  /** Explanation. */ detail: string;
-  /** The tools this path works with. */ brands: Brand[];
-}[] = [
-  {
-    id: 'technical',
-    title: 'Use an AI app on this computer',
-    detail: 'You need one of these installed, an AI key, or an Oya account',
-    brands: [{ name: 'Claude Code', logo: 'claude' }, { name: 'Codex' }, { name: 'Cursor', logo: 'cursor' }],
-  },
-  {
-    id: 'nontechnical',
-    title: 'Use the AI plan you already pay for',
-    detail: 'You need a ChatGPT plan, or a Claude plan with Claude Code',
-    brands: [{ name: 'ChatGPT' }, { name: 'Claude', logo: 'claude' }],
-  },
-  {
-    id: 'expert',
-    title: 'Use your Oya workspace',
-    detail: 'You need an Oya account',
-    brands: [{ name: 'Oya', logo: 'oya' }],
-  },
-];
 /** Shared models for each path. */
 interface Props {
   /** Manual and first-run progress. */
@@ -48,71 +20,9 @@ interface Props {
   imports: ImportViewModel;
 }
 
-/** Exactly three native buttons precede credentials. */
-function Choices({ vm }: Pick<Props, 'vm'>) {
-  return (
-    <>
-      <h1 tabIndex={-1}>Connect the browser your way to enable AI mode</h1>
-      <p className="sub">Pick the way that fits you.</p>
-      <div className="setup-choices">
-        {PATHS.map((p) => (
-          <SetupChoice
-            key={p.id}
-            path={p.id}
-            title={p.title}
-            caption={p.detail}
-            brands={p.brands}
-            onClick={() => vm.onboarding.choose(p.id)}
-          />
-        ))}
-      </div>
-    </>
-  );
-}
-
 /** Distinguishes workspace keys from model credentials. */
 function Technical({ vm }: Pick<Props, 'vm'>) {
   return <TechnicalFlow vm={vm} />;
-}
-
-/** Subscription choices explain where tasks will run. */
-function Assistant({ vm }: Pick<Props, 'vm'>) {
-  return (
-    <>
-      <h2 tabIndex={-1}>Connect your assistant</h2>
-      <p className="sub">Use the subscription you already have.</p>
-      <div className="setup-provider-choices">
-        <SetupChoice
-          title="Sign in with ChatGPT"
-          caption="You need a ChatGPT plan"
-          brands={[{ name: 'ChatGPT' }]}
-          onClick={() => void vm.onboarding.connectChatgpt()}
-        />
-        <SetupChoice
-          title="Use Claude Code"
-          caption="You need a Claude plan and Claude Code installed"
-          brands={[{ name: 'Claude Code', logo: 'claude' }]}
-          onClick={() => vm.onboarding.show('claude')}
-        />
-      </div>
-    </>
-  );
-}
-
-/** Experts pair before exploring their actual dashboard. */
-function Expert({ vm }: Pick<Props, 'vm'>) {
-  return (
-    <>
-      <h2 tabIndex={-1}>Connect your workspace</h2>
-      <p className="sub">Sign in, then approve this browser.</p>
-      <Button variant="primary" onClick={() => void vm.signIn()}>
-        Connect workspace
-      </Button>
-      <Button variant="secondary" onClick={() => vm.show('manual')}>
-        Use a server and Oya key
-      </Button>
-    </>
-  );
 }
 
 /** Opening a sign-in URL never counts as a completed connection. */
@@ -185,15 +95,12 @@ function Optional({ vm, imports }: Pick<Props, 'vm' | 'imports'>) {
 
 /** The guarded map keeps view dispatch explicit. */
 function Current(props: Props) {
-  const { vm, agents } = props;
+  const { vm } = props;
   const s = useViewModel(vm.onboarding);
-  const views = {
-    choices: () => <Choices vm={vm} />,
+  // Pages the old cards opened (assistant, expert, claude, local) have no screen any more.
+  const views: Partial<Record<typeof s.page, () => ReactElement>> = {
+    choices: () => <ConnectOptions vm={vm} />,
     technical: () => <Technical vm={vm} />,
-    assistant: () => <Assistant vm={vm} />,
-    expert: () => <Expert vm={vm} />,
-    local: () => <SetupAgents vm={agents} setup={vm.onboarding} />,
-    claude: () => <SetupAgents vm={agents} setup={vm.onboarding} claude />,
     waiting: () => <ProviderWaiting vm={vm} />,
     connected: () => <Connected vm={vm} />,
     optional: () => <Optional {...props} />,
@@ -206,7 +113,7 @@ function Current(props: Props) {
       />
     ),
   };
-  return Object.hasOwn(views, s.page) ? views[s.page]() : null;
+  return views[s.page]?.() ?? null;
 }
 
 /** Shared failure and Back controls keep every path recoverable. */

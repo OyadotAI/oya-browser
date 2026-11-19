@@ -63,7 +63,7 @@ function AgentRow({
 function AgentTest({ vm }: { /** Selected agent and public prompt status. */ vm: AgentsViewModel }) {
   const s = useViewModel(vm),
     agent = s.agents.find((item) => item.id === s.selected);
-  if (!agent) return null;
+  if (!agent || agent.installed === false) return null;
   return (
     <section className="setup-first-task" aria-label={`Test ${agent.name}`}>
       <strong>Try this in {agent.name}</strong>

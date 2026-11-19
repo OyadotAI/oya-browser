@@ -93,6 +93,16 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
     this.ready();
   }
 
+  /**
+   * From the connect screen, opens the AI apps list or the AI key form. An app id opens the list with
+   * that app's test already showing, so clicking "Codex" lands on Codex, not on a list to search.
+   */
+  openDetail(view: 'agents' | 'model', app?: string): void {
+    this.choose('technical');
+    this.technical.show(view);
+    if (app) this.technical.agents.select(app);
+  }
+
   /** Opens a detail screen without changing the selected starting point. */
   show(page: OnboardingPage): void {
     this.set({ page, error: '' });
