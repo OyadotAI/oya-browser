@@ -17,7 +17,7 @@
       ]
     }
   ],
-  "version": "1.0.255",
+  "version": "1.0.256",
   "remotes": [
     {
       "type": "streamable-http",
