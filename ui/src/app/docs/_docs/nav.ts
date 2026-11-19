@@ -5,7 +5,7 @@
 'use client';
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { ACTIVE_HEADING_OFFSET_PX, NAV_SCROLL_DELAY_MS } from './constants';
+import { ACTIVE_HEADING_OFFSET_PX, ACTIVE_LINK_MARGIN_PX, NAV_SCROLL_DELAY_MS } from './constants';
 
 /** The section in view and how to go to another. */
 export interface DocsNavValue {
@@ -50,6 +50,21 @@ function trackHeadings(setActive: (id: string) => void) {
   return () => (window.removeEventListener('scroll', update), cancelAnimationFrame(frame));
 }
 
+/**
+ * Scrolls the desktop side menu, and only it, so the current section's link stays in view. The menu is fixed and
+ * scrolls on its own, so without this the highlight runs off its bottom edge as the page is read.
+ */
+function revealActiveLink() {
+  const link = document.querySelector<HTMLElement>('aside [aria-current="location"]');
+  const menu = link?.closest('aside');
+  if (!link || !menu) return;
+  const [item, box] = [link.getBoundingClientRect(), menu.getBoundingClientRect()];
+  const above = box.top + ACTIVE_LINK_MARGIN_PX - item.top;
+  const below = item.bottom - (box.bottom - ACTIVE_LINK_MARGIN_PX);
+  if (above > 0) menu.scrollTop -= above;
+  else if (below > 0) menu.scrollTop += below;
+}
+
 /** Goes to a section: closes the mobile menu, marks it active, updates the URL, then scrolls. */
 function goTo(id: string, setActive: (id: string) => void, closeMenu: () => void) {
   closeMenu();
@@ -62,6 +77,7 @@ function goTo(id: string, setActive: (id: string) => void, closeMenu: () => void
 export function useDocsNavState(closeMenu: () => void): DocsNavValue {
   const [active, setActive] = useState('quickstart');
   useEffect(() => trackHeadings(setActive), []);
+  useEffect(revealActiveLink, [active]);
   const navigate = useCallback((id: string) => goTo(id, setActive, closeMenu), [closeMenu]);
   return { active, navigate };
 }

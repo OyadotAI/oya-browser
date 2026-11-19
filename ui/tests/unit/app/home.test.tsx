@@ -76,7 +76,7 @@ describe('landing page', () => {
   it('introduces reusable portal work to healthtech teams and preserves the existing actions', async () => {
     await page();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
-      'Turn repeated portal work into a workflow you can reuse.',
+      'No API? No problem. Automate any portal with browser agents.',
     );
     expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
@@ -95,13 +95,13 @@ describe('landing page', () => {
     expect(screen.getByRole('link', { name: COMPLIANCE_CLAIMS.join(' · ') }).getAttribute('href')).toBe('/trust');
   });
 
-  it('keeps original hero artwork decorative while preserving the accessible headline and actions', async () => {
+  it('shows the recorded demo in the hero, muted and pausable, with the headline and actions kept', async () => {
     const { container } = await page();
-    const image = container.querySelector<HTMLImageElement>('img[src*="oya-routing-sculpture"]');
-    expect(image?.alt).toBe('');
-    expect(image?.closest('[aria-hidden="true"]')).toBeTruthy();
-    expect(image?.getAttribute('width')).toBe('1536');
-    expect(image?.getAttribute('height')).toBe('1024');
+    const video = container.querySelector<HTMLVideoElement>('video[src="/prior-auth.mp4"]');
+    expect(video?.getAttribute('aria-label')).toContain('prior authorization');
+    expect(video?.muted).toBe(true);
+    expect(video?.controls).toBe(true);
+    expect(video?.getAttribute('poster')).toBe('/prior-auth-poster.jpg');
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('link', { name: 'Start building' }).getAttribute('href')).toBe('/dashboard');
   });
@@ -183,16 +183,17 @@ describe('landing page', () => {
     expect(disclosure?.open).toBe(false);
   });
 
-  it('connects the first workflow and its results to operating, controlling and deploying more workflows', async () => {
+  it('tells the story in order: the task, its result, the stack, operating it, the price, then the questions', async () => {
     const { container } = await page();
     const journey = [
       'hero',
       'workflows',
+      'results',
       'stack',
       'control-plane',
       'capabilities',
       'deployment',
-      'results',
+      'pricing',
       'faq',
       'contact',
     ];
@@ -202,13 +203,14 @@ describe('landing page', () => {
     expect(order).toEqual(journey);
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
       'Start with one task your team already does.',
+      'Compare the result with your current process.',
       'When a page changes, review where the run stopped.',
       'When a status needs context, check the available documents.',
       'Connect the workflow to the tools you already use.',
       'Keep browser connections and run history together.',
       'Decide how each run should work.',
       'Choose where the work runs.',
-      'Compare the result with your current process.',
+      'Start free. Pay as the work grows.',
       'Resolve the remaining questions before you start.',
       'Scope your first workflow with the founders.',
     ]);
@@ -356,7 +358,12 @@ describe('landing page', () => {
   it('keeps the main navigation focused and secondary destinations reachable in the footer and Product menu', async () => {
     await page();
     const main = within(screen.getByRole('navigation', { name: 'Main' }));
-    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual(['Workflows', 'Docs', 'Security']);
+    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Workflows',
+      'Pricing',
+      'Docs',
+      'Security',
+    ]);
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));
     expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('/#control-plane');
     expect(main.getByRole('button', { name: 'Product' }).getAttribute('aria-expanded')).toBe('true');
@@ -512,5 +519,20 @@ describe('landing page', () => {
     for (const name of ['Run work', 'Set access', 'Review runs'])
       expect(tabs.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Choose where the work runs.' })).toBeTruthy();
+  });
+
+  it('prices three plans, lights Startup, and offers an enterprise one that leads to sales', async () => {
+    await page();
+    const pricing = within(screen.getByRole('region', { name: 'Start free. Pay as the work grows.' }));
+    expect(pricing.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([
+      'Free',
+      'Developer',
+      'Startup',
+      'Enterprise',
+    ]);
+    expect(pricing.getByText('$20')).toBeTruthy();
+    expect(pricing.getByText('$99')).toBeTruthy();
+    expect(pricing.getByRole('heading', { name: 'Startup' }).closest('li')?.getAttribute('data-lit')).toBe('true');
+    expect(pricing.getByRole('link', { name: 'Talk to sales' }).getAttribute('href')).toBe('/signup?plan=enterprise');
   });
 });

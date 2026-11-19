@@ -6,6 +6,15 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- The public website has a new look: flat charcoal with one lime accent, tall condensed headlines and square edges, across the website, the docs, sign-in and the console, in both the dark and light themes. The wording and sections are the same.
+- The docs side menu now scrolls with the page, so the section you are reading stays highlighted and in view.
+- The home page has a pricing section: Free, Developer, Startup and Enterprise, with Enterprise leading to sales. "Pricing" is in the menu and `/pricing` lands on it.
+- The home page has a new headline, "No API? No problem. Automate any portal with browser agents.", and shows the result of a run straight after the demo.
+- The Security and Release notes pages load when the site is started from the repository root.
+- The home page's hero now shows the recorded prior-authorization demo in place of the artwork.
+
 ## [1.0.255](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.255) · 2026-11-19
 
 ### Fixed

@@ -1,10 +1,9 @@
 /** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
-import Image from 'next/image';
 import { COMPLIANCE_LINE, foundersCall } from './content';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
-import { HERO_ART_HEIGHT, HERO_ART_WIDTH } from './constants';
+import { HERO_VIDEO_HEIGHT, HERO_VIDEO_WIDTH } from './constants';
 import styles from './hero.module.css';
 import { Reveal } from '@/components/ui/reveal';
 
@@ -33,25 +32,27 @@ export function Actions({ place }: { /** Where the buttons sit, for analytics. *
   );
 }
 
-/** Original glass artwork echoes Oya's interlocking rings without implying a live product view. */
-function HeroArtwork() {
+/** The recorded demo: Oya filing a prior authorization on a mock portal. It plays muted, and the controls can pause it. */
+function HeroVideo() {
   return (
-    <div className={styles.artwork} aria-hidden="true">
-      <Reveal preset="artwork">
-        <Image
-          src="/oya-routing-sculpture.png"
-          alt=""
-          width={HERO_ART_WIDTH}
-          height={HERO_ART_HEIGHT}
-          sizes="(max-width: 899px) 100vw, 58vw"
-          preload
-        />
-      </Reveal>
-    </div>
+    <video
+      className={styles.video}
+      src="/prior-auth.mp4"
+      poster="/prior-auth-poster.jpg"
+      width={HERO_VIDEO_WIDTH}
+      height={HERO_VIDEO_HEIGHT}
+      autoPlay
+      muted
+      loop
+      playsInline
+      controls
+      preload="metadata"
+      aria-label="Recorded demo: Oya files a prior authorization on a mock payer portal"
+    />
   );
 }
 
-/** A two-scale headline leads into an asymmetric product-art composition and the existing actions. */
+/** One centred headline, the lead and actions under it, then the recorded demo as the picture. */
 export function Hero() {
   return (
     <section className={`hero ${styles.hero}`} id="hero" aria-labelledby="hero-h">
@@ -59,8 +60,11 @@ export function Hero() {
         <Reveal preset="intro">
           <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
           <h1 id="hero-h" className={styles.title}>
-            <span className={styles.intro}>Turn repeated portal work into</span>{' '}
-            <span className={styles.accent}>a workflow you can reuse.</span>
+            <span>
+              No API? <br />
+              No problem.
+            </span>{' '}
+            <span className={styles.accent}>Automate any portal with browser agents.</span>
           </h1>
         </Reveal>
         <div className={styles.composition}>
@@ -79,7 +83,7 @@ export function Hero() {
               {COMPLIANCE_LINE}
             </a>
           </Reveal>
-          <HeroArtwork />
+          <HeroVideo />
         </div>
       </div>
     </section>

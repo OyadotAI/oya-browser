@@ -21,10 +21,6 @@
 }
 .workspace-page .data-scroll {
   background: var(--card);
-  border-radius: 16px;
-}
-.workspace-page :is(input, textarea, select) {
-  border-radius: 8px;
 }
 .workspace-page main > h1 {
   letter-spacing: -0.04em;

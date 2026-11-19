@@ -4,7 +4,7 @@
  */
 import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
 import styles from '../page.module.css';
 import notes from './release-notes.module.css';
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 };
 
 /** The changelog at the repository root; the site is built from ui/, one folder down. */
-const CHANGELOG = path.join(process.cwd(), '..', 'CHANGELOG.md');
+const CHANGELOG = repoFile('CHANGELOG.md');
 
 /** One line's text with its bold, code and links. */
 function Line({ line }: { /** The line as written. */ line: string }) {
