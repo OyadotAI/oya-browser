@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Setting up the desktop browser is simpler: the headline is "Connect the browser your way to enable AI mode", the three starting cards say what they do and what you need, and each shows the logos of the tools it works with in place of the mock-up pictures. The inner screens use plainer wording, and the getting-started docs use the same card names.
+
 ## [1.0.258](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.258) · 2026-11-19
 
 ### Changed
