@@ -8,7 +8,7 @@
   padding: 28px 20px 44px;
   border: 1px solid #ffffff26;
   border-radius: 20px;
-  background-color: #222222;
+  background-color: #10372a;
   background-image:
     linear-gradient(#ffffff06 1px, transparent 1px), linear-gradient(90deg, #ffffff06 1px, transparent 1px);
   background-size: 32px 32px;
@@ -18,7 +18,7 @@
   position: absolute;
   bottom: 14px;
   left: 20px;
-  color: #a3a19b;
+  color: #bacbbf;
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -30,20 +30,20 @@
   padding: 16px;
   border: 1px solid #ffffff38;
   border-radius: 12px;
-  background: #222222;
+  background: #10372a;
   font-size: 15px;
   line-height: 1.4;
 }
 .node svg {
   flex: none;
-  color: #cdf01e;
+  color: #c8f56b;
 }
 .hub {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 16px;
-  color: #cdf01e;
+  color: #c8f56b;
   font-size: 23px;
   font-weight: 500;
 }
@@ -55,7 +55,7 @@
 .connector > div {
   width: 1px;
   height: 26px;
-  background: #cdf01e80;
+  background: #c8f56b80;
   transform-origin: top;
 }
 .connector i {
@@ -75,7 +75,7 @@
 .desktop > .node {
   justify-self: stretch;
   justify-content: center;
-  border-color: #cdf01e80;
+  border-color: #c8f56b80;
 }
 .fleet {
   display: grid;
@@ -87,7 +87,7 @@
 .human {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px dashed #cdf01e60;
+  border-top: 1px dashed #c8f56b60;
 }
 .human .node {
   width: fit-content;
@@ -105,7 +105,7 @@
 .workflow p,
 .comparison p,
 .documents > p {
-  color: #a3a19b;
+  color: #bacbbf;
   font-size: 13px;
   line-height: 1.6;
 }
@@ -121,7 +121,7 @@
   color: #10251c;
 }
 .documents article:nth-child(2) {
-  border-top: 4px solid #cdf01e;
+  border-top: 4px solid #c8f56b;
 }
 .documents article > div {
   display: grid;
@@ -142,7 +142,7 @@
 }
 .task {
   margin-bottom: 20px;
-  color: #cdf01e;
+  color: #c8f56b;
   font-size: 17px;
   font-weight: 500;
 }
@@ -154,7 +154,7 @@
   gap: 24px;
 }
 .comparisonLabel {
-  color: #cdf01e;
+  color: #c8f56b;
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -187,7 +187,7 @@
   height: 5px;
   flex: none;
   border-radius: 50%;
-  background: #cdf01e;
+  background: #c8f56b;
 }
 @media (min-width: 768px) {
   .stage {

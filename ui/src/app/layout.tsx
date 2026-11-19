@@ -5,7 +5,7 @@
 import type { PropsWithChildren } from 'react';
 import type { Metadata } from 'next';
 import { headers } from 'next/headers';
-import { Anton, DM_Sans } from 'next/font/google';
+import { DM_Sans, Archivo_Black } from 'next/font/google';
 import { AuthProvider } from '@/components/auth-provider';
 import { ImpersonationBanner } from '@/components/impersonation-banner';
 import { Analytics } from '@/components/analytics';
@@ -28,11 +28,11 @@ const dmSans = DM_Sans({
   weight: ['400', '500', '600', '700'],
 });
 
-/** The display font: a tall condensed face for headlines. */
-const anton = Anton({
+/** The display font. */
+const archivo = Archivo_Black({
   subsets: ['latin'],
   display: 'swap',
-  variable: '--font-anton',
+  variable: '--font-archivo',
   weight: '400',
 });
 
@@ -170,7 +170,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
   const metaPixel = metaPixelId();
   const sentry = sentryDsn();
   return (
-    <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${anton.variable}`}>
+    <html lang="en" data-theme="dark" suppressHydrationWarning className={`${dmSans.variable} ${archivo.variable}`}>
       <head>
         <script
           nonce={nonce}

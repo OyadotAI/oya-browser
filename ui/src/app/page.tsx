@@ -13,11 +13,8 @@ import { WorkflowStory } from './_home/workflow-story';
 import { Statement } from './_home/statement';
 import { BringYourStack } from './_home/bring-your-stack';
 import { Faq } from './_home/faq';
-import { Pricing } from './_home/pricing';
 import { Closing } from './_home/closing';
-import { LoudBand } from './_home/bold-band';
 import landing from './_home/landing.module.css';
-import bold from './_home/bold.module.css';
 
 /** Classifies the public page without changing document-wide presentation state. */
 export const metadata: Metadata = { other: { 'site-kind': 'software', 'page-type': 'software' } };
@@ -26,7 +23,7 @@ export const metadata: Metadata = { other: { 'site-kind': 'software', 'page-type
 export default async function Home() {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
   return (
-    <div className={`${landing.page} ${bold.bold}`}>
+    <div className={landing.page}>
       <Kit nonce={nonce} />
       <Nav />
       <main id="top" tabIndex={-1}>
@@ -36,13 +33,13 @@ export default async function Home() {
             <ProductDemo />
           </div>
         </div>
-        <Statement />
-        <LoudBand />
         <WorkflowStory />
         <BringYourStack />
         <Operations />
-        <Pricing />
-        <Faq />
+        <div className={landing.trustSection}>
+          <Statement />
+          <Faq />
+        </div>
       </main>
       <Closing />
     </div>

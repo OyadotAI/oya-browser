@@ -37,12 +37,9 @@ export const CONTROL_TICK_MS = 1800;
 /** Ownership examples retain only a bounded recent history. */
 export const HANDOFF_EVENT_LIMIT = 4;
 
-/** The hero video's own size, so its space is reserved before it loads. */
-export const HERO_VIDEO_WIDTH = 1280;
-/** The hero video's height at that width. */
-export const HERO_VIDEO_HEIGHT = 860;
+/** Intrinsic dimensions reserve the generated hero artwork's space before it loads. */
+export const HERO_ART_WIDTH = 1536;
+/** The sculpture's landscape framing stays consistent across responsive image sources. */
+export const HERO_ART_HEIGHT = 1024;
 /** The closing mark is decorative and intentionally crops against its panel edge. */
 export const CLOSING_MARK_SIZE = 420;
-
-/** How many times the coral band draws its words, so a very wide screen never shows the end of the line. */
-export const BAND_COPIES = 4;

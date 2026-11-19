@@ -133,7 +133,7 @@ export function DemoScene({ example }: { /** The descriptor chosen in the scene'
     restart();
   };
   return (
-    <figure ref={ref} className={styles.scene} data-window="" aria-label={`Example replay: ${task.title}`}>
+    <figure ref={ref} className={styles.scene} aria-label={`Example replay: ${task.title}`}>
       <SceneBar
         status={status}
         paused={paused}

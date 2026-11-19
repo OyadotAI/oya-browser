@@ -30,7 +30,7 @@
 .card {
   padding: 28px 24px;
   border: 1px solid var(--border);
-  border-radius: 0;
+  border-radius: 20px;
   background: var(--card);
   box-shadow: var(--shadow-card);
 }

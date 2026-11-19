@@ -1,4 +1,4 @@
-/** The hero: one centred headline in the tall condensed face, the actions under it, then the recorded demo as the picture. */
+/** Cinematic typography and original artwork establish the landing page's visual identity. */
 .hero {
   --foreground: var(--ivory);
   --focus: var(--lime);
@@ -9,45 +9,52 @@
   position: relative;
   isolation: isolate;
   overflow: hidden;
-  padding-block: 80px 0;
+  padding-block: 52px 48px;
   background: var(--night);
   color: var(--ivory);
-  text-align: center;
 }
 .eyebrow {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 24px !important;
+  gap: 12px;
+  margin-bottom: 28px !important;
   color: var(--night-muted);
-  font: 12px/1.4 var(--font-mono);
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.07em;
 }
 .eyebrow::before {
   content: '';
+  width: 30px;
+  height: 1px;
   flex: none;
-  width: 8px;
-  height: 8px;
   background: var(--lime);
 }
 .title {
-  max-width: 16ch;
-  margin-inline: auto !important;
-  font-size: clamp(52px, 9.6vw, 148px);
-  line-height: 0.92;
+  position: relative;
+  z-index: 1;
+  font-weight: 500;
+  letter-spacing: -0.055em;
 }
-/* The second sentence sits under the first at half its size, so the pair reads as a shout and its answer. */
+.intro {
+  display: block;
+  margin-bottom: 12px;
+  font-size: clamp(28px, 3.4vw, 48px);
+  line-height: 1.15;
+}
 .accent {
   display: block;
-  margin-top: 0.3em;
   color: var(--lime);
-  font-size: 0.46em;
-  line-height: 1;
+  font-family: var(--font-archivo), var(--font-text), sans-serif;
+  font-size: clamp(44px, 6vw, 80px);
+  font-weight: 400;
+  line-height: 1.06;
 }
 .composition {
   display: grid;
-  justify-items: center;
+  grid-template-columns: minmax(0, 0.83fr) minmax(0, 1.17fr);
+  align-items: center;
+  gap: 24px;
 }
 .composition > * {
   min-width: 0;
@@ -56,57 +63,88 @@
   position: relative;
   z-index: 1;
   display: grid;
-  justify-items: center;
-  gap: 24px;
-  padding-top: 32px;
+  justify-items: start;
+  gap: 28px;
+  padding-block: 42px;
 }
 .lead {
-  max-width: 58ch;
+  max-width: 470px;
   color: var(--night-muted);
   font-size: 19px;
-  line-height: 1.6;
+  line-height: 1.65;
   text-wrap: pretty;
-}
-.scope {
-  max-width: 64ch;
-  color: var(--night-muted);
-  font-size: 13px;
-  line-height: 1.7;
 }
 .trustLine {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
   min-height: 44px;
+  max-width: 100%;
   color: var(--night-muted);
-  font: 12px/1.4 var(--font-mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: left;
 }
 .trustLine svg {
   flex: none;
   color: var(--lime);
 }
 .trustLine:hover {
-  color: var(--lime);
+  color: var(--ivory);
+  text-decoration: underline;
+  text-underline-offset: 5px;
 }
-.video {
+.artwork {
+  position: relative;
+  margin-right: -24px;
+  background: var(--night);
+  pointer-events: none;
+}
+.artwork img {
   display: block;
-  width: min(100%, 1040px);
+  width: 100%;
   height: auto;
-  margin-top: 56px;
-  border: 1px solid var(--dark-line-strong);
-  border-bottom: 0;
-  background: var(--forest);
+  mask-image: radial-gradient(ellipse at center, #000 42%, transparent 73%);
+}
+@media (max-width: 899px) {
+  .composition {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .copy {
+    padding-bottom: 0;
+  }
+  .artwork {
+    width: min(100%, 620px);
+    margin: 16px 0 0 auto;
+  }
 }
 @media (max-width: 767px) {
   .hero {
-    padding-top: 48px;
+    padding-block: 32px 40px;
+  }
+  .eyebrow {
+    font-size: 13px;
+    letter-spacing: 0.025em;
+  }
+  .eyebrow::before {
+    width: 16px;
+  }
+  .copy {
+    gap: 24px;
+    padding-top: 28px;
   }
   .lead {
     font-size: 17px;
   }
-  .video {
-    margin-top: 40px;
+  .accent {
+    font-size: clamp(44px, 8.5vw, 64px);
   }
+}
+
+.scope {
+  max-width: 58ch;
+  color: var(--night-muted);
+  font-size: 13px;
+  line-height: 1.7;
 }

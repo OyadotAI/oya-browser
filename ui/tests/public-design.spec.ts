@@ -5,7 +5,7 @@ test('landing is readable at desktop and mobile widths without changing the app 
   await page.addInitScript(() => localStorage.setItem('oya_theme', 'dark'));
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'No API? No problem. Automate any portal with browser agents.',
+    'Turn repeated portal work into a workflow you can reuse.',
   );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.locator('main').evaluate((el) => getComputedStyle(el.parentElement!).backgroundColor)).toBe(
