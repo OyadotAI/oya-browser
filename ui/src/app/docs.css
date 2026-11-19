@@ -2,19 +2,14 @@
 .docs-page main {
   min-width: 0;
 }
-.docs-page main :is(h1, h2) {
-  font-family: var(--font-display);
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
-}
 .docs-page main h1 {
-  font-size: clamp(40px, 4.4vw, 64px);
-  line-height: 1;
+  font-size: clamp(36px, 4vw, 56px);
+  letter-spacing: -0.055em;
+  line-height: 1.1;
 }
 .docs-page main h2 {
-  font-size: clamp(28px, 3vw, 38px);
-  line-height: 1.05;
+  font-size: clamp(28px, 3vw, 36px);
+  letter-spacing: -0.04em;
 }
 .docs-page main :is(h2, h3)[id] {
   scroll-margin-top: 104px;
@@ -22,6 +17,9 @@
 .docs-page main :is(p, li) {
   font-size: 16px;
   line-height: 1.75;
+}
+.docs-page main pre {
+  border-radius: 12px;
 }
 .docs-page main table {
   min-width: 560px;

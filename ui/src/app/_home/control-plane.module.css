@@ -222,7 +222,7 @@
   padding: var(--space-panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-window);
-  background: var(--paper, var(--ivory));
+  background: var(--ivory);
 }
 .panelLead {
   margin-bottom: 28px !important;

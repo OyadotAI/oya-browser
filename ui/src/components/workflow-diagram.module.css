@@ -4,7 +4,7 @@
   color: #17261d;
   background: #eff5ec;
   border: 1px solid #cbd8c5;
-  border-radius: 0;
+  border-radius: 12px;
   box-shadow: 0 20px 44px -32px #17382050;
 }
 .tabs {
@@ -20,7 +20,7 @@
   justify-content: center;
   gap: 8px;
   padding: 11px 8px;
-  border-radius: 0;
+  border-radius: 6px;
   color: #4b6352;
   cursor: pointer;
   font-size: 13px;
@@ -54,7 +54,7 @@
   padding: 16px 10px;
   background: #fff;
   border: 1px solid #cbd8c5;
-  border-radius: 0;
+  border-radius: 6px;
   font-size: 14px;
   font-weight: 500;
 }
@@ -109,7 +109,7 @@
   padding: 20px;
   background: #203b27;
   color: #d7ffb2;
-  border-radius: 0;
+  border-radius: 6px;
   box-shadow:
     0 5px 0 #b6c8ac,
     0 10px 0 #d5dfce;

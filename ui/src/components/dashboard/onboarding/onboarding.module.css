@@ -126,7 +126,7 @@
 /* The monitor: window chrome, a lit edge and a bloom under it. */
 .monitor {
   position: relative;
-  border-radius: 0;
+  border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
   background: color-mix(in srgb, var(--card) 92%, black);
   box-shadow:

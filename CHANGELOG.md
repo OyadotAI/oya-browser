@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- The public website, the docs, sign-in and the console are back to the look and home page they had before 1.0.256. The desktop browser keeps its new look. The docs side menu still follows the page.
+
 ## [1.0.257](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.257) · 2026-11-19
 
 ### Changed
