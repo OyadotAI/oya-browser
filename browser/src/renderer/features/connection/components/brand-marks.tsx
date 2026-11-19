@@ -1,6 +1,6 @@
 /**
- * Brand marks on the setup choices. People pick a way to connect fastest by recognising the tool they
- * already have, so each choice shows the logos of what it works with. Logo paths are copied from
+ * Brand marks on the connect screen. People pick a way to connect fastest by recognising the tool they
+ * already have, so each option shows its logo. Logo paths are copied from
  * Simple Icons 16.38.0 (CC0-1.0). OpenAI has no mark there, at OpenAI's request, so ChatGPT and Codex
  * show their name only.
  */
@@ -35,12 +35,6 @@ const LOGOS = {
 /** A logo name, or Oya's own orb. */
 export type BrandLogo = keyof typeof LOGOS | 'oya';
 
-/** A tool a setup choice works with: its name, and its logo when one can be shown. */
-export interface Brand {
-  /** The name people know it by. */ name: string;
-  /** Its logo; left out when the brand has no free mark. */ logo?: BrandLogo;
-}
-
 /** One logo, drawn at text size; decorative because the name is always next to it. */
 export function BrandMark({ logo }: { /** Which logo. */ logo: BrandLogo }) {
   if (logo === 'oya') return <Orb size="xs" />;
@@ -49,19 +43,5 @@ export function BrandMark({ logo }: { /** Which logo. */ logo: BrandLogo }) {
     <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
       <path d={path} fill={color} />
     </svg>
-  );
-}
-
-/** The row of tools on a choice, so the person sees at a glance whether they have one of them. */
-export function BrandChips({ brands }: { /** The tools this choice works with. */ brands: Brand[] }) {
-  return (
-    <span className="brand-chips">
-      {brands.map((brand) => (
-        <span className="brand-chip" key={brand.name}>
-          {brand.logo && <BrandMark logo={brand.logo} />}
-          {brand.name}
-        </span>
-      ))}
-    </span>
   );
 }

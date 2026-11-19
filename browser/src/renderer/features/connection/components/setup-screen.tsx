@@ -64,7 +64,7 @@ export function SetupScreen({ vm, agents, imports }: Props) {
           </p>
         )}
         <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
-          Just browse for now
+          No AI for now, just browse
         </Button>
       </section>
     </main>

@@ -295,11 +295,11 @@ function Connect() {
       </p>
       <Step n={1} title="Pick a way to connect">
         <p className="mb-3 text-[15px] leading-relaxed">
-          <strong>Use an AI app on this computer</strong>: sign in with Oya, connect Claude Code, Codex, Cursor or VS
-          Code, or paste your own AI key from Gemini, Claude or OpenRouter.{' '}
-          <strong>Use the AI plan you already pay for</strong>: connect ChatGPT, or Claude through Claude Code, and type
-          tasks in Oya&apos;s Ask panel. <strong>Use your Oya workspace</strong>: sign in to your Oya workspace and walk
-          through the control plane; connecting to your own server with an Oya key is still there as the second button.
+          Every way is on that one screen. <strong>Continue with ChatGPT</strong> or <strong>Continue with Oya</strong>{' '}
+          to sign in with an account you have. Or click the AI app on this computer you want Oya in: Claude Code, Codex,
+          Cursor or VS Code. Below those, <strong>Use your own AI key</strong> takes a key from Gemini, Claude or
+          OpenRouter, and <strong>Connect to my own server</strong> takes a server address and an Oya key.{' '}
+          <strong>No AI for now, just browse</strong> skips setup.
         </p>
       </Step>
       <ConnectSteps />

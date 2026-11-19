@@ -197,7 +197,7 @@ export class SetupViewModel extends ViewModel<SetupState> {
     void this.bridge.openConsole(this.state.server);
   }
 
-  /** "Just browse for now". */
+  /** "No AI for now, just browse". */
   skip(): void {
     this.onboarding.finish();
   }
