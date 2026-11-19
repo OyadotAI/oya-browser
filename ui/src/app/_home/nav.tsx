@@ -120,7 +120,9 @@ export function Nav() {
       className={styles.header}
       onKeyDown={nav.escape}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) nav.close();
+        // Safari never focuses a tapped button or link, so a tap blurs with no relatedTarget; closing then ate every tap in the open menu.
+        const next = event.relatedTarget;
+        if (next && !event.currentTarget.contains(next)) nav.close();
       }}
     >
       <div className={`wrap ${styles.bar}`}>
