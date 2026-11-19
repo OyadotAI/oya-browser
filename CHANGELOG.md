@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.254](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.254) · 2026-11-19
+
 ### Fixed
 
 - The landing page menu on iPhone works again: tapping Product, Docs or any other item no longer closes the menu before the tap lands.
