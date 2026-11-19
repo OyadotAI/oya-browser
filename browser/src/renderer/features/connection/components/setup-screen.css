@@ -59,18 +59,22 @@
   opacity: 0.5;
   cursor: wait;
 }
+/* Hints stay lighter than typed text so an empty field never looks filled in. */
+.setup-screen ::placeholder {
+  color: var(--text);
+  opacity: 0.5;
+}
 body.mode-browsing .setup-screen {
   display: none;
 }
 .setup-screen {
+  /* No gray text in onboarding: low-contrast copy gets skipped, so secondary text uses the body color. */
+  --secondary: var(--text);
   --setup-width: 640px;
   --setup-wide: 1000px;
   --setup-space: 28px;
   --setup-gap: 16px;
   --setup-target: 44px;
-  --setup-art-width: 360px;
-  --setup-choice-art: 140px;
-  --setup-picture-height: 220px;
   display: flex;
   align-items: safe center;
   justify-content: center;
@@ -150,12 +154,6 @@ body.mode-browsing .setup-screen {
 .setup-flow ol {
   line-height: 1.5;
 }
-.setup-flow > .setup-illustration,
-.welcome-view > .setup-illustration {
-  max-width: var(--setup-art-width);
-  max-height: var(--setup-picture-height);
-  align-self: center;
-}
 .setup-choices {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -183,12 +181,28 @@ body.mode-browsing .setup-screen {
   border-color: var(--accent);
   background: var(--muted-surface);
 }
-.setup-choice-art {
+/* The tools a choice works with, as logo-and-name chips people recognise before they read. */
+.brand-chips {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-right: 20px;
+}
+.brand-chip {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 0;
-  aspect-ratio: 320 / 190;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.brand-mark {
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 .setup-choice-copy {
   display: grid;
@@ -382,11 +396,6 @@ body.mode-browsing .setup-screen {
   border-bottom: 1px solid var(--border);
   color: var(--text);
 }
-.library-import-panel > .setup-illustration {
-  max-width: 280px;
-  max-height: 160px;
-  margin: 0 auto 12px;
-}
 .library-import-panel p {
   line-height: 1.5;
   margin: 8px 0;
@@ -421,26 +430,12 @@ body.mode-browsing .setup-screen {
     grid-template-columns: minmax(0, 1fr);
   }
   .setup-choice {
-    flex-direction: row;
-    align-items: center;
     padding: 12px;
-  }
-  .setup-choice-art {
-    flex: 0 0 var(--setup-choice-art);
-  }
-  .setup-choice-copy {
-    flex: 1;
-    min-width: 0;
-  }
-  .setup-choice > .icon {
-    position: static;
-    flex: none;
   }
 }
 @media (max-width: 500px) {
   .setup-screen {
     --setup-space: 20px;
-    --setup-choice-art: 100px;
   }
   .setup-mini-steps {
     grid-template-columns: minmax(0, 1fr);
@@ -449,7 +444,6 @@ body.mode-browsing .setup-screen {
 @media (max-height: 600px) {
   .setup-screen {
     --setup-space: 16px;
-    --setup-picture-height: 140px;
   }
   .setup-brand {
     margin-bottom: 20px;
