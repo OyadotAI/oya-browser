@@ -12,10 +12,10 @@ export function ProductDemo() {
   return (
     <section className={styles.demo} id="workflows" aria-labelledby="demo-h">
       <div className={styles.demoHeading} id="playbooks">
-        <h2 id="demo-h">Start with one task your team already does.</h2>
+        <h2 id="demo-h">Then keep the steps for the next case.</h2>
         <p>
-          Choose a prior authorization, eligibility check or claim-status lookup. Watch an agent work through the task
-          in a browser, with a person able to take control.
+          Explore how a task becomes readable code, runs with new inputs, and hands control back to a person when
+          needed.
         </p>
         <p>Interactive simulation · Synthetic data</p>
       </div>

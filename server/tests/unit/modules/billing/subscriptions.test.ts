@@ -52,7 +52,10 @@ const event = (type: string, price = 'base_dev', status = 'active', sub = 'sub_1
 
 describe('Subscriptions', () => {
   beforeEach(() => (process.env.STRIPE_PRICES_DEVELOPER = 'base_dev,min_dev,mb_dev,llm_dev,steps_dev'));
-  afterEach(() => delete process.env.STRIPE_PRICES_DEVELOPER);
+  afterEach(() => {
+    delete process.env.STRIPE_PRICES_DEVELOPER;
+    delete process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER;
+  });
 
   it('opens Checkout for a plan: its base price once, its metered prices by usage, tagged with the person', async () => {
     const { s, posts } = fixture();
@@ -62,6 +65,16 @@ describe('Subscriptions', () => {
     assert.deepEqual(params.line_items[1], { price: 'min_dev' });
     assert.equal(params.subscription_data.metadata.user_id, 'u1');
     assert.equal(params.customer, undefined);
+  });
+
+  it('offers only the current price bundle when earlier subscription prices are retained', async () => {
+    process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER = 'old_dev';
+    const { s, posts } = fixture();
+    await s.checkout('u1', 'developer');
+    assert.deepEqual(
+      posts[0].params.line_items.map((item) => item.price),
+      ['base_dev', 'min_dev', 'mb_dev', 'llm_dev', 'steps_dev'],
+    );
   });
 
   it('opens Checkout in Oya’s look: its name, icon and colors', async () => {
@@ -168,6 +181,17 @@ describe('Subscriptions', () => {
     assert.equal(row.stripe_customer_id, 'cus_1');
     assert.equal(row.period_start, '2026-03-10T00:00:00.000Z');
     assert.equal(row.period_end, '2026-04-10T00:00:00.000Z');
+  });
+
+  it('keeps an existing subscriber on their paid plan after new checkout prices change', async () => {
+    process.env.STRIPE_PRICES_DEVELOPER = 'new_dev,min_dev,mb_dev,llm_dev,steps_dev';
+    process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER = 'base_dev';
+    const { s, rows } = fixture();
+    await s.applyEvent(event('customer.subscription.updated'));
+    assert.equal(rows.get('u1').plan, 'developer');
+    assert.equal(rows.get('u1').stripe_subscription_id, 'sub_1');
+    assert.deepEqual((await s.summary('u1')).included, PLANS.developer);
+    assert.equal(rows.get('u1').period_end, '2026-04-10T00:00:00.000Z');
   });
 
   it('keeps what was already reported when the subscription changes', async () => {

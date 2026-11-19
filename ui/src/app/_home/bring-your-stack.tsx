@@ -13,8 +13,8 @@ export function BringYourStack() {
   return (
     <section className="section" id="stack" aria-labelledby="stack-h">
       <Reveal className="wrap">
-        <h2 id="stack-h">Connect the workflow to the tools you already use.</h2>
-        <p className={styles.lead}>Call it from your agent or application through MCP, the SDK or Playwright.</p>
+        <h2 id="stack-h">Call the saved playbook from your own tools.</h2>
+        <p className={styles.lead}>Use MCP, the SDK or Playwright to run the playbook with new inputs.</p>
         <details className={styles.examples}>
           <summary>
             View connection examples

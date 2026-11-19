@@ -13,6 +13,9 @@ export function Statement() {
       <div className="wrap comparison-layout">
         <div>
           <h2 id="results-h">Compare the result with your current process.</h2>
+          <p className="deployment-lead">
+            Before expanding the workflow, compare time per case with the work your team does today.
+          </p>
         </div>
         <div>
           <div role="group" aria-labelledby="prior-auth-time-h">

@@ -28,5 +28,12 @@ const list = (name: string) =>
 /** A plan's Stripe price ids, base first: STRIPE_PRICES_<PLAN> = base,minutes,mb,llm,steps. */
 export const pricesFor = (plan: PlanName) => list(`STRIPE_PRICES_${plan.toUpperCase()}`);
 
-/** The plan a subscription's base price belongs to; free for a price no plan names. */
-export const planOfPrice = (priceId: string): PlanName => PAID_PLANS.find((p) => pricesFor(p)[0] === priceId) || 'free';
+/** Earlier base prices remain recognized without being offered to new subscribers. */
+const basePricesFor = (plan: PlanName) => [
+  pricesFor(plan)[0],
+  ...list(`STRIPE_LEGACY_BASE_PRICES_${plan.toUpperCase()}`),
+];
+
+/** Current and grandfathered base prices retain their plan; unrelated and metered prices grant none. */
+export const planOfPrice = (priceId: string): PlanName =>
+  PAID_PLANS.find((plan) => basePricesFor(plan).includes(priceId)) || 'free';

@@ -9,7 +9,7 @@ afterEach(cleanup);
 it('distinguishes server repair from reviewed desktop drafts and links to the explanation', () => {
   render(<WorkflowStory />);
   expect(screen.getByText(MAINTENANCE_BODY)).toBeTruthy();
-  expect(screen.getByRole('link', { name: /How workflow repair works/ }).getAttribute('href')).toBe(
+  expect(screen.getByRole('link', { name: /How playbook repair works/ }).getAttribute('href')).toBe(
     '/docs/playbooks#healing',
   );
 });

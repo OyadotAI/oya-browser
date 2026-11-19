@@ -986,7 +986,7 @@ export const BEST_INFRA: AnswerPageContent = {
     },
     {
       q: 'How much does Oya cost?',
-      a: 'The desktop app is free. Oya Cloud starts with 1 free browser hour; Developer is $20 a month for 100 hours, 1 GB of proxy and 5,000 agent steps; Startup is $99 a month for 500 hours. Self-hosting is free up to 5 cloud browsers at once.',
+      a: 'The desktop app is free. Oya Cloud starts with 1 free browser hour; Developer is $500 a month for 100 hours, 1 GB of proxy and 5,000 agent steps; Startup is $2,500 a month for 500 hours. Self-hosting is free up to 5 cloud browsers at once.',
     },
   ],
   sources: { checked: CHECKED, links: sourcesOf(INFRA_VENDORS) },

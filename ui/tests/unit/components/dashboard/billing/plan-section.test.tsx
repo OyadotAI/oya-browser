@@ -38,8 +38,11 @@ describe('PlanSection', () => {
   it('shows a Free person their use this month and the plans to upgrade to', async () => {
     vi.mocked(getBilling).mockResolvedValue(plan('free'));
     render(<PlanSection open />);
-    expect(await screen.findByText('Developer $20/mo')).toBeTruthy();
-    expect(screen.getByText('Startup $99/mo')).toBeTruthy();
+    expect(await screen.findByText('Developer — $500/mo')).toBeTruthy();
+    expect(screen.getByText('Startup — $2,500/mo')).toBeTruthy();
+    expect(
+      screen.getByText('Prices shown apply to new subscriptions. Existing subscriptions keep their current prices.'),
+    ).toBeTruthy();
     expect(screen.getByText('0.5 / 1')).toBeTruthy();
     expect(screen.getByText('12 / 500')).toBeTruthy();
   });
@@ -48,7 +51,7 @@ describe('PlanSection', () => {
     vi.mocked(getBilling).mockResolvedValue(plan('free'));
     vi.mocked(billingCheckout).mockRejectedValue(new Error('The startup plan is not on sale yet.'));
     render(<PlanSection open />);
-    fireEvent.click(await screen.findByText('Startup $99/mo'));
+    fireEvent.click(await screen.findByText('Startup — $2,500/mo'));
     expect(await screen.findByText('The startup plan is not on sale yet.')).toBeTruthy();
     expect(billingCheckout).toHaveBeenCalledWith('jwt', 'startup');
   });
@@ -60,6 +63,9 @@ describe('PlanSection', () => {
     fireEvent.click(await screen.findByText('Manage billing'));
     expect(await screen.findByText('Could not open billing')).toBeTruthy();
     expect(screen.getByText(/payment failed/)).toBeTruthy();
+    expect(
+      screen.queryByText('Prices shown apply to new subscriptions. Existing subscriptions keep their current prices.'),
+    ).toBeNull();
   });
 
   it('loads nothing while the dialog is closed', () => {
@@ -77,7 +83,7 @@ it('shows support access with checkout rather than a nonexistent billing portal'
   vi.mocked(getBilling).mockResolvedValue(plan('developer', { status: 'admin', canManage: false }));
   render(<PlanSection open />);
   expect(await screen.findByText(/support access/)).toBeTruthy();
-  expect(screen.getByText('Developer $20/mo')).toBeTruthy();
+  expect(screen.getByText('Developer — $500/mo')).toBeTruthy();
   expect(screen.queryByText('Manage billing')).toBeNull();
 });
 
@@ -85,5 +91,5 @@ it('keeps Stripe management available when support overrides an existing subscri
   vi.mocked(getBilling).mockResolvedValue(plan('free', { status: 'admin', canManage: true }));
   render(<PlanSection open />);
   expect(await screen.findByText('Manage billing')).toBeTruthy();
-  expect(screen.queryByText('Developer $20/mo')).toBeNull();
+  expect(screen.queryByText('Developer — $500/mo')).toBeNull();
 });

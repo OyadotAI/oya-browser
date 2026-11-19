@@ -5,7 +5,7 @@
 'use client';
 
 import { Section, Table } from '@/components/admin/parts';
-import { PERCENT, SALES_EMAIL, UPGRADES } from './constants';
+import { NEW_SUBSCRIPTION_PRICE_NOTE, PERCENT, SALES_EMAIL, UPGRADES } from './constants';
 import { dateOf, figure, money, share, usageRows } from './model';
 import type { BillingPageState, Invoice, Upcoming } from './use-billing-page';
 import type { Billing } from './use-plan';
@@ -28,6 +28,18 @@ function Go({
   );
 }
 
+/** Both checkout surfaces present the same new-subscription terms. */
+function UpgradeChoices({ upgrade }: Pick<BillingPageState, 'upgrade'>) {
+  return (
+    <>
+      {UPGRADES.map((plan) => (
+        <Go key={plan.id} primary onClick={() => void upgrade(plan.id)}>{`${plan.label} — ${plan.price}`}</Go>
+      ))}
+      <p className="basis-full text-xs text-text-secondary">{NEW_SUBSCRIPTION_PRICE_NOTE}</p>
+    </>
+  );
+}
+
 /** The plan, its period, and upgrade or manage. */
 export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's state. */ s: BillingPageState }) {
   const late = b.status === 'past_due';
@@ -47,9 +59,7 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
       {late && <p className="text-xs text-red">Your last payment failed. Update your card to keep using the cloud.</p>}
       <div className="flex flex-wrap gap-2">
         {!(b.canManage ?? b.plan !== 'free') ? (
-          UPGRADES.map((p) => (
-            <Go key={p.id} primary onClick={() => void s.upgrade(p.id)}>{`${p.label} ${p.price}`}</Go>
-          ))
+          <UpgradeChoices upgrade={s.upgrade} />
         ) : (
           <Go onClick={() => void s.manage()}>Change card, see receipts or cancel</Go>
         )}

@@ -34,11 +34,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },
-  // There is no pricing page; prices live in the landing page's FAQ. Ads and
-  // people type /pricing, so it lands there instead of a 404. Not permanent, so
-  // a real pricing page can take the path later.
+  // Direct pricing visits land on the visible homepage plans. Keep this
+  // temporary so a separate pricing page can take the path later.
   async redirects() {
-    return [{ source: "/pricing", destination: "/#faq-title", permanent: false }];
+    return [{ source: "/pricing", destination: "/#pricing", permanent: false }];
   },
 };
 
