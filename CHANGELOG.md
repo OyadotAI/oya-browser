@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.256](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.256) · 2026-11-19
+
 ### Changed
 
 - The public website has a new look: flat charcoal with one lime accent, tall condensed headlines and square edges, across the website, the docs, sign-in and the console, in both the dark and light themes. The wording and sections are the same.
