@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.257](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.257) · 2026-11-19
+
 ### Changed
 
 - The desktop browser has the website's look: flat charcoal in dark and warm paper in light, a lime accent, square edges and tall condensed headings. The Oya mark is drawn flat in lime, and the start page and setup screen have a plain background.
