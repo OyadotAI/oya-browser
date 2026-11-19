@@ -28,6 +28,7 @@ const COLUMNS: [string, [string, string][]][] = [
     'Start',
     [
       ['Console', '/dashboard'],
+      ['Pricing', '/#pricing'],
       ['Docs', '/docs'],
       ['Compare', '/vs'],
       ['Book a demo', foundersCall],
@@ -141,7 +142,10 @@ export function Closing({
             </span>
             <div className="section-head">
               <h2 id="close-h">Scope your first workflow with the founders.</h2>
-              <p className="t-lead">Bring your SOP or screen recording. Scope your first workflow with the founders.</p>
+              <p className="t-lead">
+                Bring one portal task, an SOP or a screen recording. We’ll help you scope the first workflow and what it
+                takes to run it again.
+              </p>
             </div>
             <a
               className="btn btn--primary"

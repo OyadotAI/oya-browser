@@ -167,6 +167,13 @@
   color: var(--muted);
   font-size: 18px;
 }
+.highlight {
+  padding-block: 4px;
+  background: var(--lime);
+  color: var(--ink);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 .explorer {
   display: grid;
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);

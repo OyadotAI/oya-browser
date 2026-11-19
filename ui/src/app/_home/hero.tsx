@@ -1,10 +1,10 @@
 /** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
-import Image from 'next/image';
-import { COMPLIANCE_LINE, foundersCall } from './content';
+import { Fragment } from 'react';
+import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, foundersCall } from './content';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
-import { HERO_ART_HEIGHT, HERO_ART_WIDTH } from './constants';
+import { RecordedDemo } from './recorded-demo';
 import styles from './hero.module.css';
 import { Reveal } from '@/components/ui/reveal';
 
@@ -33,54 +33,56 @@ export function Actions({ place }: { /** Where the buttons sit, for analytics. *
   );
 }
 
-/** Original glass artwork echoes Oya's interlocking rings without implying a live product view. */
-function HeroArtwork() {
+/** The linked badge keeps each claim intact when narrow screens wrap the trust line. */
+function TrustBadge() {
   return (
-    <div className={styles.artwork} aria-hidden="true">
-      <Reveal preset="artwork">
-        <Image
-          src="/oya-routing-sculpture.png"
-          alt=""
-          width={HERO_ART_WIDTH}
-          height={HERO_ART_HEIGHT}
-          sizes="(max-width: 899px) 100vw, 58vw"
-          preload
-        />
-      </Reveal>
-    </div>
+    <a className={styles.trustLine} href="/trust" aria-label={COMPLIANCE_LINE}>
+      <ShieldCheck size={18} aria-hidden="true" />
+      <span>
+        {COMPLIANCE_CLAIMS.map((claim, index) => (
+          <Fragment key={claim}>
+            {index > 0 && ' · '}
+            <span className={styles.trustClaim}>{claim}</span>
+          </Fragment>
+        ))}
+      </span>
+    </a>
   );
 }
 
-/** A two-scale headline leads into an asymmetric product-art composition and the existing actions. */
+/** An editorial story and luminous product stage share one opening composition. */
 export function Hero() {
   return (
     <section className={`hero ${styles.hero}`} id="hero" aria-labelledby="hero-h">
-      <div className="wrap">
-        <Reveal preset="intro">
-          <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
-          <h1 id="hero-h" className={styles.title}>
-            <span className={styles.intro}>Turn repeated portal work into</span>{' '}
-            <span className={styles.accent}>a workflow you can reuse.</span>
-          </h1>
-        </Reveal>
-        <div className={styles.composition}>
+      <div className={`wrap ${styles.composition}`}>
+        <div className={styles.content}>
+          <Reveal preset="intro">
+            <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
+            <h1 id="hero-h" className={styles.title}>
+              <span className={styles.intro}>
+                Let Oya Browser <span className={styles.headlineLine}>generate the playbook.</span>
+              </span>{' '}
+              <span className={styles.accent}>
+                Reuse it on <span className={styles.headlineLine}>the next run.</span>
+              </span>
+            </h1>
+          </Reveal>
           <Reveal preset="intro" order={1} className={styles.copy}>
             <p className={styles.lead}>
-              Your team already knows how to work the portal. Have Oya complete one task on your desktop, save its steps
-              as readable code, and run those steps again with new inputs.
+              Start with a prior authorization, eligibility check or claim-status lookup. Let Oya complete one case and
+              turn its successful steps into a playbook: readable code you can replay with new inputs.
             </p>
+            <Actions place="hero" />
+            <TrustBadge />
             <p className={styles.scope}>
               Use synthetic data while developing on desktop. For protected health information (PHI), use Oya Cloud or
               the enterprise edition under a Business Associate Agreement (BAA).
             </p>
-            <Actions place="hero" />
-            <a className={styles.trustLine} href="/trust">
-              <ShieldCheck size={18} aria-hidden="true" />
-              {COMPLIANCE_LINE}
-            </a>
           </Reveal>
-          <HeroArtwork />
         </div>
+        <Reveal preset="artwork" order={1} className={styles.media}>
+          <RecordedDemo />
+        </Reveal>
       </div>
     </section>
   );

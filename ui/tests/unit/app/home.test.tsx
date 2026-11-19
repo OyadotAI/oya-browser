@@ -73,15 +73,15 @@ const replay = () => screen.getByRole('figure', { name: /Example replay:/ });
 describe('landing page', () => {
   afterEach(() => cleanup());
 
-  it('introduces reusable portal work to healthtech teams and preserves the existing actions', async () => {
+  it('introduces a first case and saved steps to healthtech teams and preserves the existing actions', async () => {
     await page();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
-      'Turn repeated portal work into a workflow you can reuse.',
+      'Let Oya Browser generate the playbook. Reuse it on the next run.',
     );
     expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
       screen.getByText(
-        'Your team already knows how to work the portal. Have Oya complete one task on your desktop, save its steps as readable code, and run those steps again with new inputs.',
+        'Start with a prior authorization, eligibility check or claim-status lookup. Let Oya complete one case and turn its successful steps into a playbook: readable code you can replay with new inputs.',
       ),
     ).toBeTruthy();
     const demos = screen.getAllByRole('link', { name: /Book a demo/ });
@@ -90,25 +90,33 @@ describe('landing page', () => {
     expect(screen.getByRole('link', { name: 'Start building' }).getAttribute('href')).toBe('/dashboard');
   });
 
-  it('links the unchanged compliance claims to their supporting trust page', async () => {
+  it('places the linked compliance badge between the actions and its PHI qualification', async () => {
     await page();
-    expect(screen.getByRole('link', { name: COMPLIANCE_CLAIMS.join(' · ') }).getAttribute('href')).toBe('/trust');
+    const hero = screen.getByRole('heading', { level: 1 }).closest('section')!;
+    const badge = within(hero).getByRole('link', { name: COMPLIANCE_CLAIMS.join(' · ') });
+    const action = within(hero).getByRole('link', { name: 'Start building' });
+    const qualification = within(hero).getByText(/Use synthetic data while developing on desktop/);
+    expect(badge.getAttribute('href')).toBe('/trust');
+    expect(badge.textContent).toBe(COMPLIANCE_CLAIMS.join(' · '));
+    expect(action.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(badge.compareDocumentPosition(qualification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('keeps original hero artwork decorative while preserving the accessible headline and actions', async () => {
+  it('replaces the abstract artwork with exactly one playable hero recording and preserves headline and actions', async () => {
     const { container } = await page();
-    const image = container.querySelector<HTMLImageElement>('img[src*="oya-routing-sculpture"]');
-    expect(image?.alt).toBe('');
-    expect(image?.closest('[aria-hidden="true"]')).toBeTruthy();
-    expect(image?.getAttribute('width')).toBe('1536');
-    expect(image?.getAttribute('height')).toBe('1024');
+    expect(container.querySelector('img[src*="oya-routing-sculpture"]')).toBeNull();
+    const videos = container.querySelectorAll('video');
+    expect(videos).toHaveLength(1);
+    expect(videos[0].closest('#hero')).toBeTruthy();
+    expect(videos[0].closest('[aria-hidden="true"]')).toBeNull();
+    expect(videos[0].controls).toBe(true);
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('link', { name: 'Start building' }).getAttribute('href')).toBe('/dashboard');
   });
 
   it('starts on prior authorization and exposes three existing workflows through accessible tabs', async () => {
     await page();
-    expect(screen.getByRole('heading', { name: 'Start with one task your team already does.' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Then keep the steps for the next case.' })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: 'Workflows' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(DEMO_LABELS);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
@@ -169,7 +177,7 @@ describe('landing page', () => {
   it('shows each stack the one line that moves it onto Oya, from the content the docs share', async () => {
     const user = userEvent.setup();
     await page();
-    const section = screen.getByRole('region', { name: 'Connect the workflow to the tools you already use.' });
+    const section = screen.getByRole('region', { name: 'Call the saved playbook from your own tools.' });
     const summary = within(section).getByText('View connection examples');
     const disclosure = summary.closest('details');
     expect(disclosure?.open).toBe(false);
@@ -187,12 +195,14 @@ describe('landing page', () => {
     const { container } = await page();
     const journey = [
       'hero',
+      'recorded-demo',
       'workflows',
       'stack',
       'control-plane',
       'capabilities',
       'deployment',
       'results',
+      'pricing',
       'faq',
       'contact',
     ];
@@ -201,23 +211,25 @@ describe('landing page', () => {
       .filter((id) => journey.includes(id));
     expect(order).toEqual(journey);
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
-      'Start with one task your team already does.',
-      'When a page changes, review where the run stopped.',
-      'When a status needs context, check the available documents.',
-      'Connect the workflow to the tools you already use.',
-      'Keep browser connections and run history together.',
+      'Then keep the steps for the next case.',
+      'When the portal changes, Oya autoheals the code.',
+      'Find denial letters and prior-authorization documents.',
+      'Call the saved playbook from your own tools.',
+      'Scale automatically.',
       'Decide how each run should work.',
       'Choose where the work runs.',
       'Compare the result with your current process.',
+      'Start with one workflow. Choose capacity as it grows.',
       'Resolve the remaining questions before you start.',
       'Scope your first workflow with the founders.',
     ]);
-    const architecture = screen.getByRole('region', { name: 'Keep browser connections and run history together.' });
+    const architecture = screen.getByRole('region', { name: 'Scale automatically.' });
     expect(
       within(architecture)
         .getAllByRole('heading', { level: 3 })
         .map((heading) => heading.textContent),
     ).toEqual(['Agents & apps', 'Oya control plane', 'Browser fleet', 'Healthcare portals']);
+    expect(screen.getByText('Interactive simulation · Synthetic data')).toBeTruthy();
   });
 
   it('shows only the selected task’s synthetic audit actions and references', async () => {
@@ -344,7 +356,7 @@ describe('landing page', () => {
 
   it('keeps existing navigation anchors and platform downloads reachable', async () => {
     await page();
-    for (const id of ['top', 'playbooks', 'steps', 'audit', 'workflows', 'faq', 'contact', 'download'])
+    for (const id of ['top', 'playbooks', 'steps', 'audit', 'workflows', 'pricing', 'faq', 'contact', 'download'])
       expect(document.getElementById(id)).toBeTruthy();
     const downloads = within(screen.getByRole('navigation', { name: 'Browser downloads' }));
     for (const { platform, href } of browserDownloads)
@@ -356,7 +368,13 @@ describe('landing page', () => {
   it('keeps the main navigation focused and secondary destinations reachable in the footer and Product menu', async () => {
     await page();
     const main = within(screen.getByRole('navigation', { name: 'Main' }));
-    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual(['Workflows', 'Docs', 'Security']);
+    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'Workflows',
+      'Pricing',
+      'Docs',
+      'Security',
+    ]);
+    expect(main.getByRole('link', { name: 'Pricing' }).getAttribute('href')).toBe('/#pricing');
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));
     expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('/#control-plane');
     expect(main.getByRole('button', { name: 'Product' }).getAttribute('aria-expanded')).toBe('true');
@@ -364,6 +382,7 @@ describe('landing page', () => {
     for (const [name, href] of [
       ['Compare', '/vs'],
       ['Research', '/research'],
+      ['Pricing', '/#pricing'],
       ['Questions', '/#faq'],
     ])
       expect(footer.getByRole('link', { name }).getAttribute('href')).toBe(href);

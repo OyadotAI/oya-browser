@@ -72,7 +72,7 @@ export const OYA: Vendor = {
     takeover: 'Watch live, take over, hand back',
     providers:
       'Yes: Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, with failover; HIPAA mode uses no outside browser vendors',
-    price: 'Free desktop app and 1 cloud browser hour; $20 a month for 100 hours',
+    price: 'Free desktop app and 1 cloud browser hour; $500 a month for 100 hours',
     kind: 'Self-serve: desktop app, Oya Cloud, or your own infrastructure',
     mfa: 'Sealed TOTP; staff take over for a text-message code and hand back',
   },

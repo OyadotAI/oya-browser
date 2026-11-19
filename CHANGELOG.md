@@ -6,6 +6,17 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Updated new-subscription billing choices to Developer $500/month and Startup $2,500/month, and preserved existing subscribers' plan recognition when Stripe price IDs change.
+- Highlighted the homepage's browser-scaling sentence in lime, matching the requested marker treatment.
+- Darkened supporting text across the public website so deployment guidance, answers, pricing notes and qualifications are easier to read on light surfaces.
+- Made the homepage's HIPAA, BAA and SOC 2 Type I claims more prominent in a linked trust badge beside the primary actions.
+- Redesigned the homepage hero with an editorial split layout, refined typography and a luminous frame around the product video, preserving its content and controls.
+- Removed the heading and introduction above the homepage hero video.
+- Replaced the homepage's abstract hero artwork with the recorded product demo and updated the website's listed monthly prices to $500 for Developer and $2,500 for Startup.
+- Connected the homepage around a first portal case and its reusable steps, restored the recorded prior-authorization demo, and added visible pricing with a direct navigation link so visitors can evaluate the workflow and cost together.
+
 ## [1.0.259](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.259) · 2026-11-19
 
 ### Changed

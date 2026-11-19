@@ -13,10 +13,15 @@ export function Operations() {
       <section className="section" aria-labelledby="architecture-h">
         <div className="wrap">
           <div className={controlPlane.sectionHeading}>
-            <h2 id="architecture-h">Keep browser connections and run history together.</h2>
+            <h2 id="architecture-h">Scale automatically.</h2>
             <p>
-              Oya brings browser connections, access rules and run history together in one place. That coordination
-              layer is the control plane.
+              <mark className={controlPlane.highlight}>
+                Go from 1 to thousands of browsers in less than 30 seconds.
+              </mark>
+            </p>
+            <p>
+              Capacity depends on your plan and deployment. Manage connections, access rules and run history in Oya’s
+              control plane.
             </p>
           </div>
           <Reveal>

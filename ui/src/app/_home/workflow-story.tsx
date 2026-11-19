@@ -36,10 +36,13 @@ function MaintenanceStory() {
   return (
     <div className={styles.row}>
       <Reveal>
-        <h2>When a page changes, review where the run stopped.</h2>
-        <p>A changed page can stop a replay. An agent can try to repair it.</p>
+        <h2>When the portal changes, Oya autoheals the code.</h2>
+        <p>
+          If a page change stops a replay, an agent can try to repair the playbook’s steps. Server repairs can be saved
+          and reused on later runs. On desktop, review suggested changes before use.
+        </p>
         <Link className="link" href="/docs/playbooks#healing">
-          How workflow repair works <ArrowUpRight size={16} />
+          How playbook repair works <ArrowUpRight size={16} />
         </Link>
       </Reveal>
       <div>
@@ -78,8 +81,11 @@ function PortalStory() {
   return (
     <div className={styles.row}>
       <Reveal>
-        <h2>When a status needs context, check the available documents.</h2>
-        <p>Complement electronic claim-status feeds with the portal documents available for follow-up.</p>
+        <h2>Find denial letters and prior-authorization documents.</h2>
+        <p>
+          Open available denial letters, prior-authorization communications and appeal documents in the payer portal, so
+          your team can review the details and decide what to do next.
+        </p>
         <Link className="link" href="/claim-status-automation">
           Explore claim-status workflows <ArrowUpRight size={16} />
         </Link>

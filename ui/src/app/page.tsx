@@ -11,6 +11,7 @@ import { ProductDemo } from './_home/product-demo';
 import { Operations } from './_home/operations';
 import { WorkflowStory } from './_home/workflow-story';
 import { Statement } from './_home/statement';
+import { Pricing } from './_home/pricing';
 import { BringYourStack } from './_home/bring-your-stack';
 import { Faq } from './_home/faq';
 import { Closing } from './_home/closing';
@@ -38,6 +39,7 @@ export default async function Home() {
         <Operations />
         <div className={landing.trustSection}>
           <Statement />
+          <Pricing />
           <Faq />
         </div>
       </main>
