@@ -4,6 +4,7 @@
  */
 import { Reveal } from '@/components/ui/reveal';
 import Link from 'next/link';
+import { Download } from 'lucide-react';
 import { ANSWER_PAGES } from '../_answers/content';
 import { OyaLogo } from '@/components/oya-logo';
 import { browserDownloads } from '@/lib/browser-downloads';
@@ -17,9 +18,9 @@ const COLUMNS: [string, [string, string][]][] = [
   [
     'Product',
     [
-      ['Playbooks', '#playbooks'],
-      ['Workflows', '#workflows'],
-      ['Audit trail', '#audit'],
+      ['Playbooks', '/#playbooks'],
+      ['Workflows', '/#workflows'],
+      ['Audit trail', '/#audit'],
       ['Research', '/research'],
     ],
   ],
@@ -36,14 +37,15 @@ const COLUMNS: [string, [string, string][]][] = [
     'Company',
     [
       ['Security', '/trust'],
-      ['Questions', '#faq'],
+      ['Questions', '/#faq'],
+      ['Release notes', '/release-notes'],
       ['GitHub', repository],
       ['Discord', discord],
     ],
   ],
 ];
 
-/** The desktop downloads, one link per platform. */
+/** The desktop downloads, one filled button per platform so they read as actions, not footer text. */
 function Downloads() {
   return (
     <nav className="span-2 footer__col" id="download" aria-label="Browser downloads">
@@ -51,8 +53,14 @@ function Downloads() {
       <ul>
         {browserDownloads.map(({ platform, href }) => (
           <li key={platform}>
-            <a href={href} download data-track="download_clicked" data-track-label={platform}>
-              Oya Browser for {platform}
+            <a
+              className="footer__download"
+              href={href}
+              download
+              data-track="download_clicked"
+              data-track-label={platform}
+            >
+              <Download size={16} aria-hidden="true" /> {platform}
             </a>
           </li>
         ))}
@@ -112,30 +120,41 @@ function Directory() {
   );
 }
 
-/** The closing footer. */
-export function Closing() {
+/** The closing footer; pages that end with their own invitation leave the panel out so it is never said twice. */
+export function Closing({
+  invitation = true,
+}: {
+  /** Whether to show the founders invitation above the links. */ invitation?: boolean;
+}) {
   return (
-    <footer className={styles.footer} id="contact" aria-labelledby="close-h">
-      <div className="closing__panel">
-        <Reveal className="wrap closing__cta">
-          <span className="closing__mark" aria-hidden="true">
-            <OyaLogo size={CLOSING_MARK_SIZE} />
-          </span>
-          <div className="section-head">
-            <h2 id="close-h">Scope your first workflow with the founders.</h2>
-            <p className="t-lead">Bring your SOP or screen recording. Scope your first workflow with the founders.</p>
-          </div>
-          <a
-            className="btn btn--primary"
-            href={foundersCall}
-            data-track="cta_clicked"
-            data-track-label="closing_founders"
-          >
-            Book a demo
-            <Arrow />
-          </a>
-        </Reveal>
-      </div>
+    <footer
+      className={styles.footer}
+      id="contact"
+      aria-labelledby={invitation ? 'close-h' : undefined}
+      aria-label={invitation ? undefined : 'Site footer'}
+    >
+      {invitation && (
+        <div className="closing__panel">
+          <Reveal className="wrap closing__cta">
+            <span className="closing__mark" aria-hidden="true">
+              <OyaLogo size={CLOSING_MARK_SIZE} />
+            </span>
+            <div className="section-head">
+              <h2 id="close-h">Scope your first workflow with the founders.</h2>
+              <p className="t-lead">Bring your SOP or screen recording. Scope your first workflow with the founders.</p>
+            </div>
+            <a
+              className="btn btn--primary"
+              href={foundersCall}
+              data-track="cta_clicked"
+              data-track-label="closing_founders"
+            >
+              Book a demo
+              <Arrow />
+            </a>
+          </Reveal>
+        </div>
+      )}
       <div className="wrap">
         <Directory />
       </div>

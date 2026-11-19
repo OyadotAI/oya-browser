@@ -20,9 +20,9 @@ export const metadata: Metadata = {
 export default function Research() {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={notes.main}>
+        <main id="top" tabIndex={-1} className={notes.main}>
           <Reveal preset="public">
             <h1>Research</h1>
             <p className={notes.lead}>What we measured, how, and the raw numbers.</p>
@@ -37,8 +37,8 @@ export default function Research() {
             </section>
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

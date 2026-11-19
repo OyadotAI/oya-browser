@@ -82,6 +82,19 @@
 .footer :global(.footer__col a:hover) {
   color: var(--lime);
 }
+.footer :global(.footer__col a.footer__download) {
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--lime);
+  color: var(--night);
+  font-weight: 500;
+}
+.footer :global(.footer__col a.footer__download:hover) {
+  background: var(--ivory);
+  color: var(--night);
+}
 .footer :global(.footer__legal) {
   display: grid;
   gap: 24px;

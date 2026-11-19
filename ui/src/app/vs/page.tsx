@@ -25,9 +25,9 @@ const firstSentence = (text: string): string => text.replace(/^[^.?]*\?\s*/, '')
 export default function Compare() {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={notes.main}>
+        <main id="top" tabIndex={-1} className={notes.main}>
           <Reveal preset="public">
             <h1>Compare</h1>
             <p className={notes.lead}>How Oya Browser differs from other browsers for AI agents.</p>
@@ -41,8 +41,8 @@ export default function Compare() {
             </section>
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

@@ -57,9 +57,9 @@ function Contents({ sections }: Pick<LegalPageProps, 'sections'>) {
 export function LegalPage({ title, effective, lead, sections }: LegalPageProps) {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={trust.main}>
+        <main id="top" tabIndex={-1} className={trust.main}>
           <Reveal preset="public">
             <h1>{title}</h1>
             <p className={legal.effective}>Effective {effective}</p>
@@ -75,8 +75,8 @@ export function LegalPage({ title, effective, lead, sections }: LegalPageProps) 
             </section>
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

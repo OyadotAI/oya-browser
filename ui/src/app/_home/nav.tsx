@@ -25,7 +25,7 @@ function ProductPanel({ open }: { /** Whether its trigger is expanded. */ open: 
           ))}
         </div>
       ))}
-      <a className={styles.menuCard} href="#playbooks">
+      <Link className={styles.menuCard} href="/#playbooks">
         <Image
           src="/playbooks-list.jpg"
           alt="The playbooks list in the Oya console"
@@ -35,7 +35,7 @@ function ProductPanel({ open }: { /** Whether its trigger is expanded. */ open: 
         />
         <span>Playbooks</span>
         <span>Every run, saved as code</span>
-      </a>
+      </Link>
     </div>
   );
 }
@@ -43,20 +43,18 @@ function ProductPanel({ open }: { /** Whether its trigger is expanded. */ open: 
 /** Disclosure state shared by the header's small presentation components. */
 type Navigation = ReturnType<typeof useNavigation>;
 
-/** Product keeps both its section link and an explicit keyboard-accessible disclosure. */
+/** The whole Product row is one disclosure button: a split link and chevron left most of the row dead on phones. */
 function ProductDisclosure({ state, toggle }: Navigation) {
   return (
     <div className={styles.product}>
-      <a href="#playbooks">Product</a>
       <button
         className={styles.expand}
         type="button"
-        aria-label="Show Product links"
         aria-expanded={state.product}
         aria-controls="product-links"
         onClick={() => toggle('product')}
       >
-        <ChevronDown size={14} aria-hidden="true" />
+        Product <ChevronDown size={14} aria-hidden="true" />
       </button>
       <ProductPanel open={state.product} />
     </div>

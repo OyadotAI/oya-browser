@@ -14,7 +14,7 @@ describe('public header', () => {
     const menu = screen.getByRole('button', { name: 'Menu' });
     fireEvent.click(menu);
     expect(menu.getAttribute('aria-expanded')).toBe('true');
-    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Compare' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Product' }));
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
     expect(menu.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(menu);
@@ -36,12 +36,16 @@ describe('public header', () => {
     expect(remove).toHaveBeenCalledWith('change', add.mock.calls[0][1]);
   });
 
-  it('renders one copy of every destination without requiring matchMedia', () => {
+  it('renders the same destinations as the home page header without requiring matchMedia', () => {
     vi.stubGlobal('matchMedia', undefined);
     render(<SiteHeader />);
     expect(screen.getAllByRole('navigation')).toHaveLength(1);
-    for (const name of ['Compare', 'Research', 'Docs', 'Security', 'GitHub', 'Discord', 'Download', 'Open console']) {
-      expect(screen.getAllByRole('link', { name })).toHaveLength(1);
-    }
+    expect(screen.getByRole('button', { name: 'Product' })).toBeTruthy();
+    for (const [name, href] of [
+      ['Workflows', '/#workflows'],
+      ['Docs', '/docs'],
+      ['Security', '/trust'],
+    ])
+      expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href);
   });
 });

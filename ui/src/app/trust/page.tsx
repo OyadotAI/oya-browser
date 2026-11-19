@@ -184,9 +184,9 @@ function Contact() {
 export default function TrustCenter() {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={trust.main}>
+        <main id="top" tabIndex={-1} className={trust.main}>
           <Reveal preset="public">
             <h1>Trust center</h1>
             <p className={trust.lead}>
@@ -200,8 +200,8 @@ export default function TrustCenter() {
           <Subprocessors />
           <Contact />
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }
