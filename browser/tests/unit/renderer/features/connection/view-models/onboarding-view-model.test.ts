@@ -103,3 +103,18 @@ it('reconnecting a paired browser uses main-owned settings without replacing its
   assert.equal(app.setup.onboarding.state.page, 'connected');
   app.setup.dispose();
 });
+it('an AI app button opens the app list with that app selected', () => {
+  const app = build();
+  app.setup.onboarding.openDetail('agents', 'codex');
+  assert.equal(app.setup.onboarding.state.page, 'technical');
+  assert.equal(app.setup.onboarding.technical.state.view, 'agents');
+  assert.equal(app.setup.onboarding.technical.agents.state.selected, 'codex');
+  app.setup.dispose();
+});
+it('the AI key row opens the key form with no app selected', () => {
+  const app = build();
+  app.setup.onboarding.openDetail('model');
+  assert.equal(app.setup.onboarding.technical.state.view, 'model');
+  assert.equal(app.setup.onboarding.technical.agents.state.selected, '');
+  app.setup.dispose();
+});
