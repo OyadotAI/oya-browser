@@ -1,7 +1,7 @@
 /** Visual repair branches and document sheets make the story legible before a reader opens technical depth. */
 .story {
   padding-block: 24px 48px;
-  background: var(--ivory);
+  background: var(--paper, var(--ivory));
 }
 .row {
   display: grid;

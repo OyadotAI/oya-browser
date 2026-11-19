@@ -1,25 +1,36 @@
-/** Public pages share an editorial ivory canvas, forest navigation and a generous reading hierarchy. */
+/** Public pages share the home page's look: flat charcoal, one lime accent, tall condensed headlines, square edges. */
 .page {
-  --background: #f6f4e8;
-  --foreground: #10251c;
-  --primary: #235d3a;
-  --primary-foreground: #f6f4e8;
-  --card: #fffdf4;
-  --elevated: #e9eddd;
-  --sunken: #eff1e5;
-  --border: #143f2530;
-  --secondary: #3a4e40;
-  --muted: #526457;
-  --dim: #647565;
-  --info: #1d4ed8;
-  --warning: #92400e;
-  --destructive: #b91c1c;
+  --background: #1a1a1a;
+  --foreground: #edeae4;
+  --primary: #cdf01e;
+  --primary-foreground: #141414;
+  --card: #222222;
+  --elevated: #2a2a2a;
+  --sunken: #1f1f1f;
+  --border: #ffffff1f;
+  --secondary: #cfccc6;
+  --muted: #a3a19b;
+  --dim: #8f8d88;
+  --info: #8ab4ff;
+  --warning: #f5b556;
+  --destructive: #ff8a7a;
   min-height: 100dvh;
   background: var(--background);
   color: var(--foreground);
-  color-scheme: light;
+  color-scheme: dark;
   font-family: var(--font-dm-sans), sans-serif;
   overflow-x: clip;
+}
+/* ponytail: one rule squares every corner, as on the home page; scope it per component if a round shape is wanted. */
+.page * {
+  border-radius: 0 !important;
+}
+.page main :is(h1, h2) {
+  font-family: var(--font-anton), Impact, 'Arial Narrow', sans-serif;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  text-transform: uppercase;
 }
 .container {
   width: min(1200px, calc(100% - 32px));
@@ -30,8 +41,8 @@
   outline-offset: 4px;
 }
 .page ::selection {
-  background: #c8f56b;
-  color: #081b15;
+  background: #cdf01e;
+  color: #141414;
 }
 .page main :is(h1, h2, h3) {
   text-wrap: balance;

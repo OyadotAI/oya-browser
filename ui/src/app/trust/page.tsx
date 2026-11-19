@@ -6,7 +6,7 @@
  */
 import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
 import styles from '../page.module.css';
 import trust from './trust.module.css';
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 };
 
 /** The generated evidence; the site is built from ui/, one folder down from compliance/. */
-const EVIDENCE = path.join(process.cwd(), '..', 'compliance', 'evidence.json');
+const EVIDENCE = repoFile('compliance', 'evidence.json');
 
 /** One HIPAA control as the evidence pack reports it. */
 interface Control {

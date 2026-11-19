@@ -8,34 +8,34 @@
    legibility in dense tables; the brand surfaces and primary are identical. */
 :root {
   color-scheme: dark;
-  --background: #081b15;
-  --foreground: #f6f4e8;
-  --primary: #c8f56b;
-  --primary-foreground: #081b15;
-  --card: #103025;
-  --elevated: #173c2f;
-  --sunken: #06150f;
-  --border: #b9d4b82e;
-  --secondary: #d0dacb;
-  --muted: #afc3b5;
-  --dim: #98af9f;
-  --info: #6cb4ff;
-  --warning: #f5a623;
-  --destructive: #ff6b6b;
+  --background: #1a1a1a;
+  --foreground: #edeae4;
+  --primary: #cdf01e;
+  --primary-foreground: #141414;
+  --card: #222222;
+  --elevated: #2a2a2a;
+  --sunken: #141414;
+  --border: #ffffff24;
+  --secondary: #cfccc6;
+  --muted: #a3a19b;
+  --dim: #8f8d88;
+  --info: #8ab4ff;
+  --warning: #f5b556;
+  --destructive: #ff8a7a;
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  --background: #f6f4e8;
-  --foreground: #10251c;
-  --primary: #235d3a;
-  --primary-foreground: #f6f4e8;
-  --card: #fffdf4;
-  --elevated: #e9eddd;
-  --sunken: #eff1e5;
-  --border: #143f2530;
-  --secondary: #3a4e40;
-  --muted: #526457;
-  --dim: #647565;
+  --background: #edeae4;
+  --foreground: #1a1a1a;
+  --primary: #3f4a00;
+  --primary-foreground: #f7f5f0;
+  --card: #f7f5f0;
+  --elevated: #e1ded7;
+  --sunken: #e6e3dc;
+  --border: #1a1a1a2e;
+  --secondary: #3a3a37;
+  --muted: #5a5955;
+  --dim: #686762;
   --info: #1d4ed8;
   --warning: #92400e;
   --destructive: #b91c1c;
@@ -64,15 +64,24 @@
   --color-yellow: var(--warning);
 
   --font-sans: var(--font-dm-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-display: var(--font-archivo), Impact, 'Arial Black', sans-serif;
+  --font-display: var(--font-anton), Impact, 'Arial Narrow', sans-serif;
   --font-mono: 'Cascadia Code', ui-monospace, 'Source Code Pro', Menlo, Monaco, Consolas, monospace;
 
-  --radius-sm: 3px;
-  --radius-md: 8px;
-  --radius-lg: 8px;
-  --radius-xl: 16px;
-  --shadow-card: 0 2px 8px #04100c12;
-  --shadow-elevated: 0 20px 64px -24px #04100c60;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --shadow-card: 0 2px 8px #00000012;
+  --shadow-elevated: 0 20px 64px -24px #00000060;
+}
+
+/* The display face is a tall condensed one drawn at a single weight, set in capitals wherever it is used. */
+.font-display {
+  font-weight: 400 !important;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
 }
 
 html {
@@ -154,7 +163,7 @@ textarea {
    Buttons, table rows and inputs read the same everywhere. Numbers are
    tabular so a refreshing column does not jitter. */
 @utility btn-base {
-  @apply inline-flex h-9 items-center justify-center gap-2 rounded-full px-4 text-[13px] font-medium whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  @apply inline-flex h-9 items-center justify-center gap-2 rounded-none px-4 text-[13px] font-medium whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
 }
 @utility btn-primary {
   @apply btn-base bg-accent text-accent-foreground hover:bg-accent-hover;
@@ -450,7 +459,6 @@ textarea {
 .product-preview {
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 12px;
   background: var(--card);
   box-shadow: 0 20px 70px -45px #000;
 }

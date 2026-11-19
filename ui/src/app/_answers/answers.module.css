@@ -34,13 +34,13 @@
 }
 .hero {
   --foreground: #f6f4e8;
-  --primary: #c8f56b;
-  --muted: #bacbbf;
+  --primary: #cdf01e;
+  --muted: #a3a19b;
   display: grid;
   gap: 32px;
   padding: 28px 20px;
   border-radius: 24px;
-  background: #081b15;
+  background: #141414;
   color: #f6f4e8;
 }
 .hero > * {
@@ -49,7 +49,7 @@
 .eyebrow {
   display: block;
   margin-bottom: 20px;
-  color: #c8f56b;
+  color: #cdf01e;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.6;
@@ -69,7 +69,7 @@
   max-width: 58ch;
   font-size: 16px;
   line-height: 1.75;
-  color: #bacbbf;
+  color: #a3a19b;
 }
 .lead p:first-child {
   color: #f6f4e8;
@@ -84,13 +84,13 @@
   margin-top: 28px;
   padding: 10px 18px;
   border-radius: 999px;
-  background: #c8f56b;
-  color: #081b15;
+  background: #cdf01e;
+  color: #141414;
   font-size: 14px;
   font-weight: 500;
 }
 .hero :focus-visible {
-  outline-color: #c8f56b;
+  outline-color: #cdf01e;
 }
 .section {
   display: grid;

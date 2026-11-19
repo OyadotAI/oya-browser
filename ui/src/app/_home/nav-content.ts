@@ -2,6 +2,7 @@
 /** The main navigation words and their destinations. */
 export const WORDS = [
   { word: 'Workflows', href: '/#workflows' },
+  { word: 'Pricing', href: '/#pricing' },
   { word: 'Docs', href: '/docs' },
   { word: 'Security', href: '/trust' },
 ];

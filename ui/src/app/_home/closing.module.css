@@ -37,7 +37,7 @@
   max-width: 820px;
 }
 .footer :global(.closing__cta h2) {
-  font-family: var(--font-archivo), var(--font-text), sans-serif;
+  font-family: var(--font-anton), var(--font-text), sans-serif;
   font-size: clamp(44px, 5.8vw, 80px);
   font-weight: 400;
   line-height: 1.06;

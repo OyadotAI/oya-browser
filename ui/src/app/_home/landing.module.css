@@ -208,7 +208,7 @@
   margin-top: -20px;
   padding-block: var(--space-section);
   border-radius: 32px 32px 0 0;
-  background: var(--ivory);
+  background: var(--paper, var(--ivory));
 }
 .operations {
   border-block: 1px solid var(--line);
@@ -226,9 +226,6 @@
 .operations > section + section > :global(.wrap) {
   padding-top: 48px;
   border-top: 1px solid var(--line);
-}
-.trustSection :global(#faq) {
-  padding-top: 0;
 }
 .page :global(.comparison-layout) {
   display: grid;
