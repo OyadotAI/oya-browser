@@ -72,9 +72,9 @@ function Body({ post }: { /** The post. */ post: ResearchPost }) {
 export function PostPage({ post }: { /** What the page shows. */ post: ResearchPost }) {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={notes.main}>
+        <main id="top" tabIndex={-1} className={notes.main}>
           <Reveal preset="public">
             <h1>{post.title}</h1>
             <p className={notes.lead}>
@@ -83,8 +83,8 @@ export function PostPage({ post }: { /** What the page shows. */ post: ResearchP
           </Reveal>
           <Body post={post} />
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

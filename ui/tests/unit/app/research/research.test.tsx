@@ -1,7 +1,7 @@
 /**
  * Unit tests for /research, its posts and the /vs index: every number on a post appears in the
  * document it is copied from, the tables are readable by a screen reader, each page is in the
- * sitemap, and Compare and Research remain reachable through the site navigation and home footer.
+ * sitemap, and Compare and Research remain reachable through the site and home footers.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -13,7 +13,6 @@ import StealthResearch, { metadata as stealthMetadata } from '@/app/research/ste
 import Compare from '@/app/vs/page';
 import { RESEARCH_POSTS, REPLAY_POST, STEALTH_POST } from '@/app/research/posts';
 import { ANSWER_PAGES } from '@/app/_answers/content';
-import { SiteHeader } from '@/app/_home/site-header';
 import { SiteFooter } from '@/app/_home/site-footer';
 import { Closing } from '@/app/_home/closing';
 import { SITE_URL } from '@/lib/site';
@@ -99,7 +98,6 @@ describe('/vs', () => {
 
 describe('navigation', () => {
   it.each([
-    ['the site header', () => render(<SiteHeader />)],
     ['the site footer', () => render(<SiteFooter />)],
     ['the home footer', () => render(<Closing />)],
   ])('links Compare and Research from %s', (_, show) => {

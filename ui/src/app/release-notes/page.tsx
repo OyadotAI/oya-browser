@@ -77,9 +77,9 @@ export default function ReleaseNotes() {
   const releases = parseChangelog(readFileSync(CHANGELOG, 'utf8'));
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={notes.main}>
+        <main id="top" tabIndex={-1} className={notes.main}>
           <Reveal preset="public">
             <h1>Release notes</h1>
             <p className={notes.lead}>
@@ -90,8 +90,8 @@ export default function ReleaseNotes() {
             <ReleaseEntry key={release.title} release={release} />
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

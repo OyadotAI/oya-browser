@@ -1,7 +1,7 @@
 /** Existing navigation destinations, kept separate from disclosure state and presentation. */
 /** The main navigation words and their destinations. */
 export const WORDS = [
-  { word: 'Workflows', href: '#workflows' },
+  { word: 'Workflows', href: '/#workflows' },
   { word: 'Docs', href: '/docs' },
   { word: 'Security', href: '/trust' },
 ];
@@ -19,10 +19,10 @@ export const PRODUCT = [
   {
     group: 'Playbooks',
     links: [
-      ['Record once', 'A run saved as Playwright code', '#playbooks'],
-      ['Three steps', 'Run, save, replay', '#steps'],
-      ['Control plane', 'Operate, govern and observe workflows', '#control-plane'],
-      ['Audit trail', 'Every action hash-chained', '#audit'],
+      ['Record once', 'A run saved as Playwright code', '/#playbooks'],
+      ['Three steps', 'Run, save, replay', '/#steps'],
+      ['Control plane', 'Operate, govern and observe workflows', '/#control-plane'],
+      ['Audit trail', 'Every action hash-chained', '/#audit'],
     ],
   },
   {

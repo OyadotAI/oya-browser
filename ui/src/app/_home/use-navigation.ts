@@ -19,7 +19,7 @@ function useLayoutReset(close: () => void) {
 /** A revealed mobile menu starts its keyboard journey at the first destination. */
 function useMenuFocus(open: boolean) {
   useEffect(() => {
-    if (open) document.getElementById('main-links')?.querySelector<HTMLAnchorElement>('a')?.focus();
+    if (open) document.getElementById('main-links')?.querySelector<HTMLElement>('a, button')?.focus();
   }, [open]);
 }
 

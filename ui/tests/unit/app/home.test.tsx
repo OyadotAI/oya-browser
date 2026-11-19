@@ -349,31 +349,29 @@ describe('landing page', () => {
     const downloads = within(screen.getByRole('navigation', { name: 'Browser downloads' }));
     for (const { platform, href } of browserDownloads)
       expect(downloads.getByRole('link', { name: new RegExp(platform) }).getAttribute('href')).toBe(href);
+    // Version-pinned file names went stale and 404ed; only the server's version-free routes stay current.
+    expect(browserDownloads.map(({ href }) => href)).toEqual(['/download/mac', '/download/windows']);
   });
 
   it('keeps the main navigation focused and secondary destinations reachable in the footer and Product menu', async () => {
     await page();
     const main = within(screen.getByRole('navigation', { name: 'Main' }));
-    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual([
-      'Product',
-      'Workflows',
-      'Docs',
-      'Security',
-    ]);
-    fireEvent.click(screen.getByRole('button', { name: 'Show Product links' }));
-    expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('#control-plane');
+    expect(main.getAllByRole('link').map((link) => link.textContent)).toEqual(['Workflows', 'Docs', 'Security']);
+    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
+    expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('/#control-plane');
+    expect(main.getByRole('button', { name: 'Product' }).getAttribute('aria-expanded')).toBe('true');
     const footer = within(screen.getByRole('contentinfo'));
     for (const [name, href] of [
       ['Compare', '/vs'],
       ['Research', '/research'],
-      ['Questions', '#faq'],
+      ['Questions', '/#faq'],
     ])
       expect(footer.getByRole('link', { name }).getAttribute('href')).toBe(href);
   });
 
   it('opens Product destinations and restores trigger focus on Escape', async () => {
     await page();
-    const toggle = screen.getByRole('button', { name: 'Show Product links' });
+    const toggle = screen.getByRole('button', { name: 'Product' });
     toggle.focus();
     fireEvent.click(toggle);
     const security = screen.getByRole('link', { name: 'Security HIPAA, BAAs, the audit' });
@@ -388,18 +386,18 @@ describe('landing page', () => {
     await page();
     const menu = screen.getByRole('button', { name: 'Menu' });
     fireEvent.click(menu);
-    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Product' });
+    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('button', { name: 'Product' });
     fireEvent.blur(product, { relatedTarget: null });
     expect(menu.getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(screen.getByRole('button', { name: 'Show Product links' }));
-    expect(screen.getByRole('button', { name: 'Show Product links' }).getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
+    expect(screen.getByRole('button', { name: 'Product' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('closes navigation when focus moves outside the header', async () => {
     await page();
     const menu = screen.getByRole('button', { name: 'Menu' });
     fireEvent.click(menu);
-    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Product' });
+    const product = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('button', { name: 'Product' });
     fireEvent.blur(product, { relatedTarget: document.body });
     expect(menu.getAttribute('aria-expanded')).toBe('false');
   });
@@ -411,8 +409,7 @@ describe('landing page', () => {
     menu.focus();
     await user.keyboard('{Enter}');
     const navigation = within(screen.getByRole('navigation', { name: 'Main' }));
-    expect(document.activeElement).toBe(navigation.getByRole('link', { name: 'Product' }));
-    await user.tab();
+    expect(document.activeElement).toBe(navigation.getByRole('button', { name: 'Product' }));
     await user.tab();
     expect(document.activeElement).toBe(navigation.getByRole('link', { name: 'Workflows' }));
     await user.keyboard('{Escape}');

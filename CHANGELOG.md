@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- The website's macOS and Windows download buttons download again. They had pointed at a 1.0.83 file that no longer exists; they now always fetch the newest installer.
+- The whole Product row in the phone menu opens the product links, not only the small arrow.
+
+### Changed
+
+- The download buttons in the site footer are now filled buttons with a download icon.
+- Every public page now uses the home page's header and footer, so the menu and footer links are the same everywhere.
+
 ## [1.0.254](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.254) · 2026-11-19
 
 ### Fixed

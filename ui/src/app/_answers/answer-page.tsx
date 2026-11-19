@@ -111,9 +111,9 @@ function Questions({ faq }: { /** The questions and answers. */ faq: QA[] }) {
 export function AnswerPage({ content }: { /** What the page says. */ content: AnswerPageContent }) {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={`${trust.main} ${answers.answerMain}`}>
+        <main id="top" tabIndex={-1} className={`${trust.main} ${answers.answerMain}`}>
           <AnswerHero content={content} />
           {content.sections.map((section) => (
             <AnswerSection key={section.heading} section={section} path={content.path}>
@@ -125,8 +125,8 @@ export function AnswerPage({ content }: { /** What the page says. */ content: An
           <Questions faq={content.faq} />
         </main>
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(faqJsonLd(content.faq)) }} />
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

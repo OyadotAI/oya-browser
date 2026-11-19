@@ -1,0 +1,6 @@
+/** Lets the landing header and footer render on any public page without a box of their own. */
+.chrome {
+  --font-text: var(--font-dm-sans), sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  display: contents;
+}

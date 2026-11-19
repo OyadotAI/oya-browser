@@ -38,7 +38,7 @@ describe('trust center', () => {
 
   it('is linked from the site footer', () => {
     render(<TrustCenter />);
-    const footer = screen.getByRole('navigation', { name: 'Footer navigation' });
-    expect(within(footer).getByRole('link', { name: 'Trust' }).getAttribute('href')).toBe('/trust');
+    const footer = screen.getByRole('contentinfo', { name: 'Site footer' });
+    expect(within(footer).getByRole('link', { name: 'Security' }).getAttribute('href')).toBe('/trust');
   });
 });
