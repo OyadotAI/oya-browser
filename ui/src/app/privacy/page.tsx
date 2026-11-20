@@ -12,7 +12,8 @@ import { COMPANY, EFFECTIVE_DATE, LEGAL_EMAIL, RECORDING_DAYS } from '../_legal/
 /** The page's title and description for search and link previews. */
 export const metadata: Metadata = {
   title: 'Privacy Policy',
-  description: 'What Oya Browser and Oya Cloud collect, why, who processes it, and how to have it deleted.',
+  description:
+    'What Oya Browser and Oya Cloud collect, who receives it, how synced sessions stay encrypted, how long data is kept, and how to delete your account and data.',
   alternates: { canonical: '/privacy', types: SITE_ALTERNATE_TYPES },
 };
 

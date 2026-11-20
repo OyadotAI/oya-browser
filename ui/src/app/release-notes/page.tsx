@@ -19,7 +19,8 @@ export const dynamic = 'force-static';
 /** The page's title and description for search and link previews. */
 export const metadata: Metadata = {
   title: 'Release notes',
-  description: 'What changed in each Oya Browser release: the server, the desktop app, the SDK and the CLI.',
+  description:
+    'Track what changed in every Oya Browser release. The server, desktop app, SDK and CLI ship together under one version, with new features, fixes and updates.',
   alternates: { canonical: '/release-notes', types: SITE_ALTERNATE_TYPES },
 };
 

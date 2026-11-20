@@ -151,4 +151,11 @@
   .footer :global(.closing__mark) {
     right: -300px;
   }
+  .footer :global(.footer__legal) {
+    gap: 16px;
+    margin-top: 40px;
+  }
+  .footer :global(.footer__legal nav) {
+    gap: 0 16px;
+  }
 }

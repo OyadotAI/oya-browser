@@ -69,9 +69,15 @@ describe('discoveryRouter', () => {
       'https://oyabrowser.com/openapi.json',
       'https://oyabrowser.com/.well-known/agent.json',
       'https://oyabrowser.com/feed.xml',
+      'https://oyabrowser.com/vs/playwright-mcp',
+      'https://oyabrowser.com/vs/chrome-devtools-mcp',
+      'https://oyabrowser.com/vs/firecrawl',
+      'https://oyabrowser.com/vs/stagehand',
+      'https://oyabrowser.com/vs/skyvern',
     ]) {
       assert.ok(llms.includes(required), `llms.txt omits ${required}`);
     }
+    assert.ok(!llms.includes('—'), 'llms.txt must not contain em-dashes');
   });
 
   it('serves openapi.json, agent.json and agent-card.json with public caching', async () => {
@@ -105,7 +111,8 @@ describe('agent discovery manifests', () => {
     const plugin = JSON.parse(readFileSync(join(ROOT, 'plugins/oya-browser/.claude-plugin/plugin.json'), 'utf8'));
     assert.equal(plugin.mcpServers.oya.url, 'https://oyabrowser.com/mcp/pool');
     assert.match(plugin.description, /desktop app/i);
-    assert.match(plugin.description, /OYA_API_KEY/);
+    assert.equal(plugin.mcpServers.oya.headers, undefined, 'the directory refuses a key read from the user machine');
+    assert.match(plugin.privacyPolicyUrl, /^https:\/\/oyabrowser\.com\/privacy$/);
     for (const kw of ['playwright', 'playbooks', 'coding-agent', 'claude-code', 'hipaa']) {
       assert.ok(plugin.keywords.includes(kw), `plugin.json keywords omits ${kw}`);
     }

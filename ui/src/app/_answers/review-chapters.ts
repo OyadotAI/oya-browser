@@ -1,5 +1,12 @@
 /** Security and comparison stories turn a reader's task into a review of scope, evidence and fit. */
+import type { QA } from '@/lib/site';
 import type { AnswerSection } from './content';
+
+/** Shared FAQ answer on self-hosting the enterprise and community editions. */
+export const SELF_HOST_FAQ: QA = {
+  q: 'Can I self-host a HIPAA-compliant agentic browser?',
+  a: 'Yes, with the enterprise edition: it runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Write to sales@getoya.ai. The source-available community edition self-hosts too, without the HIPAA offering. Every playbook exports as Playwright code you keep.',
+};
 /** The covered edition is established before the reader sees operating controls. */
 export const REGULATED_OPENING: AnswerSection[] = [
   {

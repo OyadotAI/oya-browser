@@ -13,7 +13,8 @@ import { COMPANY, EFFECTIVE_DATE, GOVERNING_LAW, LEGAL_EMAIL } from '../_legal/c
 /** The page's title and description for search and link previews. */
 export const metadata: Metadata = {
   title: 'Terms of Service',
-  description: 'The terms for using Oya Browser and Oya Cloud.',
+  description:
+    'Terms of Service for Oya Browser, Oya Cloud, the SDK, CLI and APIs: acceptable agent use, data ownership, AI output, billing, self-hosting and liability.',
   alternates: { canonical: '/terms', types: SITE_ALTERNATE_TYPES },
 };
 
