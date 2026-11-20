@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.269](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.269) · 2026-11-20
+
 ### Added
 
 - Added five sourced comparison pages (`/vs/playwright-mcp`, `/vs/chrome-devtools-mcp`, `/vs/firecrawl`, `/vs/stagehand`, `/vs/skyvern`) linked from `/vs`, site footers, `/sitemap.xml` and `/llms.txt`, with an upgraded comparison table provenance bar, highlighted Oya column, differentiated "Not stated" pills and side-by-side fit summary cards.
