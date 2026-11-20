@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.272](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.272) · 2026-11-20
+
 ### Added
 
 - Emitted full semantic HTML inside `<content:encoded>` (`xmlns:content`) on `/feed.xml` for `/research/*` posts so RSS readers and syndication importers receive full research tables and methodology instead of one-sentence summaries.
