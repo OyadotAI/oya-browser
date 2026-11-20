@@ -41,7 +41,6 @@ process.on('unhandledRejection', (reason: any) => {
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import { join } from 'path';
 import cors from 'cors';
 import { router as apiRouter } from './app/api.ts';
 import { slackActionsRouter } from './modules/slack/service.ts';
@@ -72,6 +71,7 @@ import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
 import { downloadRoutes } from './modules/downloads/index.ts';
 import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
+import { discoveryRouter } from './app/discovery.ts';
 import { apiKeyHeader, upgradeUrl } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
 import { CORS_ORIGIN, HEADERS_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from './app/constants.ts';
@@ -156,19 +156,7 @@ app.use((req, res, next) => {
 const publicDir = PUBLIC_DIR;
 
 // ── Discovery & docs (root level) ──
-app.use('/.well-known', express.static(join(publicDir, '.well-known')));
-// The A2A spec renamed agent.json to agent-card.json; agents look for either.
-app.get('/.well-known/agent-card.json', (req, res) =>
-  res.sendFile(join(publicDir, '.well-known', 'agent.json'), { dotfiles: 'allow' }),
-);
-// One file, several names. Crawlers look for different ones and a second copy
-// would only drift from this. /llm.txt is the singular people and some tools try.
-// /llms-full.txt is not one of them: the UI serves it as the whole docs site in
-// Markdown, next to /docs.md and /docs/<slug>.md (and /llm-full.txt).
-for (const path of ['/llms.txt', '/llm.txt', '/docs.txt']) {
-  app.get(path, (req, res) => res.type('text/plain').sendFile(join(publicDir, 'llms.txt')));
-}
-app.get('/openapi.json', (req, res) => res.type('application/json').sendFile(join(publicDir, 'openapi.json')));
+app.use(discoveryRouter(publicDir));
 
 // ── REST API under /api ──
 // CDP discovery. Playwright, Puppeteer, Stagehand and browser-use fetch these

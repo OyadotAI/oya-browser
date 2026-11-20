@@ -114,7 +114,7 @@ describe.each(PAGES)('/docs/$slug', ({ slug, Page, metadata, anchor }) => {
   });
 
   it('names its Markdown twin as its alternate', () => {
-    expect(metadata.alternates?.types).toEqual({ 'text/markdown': `/docs/${slug}.md` });
+    expect(metadata.alternates?.types).toMatchObject({ 'text/markdown': `/docs/${slug}.md` });
   });
 });
 

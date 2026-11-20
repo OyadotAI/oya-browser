@@ -49,6 +49,11 @@
 .links a:hover {
   color: var(--primary);
 }
+.links > a[aria-current='page'] {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 6px;
+}
 .product {
   display: flex;
   align-items: center;

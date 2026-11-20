@@ -1,7 +1,7 @@
 /**
  * Unit tests for the docs' parts: each is a section of the page, and each
- * Markdown twin is listed where agents and crawlers look, llms.txt and the
- * sitemap.
+ * Markdown twin is discoverable through llms.txt while the sitemap lists its
+ * canonical HTML destination.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -30,10 +30,10 @@ describe('DOC_PAGES', () => {
     for (const { slug } of DOC_PAGES) expect(LLMS).toContain(`https://oyabrowser.com/docs/${slug}.md`);
   });
 
-  it('lists every Markdown twin and llms-full.txt in the sitemap', () => {
+  it('leaves Markdown twins and llms-full.txt out of the sitemap because they canonicalize to HTML', () => {
     const urls = sitemap().map((entry) => entry.url);
     for (const path of ['/docs.md', '/llms-full.txt', ...DOC_PAGES.map(({ slug }) => `/docs/${slug}.md`)])
-      expect(urls).toContain(`https://oyabrowser.com${path}`);
+      expect(urls).not.toContain(`https://oyabrowser.com${path}`);
   });
 
   it('finds a part by slug, and nothing for an unknown one', () => {

@@ -9,6 +9,18 @@ afterEach(() => {
 });
 
 describe('public header', () => {
+  it('discovers coding-agent setup through Product and restores focus when the menu closes', () => {
+    render(<SiteHeader />);
+    const product = screen.getByRole('button', { name: 'Product' });
+    fireEvent.click(product);
+    const link = screen.getByRole('link', { name: 'For coding agents Connect Claude Code, Codex or Cursor' });
+    expect(link.getAttribute('href')).toBe('/browser-for-claude-code');
+    link.focus();
+    fireEvent.keyDown(link, { key: 'Escape' });
+    expect(product.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(product);
+  });
+
   it('focuses the first destination on open and restores the trigger on Escape', () => {
     render(<SiteHeader />);
     const menu = screen.getByRole('button', { name: 'Menu' });

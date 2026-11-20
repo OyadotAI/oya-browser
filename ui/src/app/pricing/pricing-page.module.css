@@ -1,0 +1,87 @@
+/** Dedicated /pricing page typography, breadcrumb and always-visible FAQ layout on top of landing tokens. */
+.pricingRoot {
+  --font-text: var(--font-dm-sans), sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  overflow-x: clip;
+}
+.hero {
+  padding-block: 64px var(--space-section);
+}
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.breadcrumb a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-underline-offset: 4px;
+}
+.breadcrumb a:hover {
+  color: var(--primary);
+  text-decoration-color: currentColor;
+}
+.title {
+  font-size: clamp(36px, 5vw, 64px);
+  font-weight: 500;
+  line-height: 1.08;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+.lead {
+  max-width: 640px;
+  margin-top: 20px !important;
+  color: var(--muted);
+  font-size: 19px;
+  line-height: 1.6;
+}
+.faq {
+  border-top: 1px solid var(--line);
+}
+.faqHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px 32px;
+  margin-bottom: var(--space-grid);
+}
+.faqList {
+  border-top: 1px solid var(--line-strong);
+}
+.faqRow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 48px;
+  padding-block: 28px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.faqRow h3 {
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+}
+.faqRow p {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.75;
+}
+@media (max-width: 767px) {
+  .hero {
+    padding-top: 40px;
+  }
+  .faqRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding-block: 24px;
+  }
+}

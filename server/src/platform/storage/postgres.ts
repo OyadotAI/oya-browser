@@ -11,6 +11,8 @@ import {
   DEFAULT_POOL_MAX,
   PG_CONNECT_TIMEOUT_MS,
   PG_IDLE_TIMEOUT_MS,
+  PG_KEEPALIVE_DELAY_MS,
+  pgQueryTimeoutMs,
 } from '../constants.ts';
 import { rowFromStored, TABLES } from './schema.ts';
 import { whereSql, tailSql, conflictSql, setSql, type Bind } from './sql.ts';
@@ -39,7 +41,7 @@ async function getPool(connectionString: string) {
   return pool;
 }
 
-/** Pool settings: size from DATABASE_POOL_MAX, and bounded connect and idle times. */
+/** Pool settings: size from DATABASE_POOL_MAX, and bounded connect, idle and query times. */
 function poolOptions(connectionString: string) {
   return {
     connectionString: pgConnectionString(connectionString),
@@ -47,8 +49,22 @@ function poolOptions(connectionString: string) {
     // Storage is on the request path; a hung connect must not hang a request.
     connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
     idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
+    ...liveness(),
   };
 }
+
+/**
+ * How a connection that stopped answering is let go. A statement whose answer
+ * never comes fails and the pool drops that connection; keepalive probes idle
+ * sockets as a backstop for a peer that vanished outright. Without these, lost answers (a
+ * database restart behind Supabase's proxy) held every slot and storage stayed
+ * down until the server was restarted.
+ */
+const liveness = () => ({
+  query_timeout: pgQueryTimeoutMs(),
+  keepAlive: true,
+  keepAliveInitialDelayMillis: PG_KEEPALIVE_DELAY_MS,
+});
 
 /**
  * The connection string with sslmode read as libpq reads it, the way psql and

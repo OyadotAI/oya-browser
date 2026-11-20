@@ -951,7 +951,7 @@ export const REGISTRIES: AnswerPageContent = {
  */
 export const CODING_AGENT_BROWSER: AnswerPageContent = {
   path: '/browser-for-claude-code',
-  label: 'For Claude Code',
+  label: 'For coding agents',
   title: 'The browser for Claude Code, Codex and Cursor',
   lead: 'Give your coding agent a real browser of its own: Oya Browser is a free AI browser for macOS and Windows that Claude Code, Codex, Cursor and VS Code connect to with one click. Each agent session gets its own tab, you keep yours, and you can take the tab back at any time. A task the agent finishes is saved as a playbook that replays with no model.',
   hero: {
@@ -965,15 +965,19 @@ export const CODING_AGENT_BROWSER: AnswerPageContent = {
     {
       ...DESKTOP_START,
       heading: 'Connect the agent you already use.',
-      body: 'Use Oya’s Connect action to connect your coding agent. Its browser work gets a separate tab that you can watch and take over.',
-      items: ['Click Connect next to your installed coding agent in Oya.'],
+      body: 'Download and open Oya Browser. Complete the welcome screen, click Connect next to your installed agent in the window footer, then start a new agent session. Oya writes the local MCP configuration for you. No Oya account or API key is required.',
+      items: [
+        'Keep Oya open for repeat use; your agent uses its existing oya-browser tools.',
+        'If tools are missing, open Oya and check Connect, then start a new agent session. If Oya says “Browser not ready”, complete its welcome screen and retry.',
+        'You confirm the connection and any OS permission for optional login import. If you skip import, sign in within Oya.',
+      ],
     },
     ...DESKTOP_CHAPTERS,
   ],
   faq: [
     {
       q: 'How do I give Claude Code a browser?',
-      a: 'Install the Oya desktop app, open it and click Connect next to Claude Code in the window footer. That adds an MCP server named oya-browser; no account, no key.',
+      a: 'Install and open the Oya desktop app, complete its welcome screen and click Connect next to Claude Code in the window footer. Then start a new agent session. Oya adds the local MCP server named oya-browser; no Oya account or API key is required.',
     },
     {
       q: 'Does it work with Codex and Cursor too?',

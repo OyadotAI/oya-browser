@@ -43,11 +43,6 @@ const nextConfig: NextConfig = {
       { source: "/install-desktop.:shell(sh|ps1)", headers: INSTALL_SCRIPT_HEADERS },
     ];
   },
-  // Direct pricing visits land on the visible homepage plans. Keep this
-  // temporary so a separate pricing page can take the path later.
-  async redirects() {
-    return [{ source: "/pricing", destination: "/#pricing", permanent: false }];
-  },
 };
 
 export default nextConfig;

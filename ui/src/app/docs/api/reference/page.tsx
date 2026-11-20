@@ -5,6 +5,7 @@
  * and export its own metadata.
  */
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { ArrowLeft } from 'lucide-react';
@@ -16,7 +17,7 @@ import { REFERENCE_TEXT, specUrl } from './constants';
 export const metadata: Metadata = {
   title: REFERENCE_TEXT.title,
   description: REFERENCE_TEXT.description,
-  alternates: { canonical: '/docs/api/reference', types: { 'application/json': '/openapi.json' } },
+  alternates: { canonical: '/docs/api/reference', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The heading and the line on how to call the API, with the raw spec's link for readers without JavaScript. */

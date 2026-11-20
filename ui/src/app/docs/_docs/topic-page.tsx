@@ -8,6 +8,7 @@
  */
 import type { PropsWithChildren } from 'react';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { answerMetadata } from '../../_answers/answer-page';
@@ -38,7 +39,7 @@ export function topicMetadata(slug: string): Metadata {
   const path = `/docs/${slug}`;
   return {
     ...answerMetadata({ title: topic.heading, lead: topic.description, path }),
-    alternates: { canonical: path, types: { 'text/markdown': `${path}.md` } },
+    alternates: { canonical: path, types: { ...SITE_ALTERNATE_TYPES, 'text/markdown': `${path}.md` } },
   };
 }
 

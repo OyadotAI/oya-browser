@@ -28,7 +28,7 @@ const COLUMNS: [string, [string, string][]][] = [
     'Start',
     [
       ['Console', '/dashboard'],
-      ['Pricing', '/#pricing'],
+      ['Pricing', '/pricing'],
       ['Docs', '/docs'],
       ['Compare', '/vs'],
       ['Book a demo', foundersCall],

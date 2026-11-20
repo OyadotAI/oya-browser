@@ -1,6 +1,7 @@
 /** /research: the index of what we measured, each post with its run date and one-line result. */
 import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import Link from 'next/link';
 import styles from '../page.module.css';
 import notes from '../release-notes/release-notes.module.css';
@@ -13,7 +14,7 @@ import { RESEARCH_POSTS } from './posts';
 export const metadata: Metadata = {
   title: 'Research',
   description: 'What we measured about Oya Browser, how, and the raw numbers.',
-  alternates: { canonical: '/research' },
+  alternates: { canonical: '/research', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The research index. */

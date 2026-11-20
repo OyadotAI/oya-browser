@@ -1,5 +1,6 @@
 /** Public plan details restate the existing FAQ and billing allowances without changing billing. */
-import { foundersCall } from './content';
+import { FAQ, foundersCall } from './content';
+import type { QA } from '@/lib/site';
 
 /** One visible plan gives visitors a price, allowance and honest next step. */
 export interface PublicPlan {
@@ -66,3 +67,16 @@ export const PUBLIC_PLANS: PublicPlan[] = [
 
 /** Shared usage charges apply only to paid plans after their included allowances. */
 export const PAID_USAGE_NOTE = 'Paid-plan usage beyond these allowances: $8/GB of proxy and $0.002/agent step.';
+
+/** Pricing and compliance questions shown on /pricing, in buyer order, reused verbatim from the home FAQ. */
+const PRICING_FAQ_ORDER = [
+  'How much does it cost?',
+  'Can we host it ourselves?',
+  'Do you sign a BAA?',
+  'Can it touch PHI?',
+];
+
+/** The pricing page's always-visible FAQ items, derived from the landing FAQ so the two pages never drift. */
+export const PRICING_FAQ: QA[] = PRICING_FAQ_ORDER.map((question) => FAQ.find(({ q }) => q === question)).filter(
+  (item): item is QA => item !== undefined,
+);

@@ -6,6 +6,7 @@ import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
 import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import styles from '../page.module.css';
 import notes from './release-notes.module.css';
 import { SiteHeader } from '../_home/site-header';
@@ -19,7 +20,7 @@ export const dynamic = 'force-static';
 export const metadata: Metadata = {
   title: 'Release notes',
   description: 'What changed in each Oya Browser release: the server, the desktop app, the SDK and the CLI.',
-  alternates: { canonical: '/release-notes' },
+  alternates: { canonical: '/release-notes', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The changelog at the repository root; the site is built from ui/, one folder down. */

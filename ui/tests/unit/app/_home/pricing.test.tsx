@@ -71,10 +71,7 @@ it('uses existing download, dashboard and sales destinations without starting ch
     expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href);
 });
 
-it('redirects a direct pricing visit to the visible plans anchor', async () => {
-  expect(await nextConfig.redirects!()).toContainEqual({
-    source: '/pricing',
-    destination: '/#pricing',
-    permanent: false,
-  });
+it('does not redirect /pricing away from the dedicated pricing page', async () => {
+  const redirects = nextConfig.redirects ? await nextConfig.redirects() : [];
+  expect(redirects.find((rule) => rule.source === '/pricing')).toBeUndefined();
 });

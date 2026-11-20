@@ -26,6 +26,13 @@ export const SITE_DESCRIPTION =
   'Oya Browser is a HIPAA-compliant browser for healthcare: an AI browser on your desktop and an agentic browser ' +
   'in the cloud or self-hosted. We sign BAAs.';
 
+/** Keep discovery links when a page's canonical metadata replaces the root alternates object. */
+export const SITE_ALTERNATE_TYPES = {
+  'text/plain': '/llms.txt',
+  'application/json': '/openapi.json',
+  'application/rss+xml': '/feed.xml',
+} as const;
+
 /** One question and its answer, as a page shows it and as FAQPage structured data repeats it. */
 export interface QA {
   /** The question, phrased the way people ask an assistant. */

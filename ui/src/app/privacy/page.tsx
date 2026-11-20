@@ -4,6 +4,7 @@
  * the list of subprocessors lives on the trust center so it is kept in one place.
  */
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import Link from 'next/link';
 import { LegalPage, type LegalSection } from '../_legal/legal-page';
 import { COMPANY, EFFECTIVE_DATE, LEGAL_EMAIL, RECORDING_DAYS } from '../_legal/content';
@@ -12,7 +13,7 @@ import { COMPANY, EFFECTIVE_DATE, LEGAL_EMAIL, RECORDING_DAYS } from '../_legal/
 export const metadata: Metadata = {
   title: 'Privacy Policy',
   description: 'What Oya Browser and Oya Cloud collect, why, who processes it, and how to have it deleted.',
-  alternates: { canonical: '/privacy' },
+  alternates: { canonical: '/privacy', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The email link used throughout. */

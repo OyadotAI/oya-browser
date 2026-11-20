@@ -199,3 +199,53 @@ describe('verifyFull', () => {
     );
   });
 });
+
+describe('pool options', () => {
+  /** Answers every query with no rows, recording the options of the pool each one ran on. */
+  function recordPool() {
+    const seen: Record<string, unknown>[] = [];
+    mock.method(pg.Pool.prototype, 'query', async function (this: { options: Record<string, unknown> }) {
+      seen.push(this.options);
+      return { rows: [] };
+    });
+    return seen;
+  }
+
+  afterEach(() => {
+    delete process.env.OYA_PG_QUERY_TIMEOUT_MS;
+  });
+
+  it('bounds every query and keeps sockets alive, so a lost answer frees its connection', async () => {
+    const seen = recordPool();
+    await db().select('usage');
+    assert.deepEqual(
+      [seen[0].query_timeout, seen[0].keepAlive, seen[0].keepAliveInitialDelayMillis],
+      [60_000, true, 10_000],
+    );
+  });
+
+  it('takes the query timeout from OYA_PG_QUERY_TIMEOUT_MS', async () => {
+    process.env.OYA_PG_QUERY_TIMEOUT_MS = '5000';
+    const seen = recordPool();
+    await db().select('usage');
+    assert.equal(seen[0].query_timeout, 5000);
+  });
+
+  it('falls back to the default query timeout when OYA_PG_QUERY_TIMEOUT_MS is zero or negative', async () => {
+    for (const bad of ['0', '-5']) {
+      process.env.OYA_PG_QUERY_TIMEOUT_MS = bad;
+      const seen = recordPool();
+      await db().select('usage');
+      assert.equal(seen[0].query_timeout, 60_000, bad);
+      mock.restoreAll();
+      await closePgPool();
+    }
+  });
+
+  it('falls back to the default query timeout when OYA_PG_QUERY_TIMEOUT_MS is not a number', async () => {
+    process.env.OYA_PG_QUERY_TIMEOUT_MS = 'soon';
+    const seen = recordPool();
+    await db().select('usage');
+    assert.equal(seen[0].query_timeout, 60_000);
+  });
+});

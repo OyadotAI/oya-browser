@@ -5,17 +5,24 @@
  */
 import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import styles from '../page.module.css';
 import notes from '../release-notes/release-notes.module.css';
 import trust from '../trust/trust.module.css';
 import research from './research.module.css';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
+import { breadcrumbNode, jsonLd, jsonLdGraph, techArticleNode } from '@/lib/structured-data';
 import type { ResearchPost, ResearchTable } from './posts';
 
 /** The post's title, its summary as the description, and its canonical address. */
 export function postMetadata({ title, summary, path }: ResearchPost): Metadata {
-  return { title, description: summary, alternates: { canonical: path }, openGraph: { type: 'article', url: path } };
+  return {
+    title,
+    description: summary,
+    alternates: { canonical: path, types: SITE_ALTERNATE_TYPES },
+    openGraph: { type: 'article', url: path },
+  };
 }
 
 /** The raw table, scrolling inside its own frame so a narrow screen never scrolls the page sideways. */
@@ -68,6 +75,22 @@ function Body({ post }: { /** The post. */ post: ResearchPost }) {
   );
 }
 
+/** Combined TechArticle and BreadcrumbList structured data for a research post. */
+function postStructuredData(post: ResearchPost) {
+  return jsonLdGraph([
+    techArticleNode({
+      headline: post.title,
+      description: post.summary,
+      path: post.path,
+    }),
+    breadcrumbNode([
+      { name: 'Home', path: '/' },
+      { name: 'Research', path: '/research' },
+      { name: post.title, path: post.path },
+    ]),
+  ]);
+}
+
 /** A research post page. */
 export function PostPage({ post }: { /** What the page shows. */ post: ResearchPost }) {
   return (
@@ -83,6 +106,7 @@ export function PostPage({ post }: { /** What the page shows. */ post: ResearchP
           </Reveal>
           <Body post={post} />
         </main>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(postStructuredData(post)) }} />
       </div>
       <SiteFooter />
     </div>

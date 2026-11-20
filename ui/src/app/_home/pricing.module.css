@@ -18,14 +18,18 @@
   flex-direction: column;
   align-items: flex-start;
   min-width: 0;
+  overflow-wrap: break-word;
   gap: var(--space-content);
   padding: var(--space-panel);
 }
 .plan + .plan {
   border-left: 1px solid var(--line-strong);
 }
-.plan h3 {
+.plan :is(h2, h3) {
   font-size: 26px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
 }
 .description,
 .note {
@@ -33,13 +37,16 @@
   font-size: 15px;
 }
 .price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
   font-size: clamp(40px, 4.5vw, 64px);
   font-weight: 500;
   line-height: 1.1;
   letter-spacing: -0.055em;
 }
 .price span {
-  margin-left: 8px;
   color: var(--muted);
   font-size: 15px;
   font-weight: 400;

@@ -12,7 +12,15 @@ import { AnswerSection } from './answer-section';
 import { AnswerInvitation } from './answer-action';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
-import { faqJsonLd, SITE_NAME, type QA } from '@/lib/site';
+import { SITE_NAME, SITE_ALTERNATE_TYPES, type QA } from '@/lib/site';
+import {
+  breadcrumbNode,
+  faqNode,
+  jsonLd,
+  jsonLdGraph,
+  techArticleNode,
+  type BreadcrumbItem,
+} from '@/lib/structured-data';
 import type { AnswerPageContent, AnswerSources, AnswerTable } from './content';
 
 /** The card image every page shares; Next replaces openGraph and twitter whole, so it is repeated here. */
@@ -28,14 +36,30 @@ export function answerMetadata({ title, lead, path }: Pick<AnswerPageContent, 't
   return {
     title,
     description: lead,
-    alternates: { canonical: path },
+    alternates: { canonical: path, types: SITE_ALTERNATE_TYPES },
     openGraph: { ...card, type: 'article', siteName: SITE_NAME, url: path },
     twitter: { ...card, card: 'summary_large_image' },
   };
 }
 
-/** Structured data as script text: `<` escaped, so no string in it can close the script tag. */
-const jsonLd = (data: object): string => JSON.stringify(data).replace(/</g, '\\u003c');
+/** Breadcrumb trail for an answer page, nesting /vs/* comparisons under Compare. */
+function answerBreadcrumbs(content: AnswerPageContent): BreadcrumbItem[] {
+  const middle: BreadcrumbItem[] = content.path.startsWith('/vs/') ? [{ name: 'Compare', path: '/vs' }] : [];
+  return [{ name: 'Home', path: '/' }, ...middle, { name: content.label, path: content.path }];
+}
+
+/** Combined TechArticle, BreadcrumbList and FAQPage structured data for an answer page. */
+function answerStructuredData(content: AnswerPageContent) {
+  return jsonLdGraph([
+    techArticleNode({
+      headline: content.title,
+      description: content.lead,
+      path: content.path,
+    }),
+    breadcrumbNode(answerBreadcrumbs(content)),
+    faqNode(content.faq),
+  ]);
+}
 
 /**
  * A comparison as a real table, not a picture or a grid of divs: a crawler and an assistant read
@@ -124,7 +148,10 @@ export function AnswerPage({ content }: { /** What the page says. */ content: An
           <AnswerInvitation content={content} />
           <Questions faq={content.faq} />
         </main>
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(faqJsonLd(content.faq)) }} />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: jsonLd(answerStructuredData(content)) }}
+        />
       </div>
       <SiteFooter />
     </div>

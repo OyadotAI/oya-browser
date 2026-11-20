@@ -1,6 +1,7 @@
 /** /vs: the index of comparison pages, so a buyer weighing Oya against another vendor finds them in one click. */
 import { Reveal } from '@/components/ui/reveal';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import Link from 'next/link';
 import styles from '../page.module.css';
 import notes from '../release-notes/release-notes.module.css';
@@ -12,7 +13,7 @@ import { ANSWER_PAGES } from '../_answers/content';
 export const metadata: Metadata = {
   title: 'Compare Oya Browser',
   description: 'How Oya Browser differs from other browsers for AI agents: Browserbase, Steel, Anchor and Browser Use.',
-  alternates: { canonical: '/vs' },
+  alternates: { canonical: '/vs', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The comparison pages, read from the answer pages so a new /vs page is listed without touching this file. */
