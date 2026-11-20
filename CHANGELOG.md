@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.266](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.266) · 2026-11-20
+
 ### Changed
 
 - The desktop app's first-run setup shows every way to connect on one screen: continue with ChatGPT, continue with Oya, one button per AI app on this computer (Claude Code, Codex, Cursor, VS Code), your own AI key, or your own server. Every option is disabled while a sign-in runs, an app that is not installed no longer shows a test prompt, and the skip link reads "No AI for now, just browse".
