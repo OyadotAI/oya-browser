@@ -31,11 +31,15 @@ import BestBrowserForAiAgents, { metadata as bestInfraMetadata } from '@/app/bes
 import BestPayerPortalAutomation, { metadata as bestPortalMetadata } from '@/app/best-payer-portal-automation/page';
 import BestAiBrowser, { metadata as bestAiMetadata } from '@/app/best-ai-browser/page';
 import BaaPage, { metadata as baaMetadata } from '@/app/baa/page';
+import RegulatedIndustriesPage, {
+  metadata as regulatedMetadata,
+} from '@/app/browser-automation-for-regulated-industries/page';
 import {
   AGENTIC_BROWSER,
   AI_BROWSER,
   ANSWER_PAGES,
   BAA,
+  REGULATED_INDUSTRIES,
   BEST_AI_BROWSER,
   BEST_INFRA,
   BEST_PORTAL,
@@ -56,6 +60,8 @@ import {
   VS_BROWSER_USE,
   VS_STEEL,
 } from '@/app/_answers/content';
+import { WORKFLOW_CHAPTERS } from '@/app/_answers/workflow-chapters';
+import { PORTAL_CONTEXT } from '@/app/_home/workflow-story-content';
 import { SiteFooter } from '@/app/_home/site-footer';
 import { Closing } from '@/app/_home/closing';
 import { AnswerPage } from '@/app/_answers/answer-page';
@@ -146,6 +152,12 @@ const PAGES = [
   },
   { name: 'best-ai-browser', Page: BestAiBrowser, metadata: bestAiMetadata, content: BEST_AI_BROWSER },
   { name: 'baa', Page: BaaPage, metadata: baaMetadata, content: BAA },
+  {
+    name: 'browser-automation-for-regulated-industries',
+    Page: RegulatedIndustriesPage,
+    metadata: regulatedMetadata,
+    content: REGULATED_INDUSTRIES,
+  },
 ];
 
 /** The FAQPage structured data the page rendered. */
@@ -311,4 +323,32 @@ describe('the canonical description', () => {
     const shown = SITE_DESCRIPTION.slice(0, 160);
     for (const phrase of ['HIPAA-compliant browser', 'AI browser', 'agentic browser']) expect(shown).toContain(phrase);
   });
+});
+
+/** The phrase each page is searched by; its visible heading has to say it, not only its title. */
+const SEARCH_PHRASES = [
+  { content: HEALTHCARE_BROWSER, phrase: 'browser for healthcare' },
+  { content: PAYER_PORTALS, phrase: 'payer portal automation' },
+  { content: PRIOR_AUTH, phrase: 'prior authorization automation' },
+  { content: ELIGIBILITY, phrase: 'eligibility verification automation' },
+  { content: CLAIM_STATUS, phrase: 'claim status automation' },
+  { content: VS_BROWSERBASE, phrase: 'browserbase alternative' },
+  { content: REGULATED_INDUSTRIES, phrase: 'browser automation for regulated industries' },
+];
+
+it.each(SEARCH_PHRASES)('says "$phrase" in the visible heading of $content.path', ({ content, phrase }) => {
+  expect(content.hero?.headline.toLowerCase()).toContain(phrase);
+});
+
+/** The fewest chapters a task page owns: its opening, the steps, the reads and writes, the hand-off. */
+const OWN_CHAPTERS = 4;
+
+it('gives each payer-portal task page its own chapters, which no other task page repeats', () => {
+  const shared = new Set([...WORKFLOW_CHAPTERS, PORTAL_CONTEXT].map(({ body }) => body));
+  const pages = [PRIOR_AUTH, PAYER_PORTALS, ELIGIBILITY, CLAIM_STATUS].map(({ sections }) =>
+    sections.filter(({ body }) => !shared.has(body)),
+  );
+  for (const own of pages) expect(own.length).toBeGreaterThanOrEqual(OWN_CHAPTERS);
+  const words = pages.flat().flatMap(({ body, items }) => [body, (items ?? []).join('\n')].filter(Boolean));
+  expect(new Set(words).size).toBe(words.length);
 });

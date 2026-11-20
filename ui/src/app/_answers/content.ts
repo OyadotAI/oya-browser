@@ -15,6 +15,12 @@ import { DOWNLOAD_ACTION, BUILD_ACTION, DEMO_ACTION, BAA_ACTION } from './story-
 import { DESKTOP_START, DESKTOP_CHAPTERS } from './desktop-chapters';
 import { WORKFLOW_CHAPTERS, INFRASTRUCTURE_CHAPTERS } from './workflow-chapters';
 import {
+  PRIOR_AUTH_CHAPTERS,
+  PAYER_PORTAL_CHAPTERS,
+  ELIGIBILITY_CHAPTERS,
+  CLAIM_STATUS_CHAPTERS,
+} from './task-chapters';
+import {
   REGULATED_OPENING,
   REGULATED_CLOSING,
   COMPARISON_REQUIREMENTS,
@@ -228,7 +234,7 @@ export const VS_BROWSERBASE: AnswerPageContent = {
   title: 'A HIPAA-compliant Browserbase alternative: Oya vs Browserbase',
   lead: 'Looking for a Browserbase alternative for healthcare? Oya is built for healthcare and regulated work: on Oya Cloud and the enterprise edition it is HIPAA compliant, we sign BAAs, and every action by an agent or a person lands on a tamper-evident audit trail. Oya can also run browsers on Browserbase, behind the same API.',
   hero: {
-    headline: 'Oya vs Browserbase: start with the work you need to run.',
+    headline: 'Oya as a Browserbase alternative: start with the work you run.',
     paragraphs: [
       'For teams comparing browser infrastructure, consider how you will repeat tasks, host browsers and handle regulated work. Use the sourced differences below to assess your actual workflow.',
     ],
@@ -479,7 +485,7 @@ export const HEALTHCARE_BROWSER: AnswerPageContent = {
   title: 'What should a browser for healthcare do?',
   lead: 'A browser for healthcare lets staff and AI agents work on payer portals, EHRs and registries that show protected health information (PHI), under a signed business associate agreement (BAA) and a record of who did what. Oya Browser is a browser for healthcare: on Oya Cloud and the enterprise edition it is HIPAA compliant, and we sign BAAs.',
   hero: {
-    headline: 'Help your healthcare team repeat portal work.',
+    headline: 'A browser for healthcare teams repeating portal work.',
     paragraphs: [
       'Start with a portal task your staff already performs. Then decide how it should run, who can intervene and which deployment provides the controls your data needs.',
       'If the task involves protected health information (PHI), request the Business Associate Agreement (BAA) for a covered edition.',
@@ -515,6 +521,97 @@ export const HEALTHCARE_BROWSER: AnswerPageContent = {
       a: 'Oya is an AWS Partner, in AWS Startups and Google for Startups, and built by engineers from Google.',
     },
     SELF_HOST,
+  ],
+};
+
+/**
+ * /browser-automation-for-regulated-industries: the controls a reviewer checks, for buyers outside
+ * healthcare who search by "regulated" and found no Oya page. It claims HIPAA only for healthcare on
+ * Oya Cloud and the enterprise edition, and says outright that it claims no other regulation, since
+ * an implied one would be the first thing a compliance reviewer catches.
+ */
+export const REGULATED_INDUSTRIES: AnswerPageContent = {
+  path: '/browser-automation-for-regulated-industries',
+  label: 'Regulated industries',
+  title: 'Browser automation for regulated industries, with an audit trail',
+  lead: 'Browser automation for regulated industries is software, often an AI agent, that works web portals with no API under controls a reviewer can check: a record of every action, limits on where the browser can go, a person able to take over, and the option to run it in your own network. Oya Browser provides these. It holds a SOC 2 Type I report, with its Type II audit in progress, and for healthcare it is HIPAA compliant on Oya Cloud and the enterprise edition, where we sign Business Associate Agreements (BAAs).',
+  hero: {
+    headline: 'Put browser automation for regulated industries on the record.',
+    paragraphs: [
+      'When an agent signs in to a system that holds regulated data, your reviewers ask what they would ask of any staff member: what it did, where it could go, and who could stop it. Start with those answers, then choose where the work runs.',
+      'Healthcare is the regulated work Oya covers by contract. For protected health information (PHI), Oya Cloud and the enterprise edition come under a Business Associate Agreement (BAA).',
+    ],
+    action: DEMO_ACTION,
+  },
+  sections: [
+    {
+      heading: 'Start with what a reviewer will ask.',
+      body: 'Take one browser task that touches regulated data and list the questions your security or compliance reviewer will ask about it: who acted, on which pages, with which credentials, and what was kept. The sections below answer them in that order.',
+    },
+    {
+      heading: 'Keep a record of every action.',
+      body: 'Every action by an agent or a person is a row on a hash-chained audit trail, and the database refuses edits and deletes.',
+      items: [
+        'Audit records are kept for 365 days at least.',
+        'Recordings expire after 7 days by default.',
+        'Every staff sign-in as a customer is audited.',
+      ],
+      layout: 'controls',
+    },
+    {
+      heading: 'Limit who and what can reach the work.',
+      body: 'Access is set per project. Each project has owner, operator and viewer roles, sign-in uses TOTP multi-factor authentication, and API keys are stored only as hashes.',
+      items: [
+        'A project can limit the hosts its browsers may reach. Anything off the list is refused before it leaves.',
+        SEALED,
+        'Each project can allow only the model providers you choose.',
+        'Credentials, cookies and recordings are sealed with AES-256-GCM, bound to their tenant, with key rotation.',
+      ],
+      layout: 'controls',
+    },
+    {
+      heading: 'Keep a person able to step in.',
+      body: 'A person can watch any session live, take over and hand it back. When a sign-in needs a person, such as a text-message code, staff take over the session and return it to the agent.',
+    },
+    {
+      heading: 'Run it in your own network when data may not leave.',
+      body: 'Oya runs as Oya Cloud, or self-hosted on Docker, ECS, GCP or Kubernetes. Self-hosted, pages, recordings and audit records stay in your infrastructure.',
+      items: [
+        'Oya Cloud: browsers we run for you.',
+        'Enterprise edition: self-hosted, with the HIPAA offering and a BAA for healthcare work.',
+        'Community edition: source-available and self-hosted, free up to 5 cloud browsers at once, without the HIPAA offering.',
+        'Every playbook exports as Playwright code you keep.',
+      ],
+      layout: 'choices',
+    },
+    {
+      heading: 'Know where the SOC 2 work stands.',
+      body: 'Oya holds a SOC 2 Type I report, and its Type II audit is in progress. Send security questionnaires to sales@getoya.ai.',
+    },
+    {
+      heading: 'Check which regulations Oya has an offering for.',
+      body: 'Oya’s contractual compliance offering today is for healthcare: Oya Cloud and the enterprise edition are HIPAA compliant, and we sign Business Associate Agreements (BAAs). For other regulated industries, the controls above are what Oya provides. This page makes no claim under any other regulation, so map the controls to your own requirements.',
+    },
+  ],
+  faq: [
+    {
+      q: 'What is browser automation for regulated industries?',
+      a: 'Software, often an AI agent, that works web portals under controls a reviewer can check: an audit trail of every action, access roles, limits on the hosts a browser can reach, and a person able to take over. Oya Browser provides these on Oya Cloud and self-hosted.',
+    },
+    { q: 'Is Oya SOC 2 compliant?', a: 'Oya holds a SOC 2 Type I report, and its Type II audit is in progress.' },
+    {
+      q: 'Can we run it in our own network?',
+      a: 'Yes. Oya self-hosts on Docker, ECS, GCP or Kubernetes, and self-hosted, pages, recordings and audit records stay in your infrastructure. The source-available community edition is free up to 5 cloud browsers at once. The enterprise edition adds the HIPAA offering and a BAA. Write to sales@getoya.ai.',
+    },
+    {
+      q: 'What does the audit trail record?',
+      a: 'Every action by an agent or a person, as a row on a hash-chained log that the database refuses to edit or delete. Audit records are kept for 365 days at least.',
+    },
+    {
+      q: 'Is Oya compliant with regulations other than HIPAA?',
+      a: 'Oya’s compliance offering is for healthcare: Oya Cloud and the enterprise edition are HIPAA compliant, and we sign Business Associate Agreements (BAAs). Oya also holds a SOC 2 Type I report. It makes no claim under other industry regulations; review the controls against your own requirements.',
+    },
+    { q: 'Does the agent see our passwords?', a: `No. ${SEALED}` },
   ],
 };
 
@@ -566,7 +663,7 @@ export const PRIOR_AUTH: AnswerPageContent = {
   title: 'Prior authorization automation on payer portals',
   lead: 'Prior authorization automation files and tracks prior auths on payer portals that have no API, the way staff do by hand. With Oya, an AI agent files one prior auth on the portal, signed in as your staff, and Oya saves it as a playbook that files the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.',
   hero: {
-    headline: 'Turn a prior-authorization task into reusable steps.',
+    headline: 'Start prior authorization automation with one request.',
     paragraphs: [
       'For teams repeating prior authorizations on payer portals, start with one representative request. Show the steps, save a successful run and reuse it with the next case’s inputs.',
     ],
@@ -578,6 +675,7 @@ export const PRIOR_AUTH: AnswerPageContent = {
       body: 'Begin with one representative prior-authorization request and identify the portal steps and inputs. An agent can attempt it while a person watches.',
       layout: 'flow',
     },
+    ...PRIOR_AUTH_CHAPTERS,
     ...WORKFLOW_CHAPTERS,
   ],
   faq: [
@@ -616,7 +714,7 @@ export const PAYER_PORTALS: AnswerPageContent = {
   title: 'Payer portal automation for portals with no API',
   lead: 'Payer portal automation does the work revenue-cycle staff do by hand on payer websites that have no API: prior authorizations, eligibility checks, claim status, denials and appeals. With Oya, an AI agent does the task once on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next ones with no model. On Oya Cloud and the enterprise edition this runs under a BAA.',
   hero: {
-    headline: 'Reuse the portal work your team does every day.',
+    headline: 'Build payer portal automation from work your team repeats.',
     paragraphs: [
       'For revenue-cycle teams, authorizations, eligibility checks and claim lookups often repeat the same browser steps. Start with one task and build a workflow your team can inspect.',
     ],
@@ -628,6 +726,7 @@ export const PAYER_PORTALS: AnswerPageContent = {
       body: 'Choose one authorization, eligibility check or claim lookup your staff already performs. Identify its steps and inputs, then watch an agent attempt it.',
       layout: 'flow',
     },
+    ...PAYER_PORTAL_CHAPTERS,
     { ...PORTAL_CONTEXT, heading: 'When a status needs context, check the available documents.' },
     ...WORKFLOW_CHAPTERS,
   ],
@@ -657,7 +756,7 @@ export const ELIGIBILITY: AnswerPageContent = {
   title: 'Eligibility verification automation on payer portals',
   lead: "Eligibility verification automation checks a patient's coverage, copay and deductible on the payer's portal before the visit, the way front-desk staff do by hand. With Oya, an AI agent runs one check on the portal, signed in as your staff, and Oya saves it as a playbook that runs the next checks with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
   hero: {
-    headline: 'Make the next eligibility check easier to repeat.',
+    headline: 'Run eligibility verification automation from one saved check.',
     paragraphs: [
       'For teams checking coverage, copays and deductibles on payer portals, begin with one representative check. Save its successful steps and supply new inputs for the next patient.',
     ],
@@ -669,6 +768,7 @@ export const ELIGIBILITY: AnswerPageContent = {
       body: 'Begin with one eligibility check on a payer portal. Identify the member details and steps your staff uses, then watch an agent attempt the check.',
       layout: 'flow',
     },
+    ...ELIGIBILITY_CHAPTERS,
     ...WORKFLOW_CHAPTERS,
   ],
   faq: [
@@ -695,7 +795,7 @@ export const CLAIM_STATUS: AnswerPageContent = {
   title: 'Claim status automation on payer portals',
   lead: "Claim status automation reads where each claim stands, and its remittance detail, from the payer's portal, the way billing staff check them by hand. With Oya, an AI agent checks one claim on the portal, signed in as your staff, and Oya saves it as a playbook that checks the rest on a schedule with no model. On Oya Cloud and the enterprise edition this runs under a BAA.",
   hero: {
-    headline: 'Follow the claim from status to supporting context.',
+    headline: 'Claim status automation, from status to supporting context.',
     paragraphs: [
       'For billing teams checking payer portals, repeat a successful claim-status lookup with new claim details. Where available, portal documents can add context alongside your electronic status feeds.',
     ],
@@ -707,6 +807,7 @@ export const CLAIM_STATUS: AnswerPageContent = {
       body: 'Begin with one claim-status lookup on the payer portal. Identify the claim details and information your staff needs, then watch an agent attempt it.',
       layout: 'flow',
     },
+    ...CLAIM_STATUS_CHAPTERS,
     { ...PORTAL_CONTEXT, heading: 'When a status needs context, check the available documents.' },
     ...WORKFLOW_CHAPTERS,
   ],
@@ -1187,6 +1288,7 @@ export const ANSWER_PAGES = [
   HIPAA_BROWSER,
   BAA,
   HEALTHCARE_BROWSER,
+  REGULATED_INDUSTRIES,
   AI_BROWSER,
   AGENTIC_BROWSER,
   CODING_AGENT_BROWSER,

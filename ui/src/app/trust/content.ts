@@ -27,8 +27,8 @@ export const STATUS = [
   },
   {
     title: 'HIPAA, Oya Cloud',
-    state: 'In progress',
-    body: 'A per-project HIPAA mode, with business associate agreements across our subprocessors. Write to us to be told when it opens.',
+    state: 'BAA on request',
+    body: 'A per-project HIPAA mode, with business associate agreements across our subprocessors. 14 of 15 Security Rule controls are verified. Request the BAA at enterprise.oyabrowser.com/trust.',
   },
   {
     title: 'Evidence pack',

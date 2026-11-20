@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- A page on browser automation for regulated industries: the audit trail, access limits, human takeover and self-hosting a reviewer checks, with SOC 2 status and HIPAA scoped to healthcare on Oya Cloud and the enterprise edition. It is linked from the footer, the sitemap and llms.txt.
+
+### Changed
+
+- The prior authorization, eligibility, claim status and payer portal pages each explain their own task: the portal steps, what the agent reads and writes, and where a person takes over.
+- Six healthcare pages now say what they are about in their main heading, such as "payer portal automation" and "browser for healthcare".
+- The trust page shows HIPAA mode on Oya Cloud as available with a BAA on request, matching the enterprise trust center.
+
 ## [1.0.260](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.260) · 2026-11-19
 
 ### Changed
