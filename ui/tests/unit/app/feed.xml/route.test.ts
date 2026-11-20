@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { GET, dynamic } from '@/app/feed.xml/route';
-import { buildFeedXml, escapeXml } from '@/app/feed.xml/feed';
+import { buildFeedXml, escapeXml, wrapCdata } from '@/app/feed.xml/feed';
 import { RESEARCH_POSTS } from '@/app/research/posts';
 import { SITE_URL } from '@/lib/site';
 
@@ -21,13 +21,35 @@ describe('/feed.xml route', () => {
     expect(first.headers.get('cache-control')).toBe('public, max-age=300');
     const xml = await first.text();
     expect(xml).toBe(await second.text());
-    expect(xml).toContain('<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">');
+    expect(xml).toContain(
+      '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">',
+    );
     expect(xml).toContain(`href="${SITE_URL}/feed.xml"`);
     for (const post of RESEARCH_POSTS) {
       expect(xml).toContain(`<link>${SITE_URL}${post.path}</link>`);
       expect(xml).toContain(`<title>${escapeXml(post.title)}</title>`);
+      expect(xml).toContain(`<caption>${escapeXml(post.table.caption)}</caption>`);
     }
     expect(xml).toContain(`<link>${SITE_URL}/release-notes</link>`);
+  });
+
+  it('emits full <content:encoded> HTML for research posts and omits it on changelog releases', () => {
+    const researchXml = buildFeedXml('', RESEARCH_POSTS);
+    expect(researchXml).toContain('<content:encoded><![CDATA[');
+    expect(researchXml).toContain('<table>');
+    expect(researchXml).toContain(`<td>${escapeXml(RESEARCH_POSTS[0].table.rows[0][0])}</td>`);
+    expect(researchXml).toContain(`<li>${escapeXml(RESEARCH_POSTS[0].notes[0])}</li>`);
+    expect(researchXml).toContain(`<a href="${SITE_URL}${RESEARCH_POSTS[0].path}">`);
+    const releaseXml = buildFeedXml('## 1.0.9 · 2026-10-01\n\n### Added\n- Fast replay', []);
+    expect(releaseXml).not.toContain('<content:encoded>');
+  });
+
+  it('keeps CDATA well-formed by escaping HTML text and splitting raw CDATA end markers', () => {
+    expect(wrapCdata('Safe ]]> still safe\u0007')).toBe('<![CDATA[Safe ]]]]><![CDATA[> still safe]]>');
+    const hostile = { ...RESEARCH_POSTS[0], summary: 'Safe ]]> still safe' };
+    const xml = buildFeedXml('', [hostile]);
+    expect(xml).toContain('<p>Safe ]]&gt; still safe</p>');
+    expect(xml).not.toContain('Safe ]]> still safe');
   });
 
   it('escapes XML special characters and strips illegal control characters', () => {
