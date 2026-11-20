@@ -359,6 +359,15 @@ export const DEFAULT_TRUSTED_PROXY_HOPS = 1;
 export const trustedProxyHops = () =>
   Math.floor(positiveOr(Number(process.env.OYA_TRUSTED_PROXY_HOPS), DEFAULT_TRUSTED_PROXY_HOPS));
 
+/**
+ * A header our own reverse proxy sets to the caller's address and overwrites
+ * whatever the client sent, read before X-Forwarded-For when set. Production
+ * sets OYA_CLIENT_IP_HEADER=x-real-ip: ingress-nginx writes it from the TCP
+ * peer, or from CF-Connecting-IP only when the peer is Cloudflare. Unset by
+ * default, because without such a proxy the header is whatever the client wrote.
+ */
+export const clientIpHeader = () => (process.env.OYA_CLIENT_IP_HEADER || '').trim().toLowerCase();
+
 // ── Postgres ──
 
 /** Postgres connections per process unless DATABASE_POOL_MAX says otherwise. */

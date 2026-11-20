@@ -48,6 +48,9 @@ spec:
         # Cloudflare then ingress-nginx: the pod sees "<client>, <node>" in X-Forwarded-For.
         - name: OYA_TRUSTED_PROXY_HOPS
           value: "2"
+        # ingress-nginx overwrites X-Real-IP: the TCP peer, or CF-Connecting-IP only from Cloudflare's ranges.
+        - name: OYA_CLIENT_IP_HEADER
+          value: x-real-ip
         livenessProbe:
           httpGet:
             path: /api/health

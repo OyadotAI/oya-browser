@@ -15,6 +15,7 @@ const req = (forwarded?: string) => ({
 
 afterEach(() => {
   delete process.env.OYA_TRUSTED_PROXY_HOPS;
+  delete process.env.OYA_CLIENT_IP_HEADER;
 });
 
 describe('clientAddress', () => {
@@ -46,6 +47,24 @@ describe('clientAddress', () => {
   it('falls back to the socket when the chosen hop is not an address', () => {
     process.env.OYA_TRUSTED_PROXY_HOPS = '2';
     assert.equal(clientAddress(req('<script>, 10.128.0.4')), '10.0.0.1');
+  });
+
+  it('reads the header our proxy sets before X-Forwarded-For when one is configured', () => {
+    process.env.OYA_CLIENT_IP_HEADER = 'X-Real-IP';
+    const proxied = { headers: { 'x-real-ip': '198.51.100.4', 'x-forwarded-for': '6.6.6.6' }, socket: {} };
+    assert.equal(clientAddress(proxied), '198.51.100.4');
+  });
+
+  it('falls back to X-Forwarded-For when the configured header is missing or not an address', () => {
+    process.env.OYA_CLIENT_IP_HEADER = 'x-real-ip';
+    assert.equal(clientAddress(req('6.6.6.6, 203.0.113.9')), '203.0.113.9');
+    const junk = { headers: { 'x-real-ip': 'not-an-ip', 'x-forwarded-for': '203.0.113.9' }, socket: {} };
+    assert.equal(clientAddress(junk), '203.0.113.9');
+  });
+
+  it('ignores a client-written X-Real-IP when no header is configured', () => {
+    const spoofed = { headers: { 'x-real-ip': '6.6.6.6', 'x-forwarded-for': '203.0.113.9' }, socket: {} };
+    assert.equal(clientAddress(spoofed), '203.0.113.9');
   });
 
   it('treats a non-positive or non-numeric hop count as the default', () => {
