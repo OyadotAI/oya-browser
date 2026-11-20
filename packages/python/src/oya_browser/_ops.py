@@ -6,7 +6,7 @@ Paths, bodies and timeouts match the TypeScript SDK's browser.ts call for call.
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from ._constants import (
     AGENT_TIMEOUT_S,
@@ -66,12 +66,32 @@ def agent_answer(result: Any) -> dict[str, Any]:
     return result
 
 
+def extract_data(result: Any) -> Any:
+    """A structured extract() answer; raises 422 when the agent reports it could not extract."""
+    res = agent_answer(result)
+    if res.get("failed") or res.get("data") is None:
+        raise OyaError(str(res.get("text") or "Extraction failed"), STATUS_UNPROCESSABLE, res)
+    return res["data"]
+
+
+def mfa_result(base_url: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Resolves a relative liveViewUrl from complete_mfa() against the server's base URL."""
+    link = result.get("liveViewUrl")
+    if isinstance(link, str) and link:
+        return {**result, "liveViewUrl": urljoin(f"{base_url.rstrip('/')}/", link)}
+    return result
+
+
 def element(element_id: int | str) -> dict[str, Any]:
     """The params that address an element by its id from analyze()."""
-    try:
+    if isinstance(element_id, bool):
+        raise ValueError("Use a non-negative integer element id from browser.analyze().")
+    if isinstance(element_id, int) and element_id >= 0:
+        number = element_id
+    elif isinstance(element_id, str) and element_id.isascii() and element_id.isdigit():
         number = int(element_id)
-    except (TypeError, ValueError):
-        raise ValueError(f"element ids come from analyze(); {element_id!r} is not one") from None
+    else:
+        raise ValueError("Use a non-negative integer element id from browser.analyze().")
     return {"element_id": number, "selector": f'[data-ac-id="{number}"]'}
 
 

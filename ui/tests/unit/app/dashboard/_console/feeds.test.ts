@@ -71,13 +71,15 @@ describe('loadPersonas', () => {
 });
 
 describe('loadPersonas status', () => {
-  it('says failed when the first load fails, and ready once a load succeeds, even if a later one fails', async () => {
-    fakeFetch({ status: 500 }, { body: { personas: [] } }, { status: 500 });
+  it('says failed when the first load fails, ready once a load succeeds, and ignores stale failures', async () => {
+    fakeFetch({ status: 500 }, { body: { personas: [] } }, { status: 500 }, { status: 500 });
     const status = vi.fn();
     const sink = { set: vi.fn(), setStatus: status };
     await loadPersonas('k', live(), sink);
     await loadPersonas('k', live(), sink);
     await loadPersonas('k', live(), sink);
+    await loadPersonas('old', live('new'), sink);
+    expect(status).toHaveBeenCalledTimes(3);
     const [first, second, third] = status.mock.calls.map(([next]) => next);
     expect([first('loading'), second, third('ready')]).toEqual(['failed', 'ready', 'ready']);
   });

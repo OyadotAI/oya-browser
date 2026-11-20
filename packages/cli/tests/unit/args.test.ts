@@ -36,6 +36,17 @@ describe('parse', () => {
     });
     assert.deepEqual(parse(['install', '--dry-run', '--help', 'now']).args, ['now']);
   });
+
+  it('accepts global flags before the subcommand and stops flag parsing at --', () => {
+    assert.deepEqual(parse(['--json', 'ls']), { command: 'ls', args: [], flags: { json: true } });
+    assert.deepEqual(parse(['--url', 'http://127.0.0.1:3100', 'whoami']), {
+      command: 'whoami',
+      args: [],
+      flags: { url: 'http://127.0.0.1:3100' },
+    });
+    assert.deepEqual(parse(['--help']), { command: 'help', args: [], flags: { help: true } });
+    assert.deepEqual(parse(['rm', '--', '--literal']), { command: 'rm', args: ['--literal'], flags: {} });
+  });
 });
 
 describe('flag readers', () => {

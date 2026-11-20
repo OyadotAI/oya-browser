@@ -11,8 +11,8 @@ import { BROWSERS_POLL_MS, FLEET_POLL_MS, PERSONAS_POLL_MS } from '@/app/dashboa
 vi.mock('@/components/dashboard/toast', () => ({ useToast: () => toast }));
 const toast = vi.fn();
 
-/** Answers every API path with something sensible. */
-const fetchMock = vi.fn(async (url: string) => {
+/** Default scripted API responder for console feeds. */
+const defaultFetch = async (url: string) => {
   const body = url.endsWith('/browsers')
     ? [{ id: 'a' }, { id: 'b' }]
     : url.endsWith('/fleet')
@@ -21,11 +21,15 @@ const fetchMock = vi.fn(async (url: string) => {
         ? { personas: [] }
         : { onboarded: true };
   return new Response(JSON.stringify(body));
-});
+};
+
+/** Answers every API path with something sensible. */
+const fetchMock = vi.fn(defaultFetch);
 /** Fetch calls to paths ending in `suffix`. */
 const calls = (suffix: string) => fetchMock.mock.calls.filter(([u]) => u.endsWith(suffix)).length;
 
 beforeEach(() => {
+  fetchMock.mockImplementation(defaultFetch);
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.stubGlobal('fetch', fetchMock);
   sessionStorage.setItem('oya_console_key', 'k1');
@@ -99,6 +103,41 @@ describe('useConsole', () => {
     const { result } = await setup();
     act(() => result.current.patch({ selected: 'gone' }));
     await act(() => vi.advanceTimersByTimeAsync(BROWSERS_POLL_MS));
+    expect(result.current.view.selected).toBeNull();
+  });
+
+  it('keeps ?browser=<id> selected across initial project adoption until /browsers settles', async () => {
+    sessionStorage.clear();
+    history.replaceState(null, '', '/dashboard?browser=a');
+    let resolveBrowsers!: (res: Response) => void;
+    fetchMock.mockImplementationOnce(async (url: string) => new Response(JSON.stringify({ url, onboarded: true })));
+    fetchMock.mockImplementation((url: string) =>
+      url.endsWith('/browsers')
+        ? new Promise<Response>((r) => (resolveBrowsers = r))
+        : Promise.resolve(new Response(JSON.stringify({ browsers: { commands: 0, errors: 0 }, personas: [] }))),
+    );
+    const { result } = renderHook(() => useConsole());
+    expect(result.current.view.selected).toBe('a');
+    act(() => result.current.openProject('cred-1', 'prj-1'));
+    expect(result.current.view.selected).toBe('a');
+    await act(async () => resolveBrowsers(new Response(JSON.stringify([{ id: 'a' }]))));
+    expect(result.current.view.selected).toBe('a');
+  });
+
+  it('clears browsers and selection when switching from a manual API key (null project) to an account project', async () => {
+    sessionStorage.clear();
+    const { result } = renderHook(() => useConsole());
+    act(() => result.current.openProject('k-manual', null));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.browsers).toHaveLength(2);
+    act(() => result.current.patch({ selected: 'a' }));
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/browsers')
+        ? new Response(JSON.stringify({ error: 'down' }), { status: 500 })
+        : new Response(JSON.stringify({ browsers: { commands: 0, errors: 0 }, personas: [], onboarded: true })),
+    );
+    act(() => result.current.openProject('cred-1', 'prj-1'));
+    expect(result.current.browsers).toEqual([]);
     expect(result.current.view.selected).toBeNull();
   });
 });

@@ -58,12 +58,14 @@ describe('console shortcuts', () => {
     ]);
   });
 
-  it('switches tabs', () => {
+  it('switches tabs in TABS order', () => {
     const c = ctx();
-    run(c, 'mod+4');
+    run(c, 'mod+3');
     expect(c.patch).toHaveBeenCalledWith({ tab: 'playbooks' });
-    run(c, 'mod+5');
+    run(c, 'mod+4');
     expect(c.patch).toHaveBeenCalledWith({ tab: 'routines' });
+    run(c, 'mod+5');
+    expect(c.patch).toHaveBeenCalledWith({ tab: 'control' });
   });
 
   it('moves the selection through the rows in table order, stopping at the ends', () => {
@@ -119,5 +121,16 @@ describe('console shortcuts', () => {
     run(c, 's');
     run(ctx(), 's');
     expect(clicks.mock.calls).toEqual([['r'], ['Screenshot']]);
+    const filterRef: { current: HTMLInputElement | null } = { current: null };
+    const offTab = ctx({ filterRef });
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      filterRef.current = input;
+      cb(0);
+      return 1;
+    });
+    input.blur();
+    run(offTab, '/');
+    expect(document.activeElement).toBe(input);
+    raf.mockRestore();
   });
 });

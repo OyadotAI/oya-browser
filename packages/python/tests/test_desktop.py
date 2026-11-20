@@ -32,8 +32,20 @@ def test_a_handle_on_the_desktop_ends_only_its_own_lane_when_stopped(fake):
     f = fake(
         {("GET", "/api/browsers"): [DESK], ("GET", "/api/browsers/d1"): {}, ("POST", "/api/browsers/d1/lane/end"): {}}
     )
-    client(f).desktop.connect().stop()
+    assert client(f).desktop.connect().stop() == {"id": "d1", "ok": True, "reused": True}
     assert f.calls[-1][1] == "/api/browsers/d1/lane/end"
+
+
+def test_stopping_a_borrowed_desktop_never_raises_when_lane_end_fails(fake):
+    f = fake(
+        {
+            ("GET", "/api/browsers"): [DESK],
+            ("GET", "/api/browsers/d1"): {},
+            ("POST", "/api/browsers/d1/lane/end"): lambda _r: httpx.Response(404, json={"error": "not found"}),
+        }
+    )
+    with client(f).desktop.connect() as b:
+        assert b.reused is True
 
 
 @pytest.mark.parametrize("persona", ["p1", "Work"])

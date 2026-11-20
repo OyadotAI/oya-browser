@@ -102,11 +102,13 @@ function BrowsersTab({ c }: Props) {
 /** The open tab's content. */
 function TabContent({ c }: Props) {
   const { view, patch, apiKey, project } = c;
+  const scope = project ?? apiKey;
   return (
     <div className="min-w-0 flex-1">
       {view.tab === 'browsers' && <BrowsersTab c={c} />}
       {view.tab === 'personas' && (
         <PersonasTab
+          key={scope}
           apiKey={apiKey}
           browsers={c.browsers}
           personas={c.personas}
@@ -119,12 +121,12 @@ function TabContent({ c }: Props) {
         />
       )}
       {view.tab === 'playbooks' && (
-        <PlaybooksTab key={project ?? ''} apiKey={apiKey} browsers={c.browsers} personas={c.personas} now={c.now} />
+        <PlaybooksTab key={scope} apiKey={apiKey} browsers={c.browsers} personas={c.personas} now={c.now} />
       )}
-      {view.tab === 'routines' && <RoutinesTab key={project ?? ''} apiKey={apiKey} now={c.now} personas={c.personas} />}
+      {view.tab === 'routines' && <RoutinesTab key={scope} apiKey={apiKey} now={c.now} personas={c.personas} />}
       {view.tab === 'control' && (
         <div className="h-full min-w-0 overflow-hidden">
-          <ControlTab key={project ?? ''} apiKey={apiKey} />
+          <ControlTab key={scope} apiKey={apiKey} />
         </div>
       )}
     </div>
@@ -135,6 +137,7 @@ function TabContent({ c }: Props) {
 function SelectedBrowser({ c }: Props) {
   const { view, patch } = c;
   if (!(view.tab === 'browsers' && view.selected)) return null;
+  const scope = c.project ?? c.apiKey;
   return (
     <div
       className="fixed inset-0 z-40 flex justify-end bg-black/50 lg:static lg:z-auto lg:bg-transparent"
@@ -143,7 +146,7 @@ function SelectedBrowser({ c }: Props) {
       }}
     >
       <BrowserPanel
-        key={`${c.project}:${view.selected}`}
+        key={`${scope}:${view.selected}`}
         apiKey={c.apiKey}
         browserId={view.selected}
         onClose={() => patch({ selected: null })}

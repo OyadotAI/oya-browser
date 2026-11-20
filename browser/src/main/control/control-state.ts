@@ -219,7 +219,7 @@ class ControlState {
     let result: ControlValue | undefined;
     if (action === 'acquire' && !this.connected) this.holdLocally();
     if (this.connected) result = await requests.request<ControlValue>(action === 'acquire' ? 'request' : action);
-    if (action === 'acquire') result = await this.acquireAfterDrain(result);
+    if (action === 'acquire') result = await this.acquireAfterDrain();
     if (result) this.receive(result);
     else this.settleLocally(action);
   }
@@ -231,11 +231,11 @@ class ControlState {
   }
 
   /** Waits for local commands to finish, then (online) asks the server to hand over. */
-  private async acquireAfterDrain(result: ControlValue | undefined): Promise<ControlValue | undefined> {
+  private async acquireAfterDrain(): Promise<ControlValue | undefined> {
     const deadline = Date.now() + LOCAL_DRAIN_TIMEOUT_MS;
     while (this.localInFlight && Date.now() < deadline) await controlPause(LOCAL_DRAIN_POLL_MS);
     if (this.localInFlight) throw new Error('A local automation command is still running. Retry takeover.');
-    return this.connected ? this.requests.request<ControlValue>('acquire') : result;
+    return this.connected ? this.requests.request<ControlValue>('acquire') : undefined;
   }
 
   /** Offline: the handoff is decided here. */

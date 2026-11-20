@@ -17,16 +17,19 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe('OAuthCallbackPage', () => {
-  it('starts the session from the fragment refresh token and clears it from the URL', async () => {
-    vi.mocked(refreshToken).mockResolvedValue({ access_token: 'a', refresh_in_cookie: true });
+  it('starts the session from the fragment refresh token, clears stale local tokens, and clears the URL', async () => {
+    localStorage.setItem('oya_refresh_token', 'stale-token');
+    vi.mocked(refreshToken).mockResolvedValue({ access_token: 'a', refresh_in_cookie: true, mfa_required: true });
     landAt('/auth/callback#access_token=a&refresh_token=rt&expires_in=3600');
     render(<OAuthCallbackPage />);
     await waitFor(() => expect(refreshToken).toHaveBeenCalledWith('rt', true));
     expect(window.location.hash).toBe('');
     expect(localStorage.getItem('oya_refresh_token')).toBeNull();
+    expect(sessionStorage.getItem('oya_mfa_pending')).toBe('1');
   });
 
   it('keeps a refresh token the server returned in the body, for a cross-origin console', async () => {

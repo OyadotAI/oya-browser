@@ -37,20 +37,37 @@ afterEach(() => {
 });
 
 describe('LiveBrowserPage', () => {
-  it('asks for a key when there is neither a share token nor a console credential', async () => {
+  it('asks for a key when there is neither a share token nor a console credential and omits dead controls', async () => {
     render(<LiveBrowserPage />);
     expect((await screen.findByText(/Connect your Oya key/)).textContent).toContain('to view this browser.');
+    expect(screen.queryByRole('button', { name: 'Take control' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
     expect(api).not.toHaveBeenCalled();
   });
 
-  it('uses the share token from the fragment and strips it from the URL', async () => {
+  it('uses the share token from the fragment, strips it, and keeps it across a same-tab reload', async () => {
     history.replaceState(null, '', '/live/b1?x=1#t=shared');
     sessionStorage.setItem('oya_console_key', 'own');
-    render(<LiveBrowserPage />);
+    const first = render(<LiveBrowserPage />);
     expect(await screen.findByRole('heading', { name: 'QA' })).toBeTruthy();
     expect(vi.mocked(api).mock.calls[0]).toEqual(['/browsers/b1', { key: 'shared' }]);
     expect(window.location.hash).toBe('');
     expect(window.location.search).toBe('?x=1');
+    first.unmount();
+    vi.mocked(api).mockClear();
+    render(<LiveBrowserPage />);
+    expect(await screen.findByRole('heading', { name: 'QA' })).toBeTruthy();
+    expect(vi.mocked(api).mock.calls[0]).toEqual(['/browsers/b1', { key: 'shared' }]);
+  });
+
+  it('syncs the initial control mode from the server instead of hardcoding agent', async () => {
+    sessionStorage.setItem('oya_console_key', 'k');
+    vi.mocked(api).mockImplementation(async (path: string) => {
+      if (path === '/control/sessions/b1') return { control: { mode: 'paused' } };
+      return { name: 'QA' };
+    });
+    render(<LiveBrowserPage />);
+    expect(await screen.findByRole('button', { name: 'Resume agent' })).toBeTruthy();
   });
 
   it('streams frames, reports fps each second, and shows a lost stream', async () => {

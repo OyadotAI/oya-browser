@@ -43,11 +43,17 @@ describe('tab menu', () => {
     assert.equal(items['Reopen Closed Tab'].enabled, false, 'nothing was closed yet');
   });
 
-  it('duplicates a tab beside it and opens a new tab to its right', () => {
+  it('duplicates a tab beside it, opens a new tab to its right, and disables Duplicate on collections', () => {
     menuFor(1).Duplicate.click();
     assert.equal(ctx.tabs.list[1].url, 'https://a.test/');
     menuFor(1)['New Tab to the Right'].click();
     assert.ok(ctx.tabs.list[1].home);
+    ctx.tabs.find(1).collection = 'bookmarks';
+    const collectionMenu = menuFor(1);
+    assert.equal(collectionMenu.Duplicate.enabled, false);
+    const before = ctx.tabs.list.length;
+    collectionMenu.Duplicate.click();
+    assert.equal(ctx.tabs.list.length, before);
   });
 
   it('closes, closes the others, and reopens what was closed', () => {

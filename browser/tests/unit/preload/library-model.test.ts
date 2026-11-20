@@ -20,6 +20,17 @@ it('combines a site filter with search and sorts without changing saved data', (
     ['docs.test', 2],
     ['notes.test', 1],
   ]);
+  assert.deepEqual(
+    sites([
+      ...pages,
+      { url: 'data:', title: 'inline.txt', time: 40 },
+      { url: 'blob:https://a.test/1', title: 'b', time: 50 },
+    ]),
+    [
+      ['docs.test', 2],
+      ['notes.test', 1],
+    ],
+  );
 });
 it('groups history by local calendar days rather than elapsed 24-hour periods', () => {
   const now = new Date(2026, 10, 2, 0, 30);

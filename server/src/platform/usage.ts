@@ -51,9 +51,12 @@ export function billTo(apiKey, userId) {
 /** Drops these fingerprints' counters, so a flush never writes back usage rows of an erased project. */
 export function forget(ids: Set<string>) {
   for (const id of ids) {
+    for (const browserId of live.get(id)?.keys() || []) cloud.delete(browserId);
+    live.delete(id);
     buckets.delete(id);
     owners.delete(id);
   }
+  retired = retired.filter(([id]) => !ids.has(id));
 }
 
 /** This fingerprint's bucket for the current hour, started fresh when the hour has rolled over. */
@@ -99,7 +102,7 @@ export function browserDisconnected(apiKey, browserId) {
   if (!apiKey) return;
   const id = fingerprint(apiKey);
   const started = live.get(id)?.get(browserId);
-  if (!started) return;
+  if (started === undefined) return;
   live.get(id).delete(browserId);
   bookSeconds(id, browserId, Math.round((Date.now() - started) / MS_PER_SECOND));
   cloud.delete(browserId);

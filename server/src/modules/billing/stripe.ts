@@ -73,6 +73,7 @@ function parseHeader(header: string) {
 
 /** Whether `raw` was signed by Stripe with `secret`, recently enough not to be a replay. */
 export function verifySignature(raw: Buffer | string, header: string, secret: string, nowMs = Date.now()) {
+  if (typeof raw !== 'string' && !Buffer.isBuffer(raw)) return false;
   const { t, signatures } = parseHeader(String(header || ''));
   if (!secret || !t || Math.abs(nowMs / MS_PER_SECOND - t) > WEBHOOK_TOLERANCE_S) return false;
   const expected = createHmac('sha256', secret).update(`${t}.`).update(raw).digest();

@@ -95,13 +95,17 @@ export const INITIAL_VIEW: ConsoleView = {
   shot: null,
 };
 
-/** What opening another project resets; the tab and open dialogs stay. */
-export const projectReset = (): Partial<ConsoleView> => ({
+/** Scalar fields cleared when switching to another project. */
+const PROJECT_CLEAR: Partial<ConsoleView> = {
   selected: null,
-  checked: new Set(),
   filter: NO_FILTER,
   openPersona: null,
   stopIds: null,
   connectId: null,
+  shot: null,
+  showStart: false,
   bannerDismissed: false,
-});
+};
+
+/** What opening another project resets; the tab and open dialogs stay. */
+export const projectReset = (): Partial<ConsoleView> => ({ ...PROJECT_CLEAR, checked: new Set() });

@@ -72,7 +72,7 @@ import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
 import { downloadRoutes } from './modules/downloads/index.ts';
 import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
-import { apiKeyHeader } from './app/http.ts';
+import { apiKeyHeader, upgradeUrl } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
 import { CORS_ORIGIN, HEADERS_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from './app/constants.ts';
 import { billingWebhook, startReporting } from './modules/billing/index.ts';
@@ -266,13 +266,12 @@ const wss = new WebSocketServer({
 
 // One upgrade router: /ws is the Oya client protocol, /connect is raw CDP.
 server.on('upgrade', (req, socket, head) => {
-  const { pathname } = new URL(req.url, `http://${req.headers.host}`);
-  if (pathname === '/ws') {
-    return wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-  }
-  if (pathname === '/connect') return upgradeGateway(req, socket, head);
+  const url = upgradeUrl(req);
+  if (!url) return socket.destroy();
+  if (url.pathname === '/ws') return wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  if (url.pathname === '/connect') return upgradeGateway(req, socket, head);
   if (frontend?.upgrade(req, socket, head)) return;
-  console.warn(`[ws] ✗ upgrade to unknown path ${pathname}, use /ws (Oya client) or /connect (CDP)`);
+  console.warn(`[ws] ✗ upgrade to unknown path ${url.pathname}, use /ws (Oya client) or /connect (CDP)`);
   socket.destroy();
 });
 
@@ -287,8 +286,7 @@ function upgradeGateway(req, socket, head) {
 }
 
 wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const apiKey = url.searchParams.get('key');
+  const apiKey = upgradeUrl(req)?.searchParams.get('key');
   // A key in the URL lands in access logs; the client sends it in its first
   // message instead. The old form is refused unless OYA_ALLOW_LEGACY_QUERY_KEYS=true,
   // the same switch /connect?token= obeys.

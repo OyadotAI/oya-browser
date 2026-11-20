@@ -6,6 +6,7 @@ A saved key is only used for the deployment it was saved for, so a staging key n
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -37,9 +38,21 @@ def _saved() -> dict[str, str]:
     return {k: v for k, v in data.items() if isinstance(v, str)} if isinstance(data, dict) else {}
 
 
-def _host(url: str) -> str:
-    """The deployment a URL belongs to: its host, port included."""
-    return urlsplit(url).netloc
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _deployment(url: str) -> tuple[str, str, int | None, str] | None:
+    """The deployment a URL belongs to: scheme, host, non-default port and path."""
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    if scheme not in DEFAULT_PORTS or not parts.hostname:
+        return None
+    try:
+        port = parts.port
+    except ValueError:
+        return None
+    effective_port = None if port in (None, DEFAULT_PORTS[scheme]) else port
+    return (scheme, parts.hostname.lower(), effective_port, parts.path.rstrip("/"))
 
 
 def save_key(api_key: str, base_url: str) -> bool:
@@ -60,7 +73,7 @@ def _write_private(path: Path, text: str) -> None:
     world-readable stays so) and would follow a symlink planted at the path. So the key goes to a new file,
     created exclusively and not through a link, and is renamed over the config in one step.
     """
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}-{uuid.uuid4()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), PRIVATE_FILE)
     try:
         with os.fdopen(fd, "w") as f:
@@ -75,8 +88,9 @@ def resolve(api_key: str | None = None, base_url: str | None = None) -> Origin:
     """The key and address to use; raises without a key."""
     saved = _saved()
     address = (base_url or os.environ.get("OYA_BASE_URL") or saved.get("baseUrl") or DEFAULT_BASE_URL).rstrip("/")
-    saved_base = saved.get("baseUrl", DEFAULT_BASE_URL)
-    saved_key = saved.get("apiKey") if _host(saved_base) == _host(address) else None
+    saved_base = saved.get("baseUrl") or DEFAULT_BASE_URL
+    target = _deployment(address)
+    saved_key = saved.get("apiKey") if target is not None and _deployment(saved_base) == target else None
     key = (api_key or os.environ.get("OYA_API_KEY") or saved_key or "").strip()
     if not key:
         raise ValueError(NO_KEY)

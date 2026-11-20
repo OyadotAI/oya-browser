@@ -246,4 +246,24 @@ describe('Browser.stop', () => {
       Array(3).fill('/api/browsers/b1/stop'),
     );
   });
+
+  it('encodes special characters in browser.id on every path and refuses path traversal', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers/b%201': { body: { id: 'b 1', provider: 'steel', persona: 'p1' } },
+      'POST /api/browsers/b%201/command': { body: { ok: true, data: {} } },
+      'POST /api/browsers/b%201/stop': { body: { id: 'b 1', ok: true } },
+    });
+    const b = await oya.browser.get('b 1');
+    await b.pressKey('Enter');
+    await b.stop();
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      ['/api/browsers/b%201', '/api/browsers/b%201/command', '/api/browsers/b%201/stop'],
+    );
+    const { oya: badOya } = client({
+      'GET /api/browsers/ok': { body: { id: '../admin', provider: 'steel', persona: 'p1' } },
+    });
+    const bad = await badOya.browser.get('ok');
+    await assert.rejects(bad.status(), { status: 400 });
+  });
 });

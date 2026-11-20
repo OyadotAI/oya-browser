@@ -190,7 +190,7 @@ ctx.notifications = new Notifications({
   changed: () => ctx.shell.send('notifications-changed', null),
 });
 ctx.dialogs = new DesktopDialogs(
-  () => ctx.control.snapshot().interactive,
+  (page) => (ctx.agentTab ? personMayUse(ctx, page) : ctx.control.snapshot().interactive),
   dialogPresenter(ctx),
   (message, url) => ctx.notifications.add(message, url),
 );
@@ -227,6 +227,7 @@ ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.t
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () => {
   ctx.passkeys.sync();
+  ctx.dialogs.controlChanged();
   // A claim takes the tab from the person: its translation is undone before the agent reads it.
   void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
   ctx.windows?.each((scope) => {

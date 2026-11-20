@@ -106,6 +106,19 @@ def test_live_view_url_is_the_console_link_and_carries_no_credential(fake):
     assert browser(fake({})).live_view_url() == f"{BASE}/dashboard/?browser=b1"
 
 
+def test_complete_mfa_resolves_a_relative_live_view_url_against_base_url(fake):
+    f = fake(
+        {
+            ("POST", "/api/browsers/b1/mfa"): {
+                "present": True,
+                "completed": False,
+                "liveViewUrl": "/dashboard/?browser=b1",
+            }
+        }
+    )
+    assert browser(f).complete_mfa()["liveViewUrl"] == f"{BASE}/dashboard/?browser=b1"
+
+
 def test_live_stream_url_carries_a_fresh_single_use_ticket(fake):
     f = fake({("POST", "/api/control/sessions/b1/ticket"): {"ticket": "t k"}})
     assert browser(f).live_stream_url() == f"{BASE}/api/live/b1?ticket=t%20k"

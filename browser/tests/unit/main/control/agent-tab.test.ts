@@ -271,3 +271,36 @@ it('an SDK lane that went quiet takes its own tab back, not a second one', () =>
     mock.timers.reset();
   }
 });
+
+it('an offline MCP lane keeps access to its starting tab after opening a new tab and releases on end', () => {
+  const { agentTab, tabs } = setup({ connected: false, mode: 'agent', interactive: false, localClients: 0 });
+  inLane('mcp-offline', () => {
+    agentTab.noteHome();
+    const second = agentTab.opened(tabs.createTab('https://new.test', true));
+    assert.equal(agentTab.mayWorkIn(1), true);
+    assert.equal(agentTab.mayWorkIn(second), true);
+    agentTab.release();
+    assert.deepEqual(tabs.closed, [second]);
+    assert.equal(agentTab.mayWorkIn(1), false);
+  });
+});
+
+it('a second agent beside an active one keeps its own background tab as home and never gets the person’s tab', () => {
+  const { agentTab, tabs } = setup();
+  inLane('agent-1', () => agentTab.drive());
+  tabs.activeTabId = 2;
+  inLane('agent-2', () => {
+    agentTab.drive();
+    assert.equal(agentTab.mayWorkIn(1), false);
+    assert.equal(agentTab.mayWorkIn(2), false);
+    assert.equal(agentTab.mayWorkIn(3), true);
+    tabs.activeTabId = 3;
+    agentTab.release();
+  });
+  assert.deepEqual(tabs.closed, []);
+  assert.equal(tabs.activeTabId, 3);
+  assert.equal(
+    inLane('agent-2', () => agentTab.mayWorkIn(3)),
+    false,
+  );
+});

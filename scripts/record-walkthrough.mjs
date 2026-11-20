@@ -206,9 +206,10 @@ async function record() {
   // no model in the loop. Start it, then watch it happen in the live view.
   await hud('02 / REPLAY, same task, new inputs, no model in the loop');
   await navigate(star.id, DEMO_SITE);
-  const replay = api(`/browsers/${star.id}/playbooks/${PLAYBOOK}/play`, { data: DEMO_DATA, autoHeal: false }).catch(
-    (err) => console.warn('replay:', err.message),
-  );
+  const replay = api(`/browsers/${star.id}/playbooks/${PLAYBOOK}/play`, {
+    variables: DEMO_DATA,
+    autoHeal: false,
+  }).catch((err) => console.warn('replay:', err.message));
   await clickTo(page.getByRole('button', { name: 'Browsers', exact: true }), 800);
   await clickTo(starRow, 1200);
   await sleep(REPLAY_WATCH_MS);

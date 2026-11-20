@@ -82,8 +82,10 @@ describe('verifySignature', () => {
     assert.equal(verifySignature('{}', header('{}', NOW / 1000 - 301), SECRET, NOW), false);
   });
 
-  it('refuses a missing header or secret', () => {
+  it('refuses a missing header, secret or raw body', () => {
     assert.equal(verifySignature('{}', '', SECRET, NOW), false);
     assert.equal(verifySignature('{}', header('{}'), '', NOW), false);
+    assert.equal(verifySignature(undefined as any, header('{}'), SECRET, NOW), false);
+    assert.equal(verifySignature({} as any, header('{}'), SECRET, NOW), false);
   });
 });

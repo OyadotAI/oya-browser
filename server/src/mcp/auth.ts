@@ -3,7 +3,7 @@
  * operator key gets through; a share link reaches only its own browser's MCP,
  * never the pool.
  */
-import { authenticateToken, shareReaches } from '../modules/auth/service.ts';
+import { authenticateToken, isShare, shareReaches } from '../modules/auth/service.ts';
 import { Status } from '../platform/http-status.ts';
 import { BEARER } from './constants.ts';
 import { challenge } from './oauth/index.ts';
@@ -28,7 +28,7 @@ export async function authorize(req, res) {
 async function operatorKey(req, res) {
   const principal = await authenticateToken(bearer(req.headers.authorization));
   const refusal = refusalOf(principal, req.params?.browserId);
-  if (!refusal) return { key: principal.key };
+  if (!refusal) return isShare(principal) ? { key: principal.key, share: true } : { key: principal.key };
   res.status(Status.FORBIDDEN).json({ error: refusal });
   return null;
 }

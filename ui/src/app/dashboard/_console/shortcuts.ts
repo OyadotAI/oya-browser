@@ -63,21 +63,23 @@ const tab = (keys: string, label: string, key: MainTab): Binding => ({
   run: (c) => c.patch({ tab: key }),
 });
 
+/** Opens the Browsers tab and focuses the filter input once mounted. */
+function focusFilter(c: ShortcutContext) {
+  c.patch({ tab: 'browsers' });
+  if (c.filterRef.current) c.filterRef.current.focus();
+  else requestAnimationFrame(() => c.filterRef.current?.focus());
+}
+
 /** Every binding, in help-sheet order. */
 const BINDINGS: Binding[] = [
   tab('mod+1', 'Browsers', 'browsers'),
   tab('mod+2', 'Personas', 'personas'),
-  tab('mod+3', 'Control', 'control'),
-  tab('mod+4', 'Playbooks', 'playbooks'),
-  tab('mod+5', 'Routines', 'routines'),
+  tab('mod+3', 'Playbooks', 'playbooks'),
+  tab('mod+4', 'Routines', 'routines'),
+  tab('mod+5', 'Control', 'control'),
   { keys: '?', label: 'This help', group: 'Navigate', run: (c) => c.patch({ showHelp: true }) },
   { keys: 'n', label: 'Start a browser', group: 'Fleet', run: (c) => c.patch({ showStart: true }) },
-  {
-    keys: '/',
-    label: 'Filter the fleet',
-    group: 'Fleet',
-    run: (c) => (c.patch({ tab: 'browsers' }), c.filterRef.current?.focus()),
-  },
+  { keys: '/', label: 'Filter the fleet', group: 'Fleet', run: focusFilter },
   { keys: 'down', label: 'Next browser', group: 'Fleet', run: (c) => moveSelection(c, 1) },
   { keys: 'up', label: 'Previous browser', group: 'Fleet', run: (c) => moveSelection(c, -1) },
   { keys: 'j', label: 'Next browser', group: 'Fleet', run: (c) => moveSelection(c, 1) },

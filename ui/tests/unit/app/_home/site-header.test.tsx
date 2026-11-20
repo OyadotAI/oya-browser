@@ -20,6 +20,24 @@ describe('public header', () => {
     expect(document.activeElement).toBe(menu);
   });
 
+  it('ignores Escape when all menus are closed and closes desktop Product on outside pointerdown', () => {
+    render(
+      <div>
+        <SiteHeader />
+        <footer>Outside footer</footer>
+      </div>,
+    );
+    const docs = screen.getByRole('link', { name: 'Docs' });
+    docs.focus();
+    fireEvent.keyDown(docs, { key: 'Escape' });
+    expect(document.activeElement).toBe(docs);
+    const product = screen.getByRole('button', { name: 'Product' });
+    fireEvent.click(product);
+    expect(product.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.pointerDown(screen.getByText('Outside footer'));
+    expect(product.getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('closes on destination and layout changes and removes its listener on unmount', () => {
     const add = vi.fn();
     const remove = vi.fn();

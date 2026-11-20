@@ -5,7 +5,8 @@
 import './support/harness.ts';
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { statSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { load, save, resolved, origin, configPath } from '../../src/config.ts';
 
 describe('config', () => {
@@ -20,12 +21,21 @@ describe('config', () => {
     assert.deepEqual(load(), {});
   });
 
-  it('merges into the saved file and keeps it owner-only', () => {
+  it('merges into the saved file, keeps the file and folder owner-only, and never writes through a symlink', () => {
     writeFileSync(configPath, '{}', { mode: 0o644 });
     save({ apiKey: 'a' });
     save({ baseUrl: 'https://b' });
     assert.deepEqual(load(), { apiKey: 'a', baseUrl: 'https://b' });
     assert.equal(statSync(configPath).mode & 0o777, 0o600);
+    assert.equal(statSync(dirname(configPath)).mode & 0o777, 0o700);
+    const elsewhere = join(dirname(configPath), 'elsewhere.json');
+    writeFileSync(elsewhere, '{}');
+    unlinkSync(configPath);
+    symlinkSync(elsewhere, configPath);
+    save({ apiKey: 'secret' });
+    assert.equal(load().apiKey, 'secret');
+    assert.equal(lstatSync(configPath).isSymbolicLink(), false);
+    assert.equal(readFileSync(elsewhere, 'utf8'), '{}');
   });
 
   it('prefers the environment, and trims trailing slashes from the URL', () => {

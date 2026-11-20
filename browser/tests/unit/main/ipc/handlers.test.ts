@@ -88,6 +88,19 @@ describe('IPC handlers', () => {
     assert.deepEqual(order, ['incognito', 'leave']);
   });
 
+  it('logging out aborts in-flight chat runs and clears chatAbort', async () => {
+    const tabRun = new AbortController();
+    const fallback = new AbortController();
+    ctx.tabs = { leaveBrowsingMode: () => {} };
+    ctx.chatRuns = new Map([[1, tabRun]]);
+    ctx.chatAbort = fallback;
+    await call('sign-out');
+    assert.equal(tabRun.signal.aborted, true);
+    assert.equal(fallback.signal.aborted, true);
+    assert.equal(ctx.chatRuns.size, 0);
+    assert.equal(ctx.chatAbort, null);
+  });
+
   it('a new tab or a step back in an incognito window never becomes a recording step', async () => {
     const recorded: string[] = [];
     ctx.recorder.recordNavigation = (url) => recorded.push(url);

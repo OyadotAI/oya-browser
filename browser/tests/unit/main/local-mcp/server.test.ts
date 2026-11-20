@@ -132,4 +132,18 @@ describe('LocalMcp', () => {
   it('answers a notification with no body', async () => {
     assert.equal((await post({ jsonrpc: '2.0', method: 'notifications/initialized' })).status, 202);
   });
+
+  it('releases the session lane when the client ends its session with DELETE /mcp', async () => {
+    const released: string[] = [];
+    const { currentLane } = await import('../../../../src/main/control/agent-tab.ts');
+    deps.agentTab = { release: () => released.push(currentLane()) };
+    const opened = await post(init);
+    const session = opened.headers.get('mcp-session-id')!;
+    const ended = await fetch(`http://127.0.0.1:${PORT}/mcp`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${mcp.token}`, 'Mcp-Session-Id': session },
+    });
+    assert.equal(ended.status, 200);
+    assert.deepEqual(released, [`mcp-${session}`]);
+  });
 });

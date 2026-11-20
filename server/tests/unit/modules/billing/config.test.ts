@@ -47,9 +47,12 @@ describe('billing config', () => {
     assert.deepEqual(pricesFor('developer'), ['new_dev', 'min_dev']);
   });
 
-  it('retains existing plan recognition when new subscriptions are not on sale', () => {
+  it('retains existing plan recognition when new subscriptions are not on sale, and grants Free when unset', () => {
+    assert.equal(planOfPrice(undefined), 'free');
+    assert.equal(planOfPrice(''), 'free');
     process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER = 'old_dev';
     assert.equal(planOfPrice('old_dev'), 'developer');
+    assert.equal(planOfPrice(undefined), 'free');
     assert.deepEqual(pricesFor('developer'), []);
   });
 });

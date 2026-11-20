@@ -6,6 +6,7 @@
 import { forwardGateway } from '../control/cluster.ts';
 import { consume } from '../../platform/limits.ts';
 import { Status } from '../../platform/http-status.ts';
+import { upgradeUrl } from '../../app/http.ts';
 import { authenticate } from './upgrade-auth.ts';
 import { resume } from './upgrade-resume.ts';
 import { attachToFleet } from './upgrade-attach.ts';
@@ -14,8 +15,9 @@ import { denier, refuse, type Upgrade } from './upgrade-context.ts';
 
 /** Route an HTTP upgrade on /connect into a gateway session. */
 export async function handleUpgrade(req, socket, head) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
   const deny = denier(socket);
+  const url = upgradeUrl(req);
+  if (!url) return deny(Status.BAD_REQUEST, 'Bad Request');
   const caller = await authenticate(url, req, deny);
   if (!caller) return;
   const ctx: Upgrade = { req, socket, head, url, deny, ...caller };

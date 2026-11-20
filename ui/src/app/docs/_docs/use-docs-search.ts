@@ -6,7 +6,6 @@
 
 import { useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { SEARCH_DEBOUNCE_MS } from './constants';
-import { scrollToSection } from './nav';
 import { searchDocs, type SearchHit } from './search-index';
 
 /** The search box's state and what it can do. */
@@ -43,12 +42,19 @@ function useSearchState() {
   return { query, setQuery, results, setResults, inputRef, timer };
 }
 
-/** The search box and its input ref; picking a result also runs `onPick` (closing the mobile menu). */
-export function useDocsSearch(onPick: () => void): [DocsSearch, RefObject<HTMLInputElement | null>] {
+/** Cancels any pending debounced search. */
+function cancel(timer: Timer) {
+  if (!timer.current) return;
+  clearTimeout(timer.current);
+  timer.current = null;
+}
+
+/** The search box and its input ref; picking a result delegates navigation (closing any mobile menu first). */
+export function useDocsSearch(onNavigate: (id: string) => void): [DocsSearch, RefObject<HTMLInputElement | null>] {
   const { query, setQuery, results, setResults, inputRef, timer } = useSearchState();
-  const clear = () => (setQuery(''), setResults(searchDocs('')));
+  const clear = () => (cancel(timer), setQuery(''), setResults(searchDocs('')));
   const onInput = (v: string) => (setQuery(v), debounced(timer, () => setResults(searchDocs(v))));
   const onKeyDown = (e: KeyboardEvent) => e.key === 'Escape' && (clear(), inputRef.current?.blur());
-  const pick = (id: string) => (setQuery(''), setResults(null), onPick(), scrollToSection(id));
+  const pick = (id: string) => (cancel(timer), setQuery(''), setResults(null), onNavigate(id));
   return [{ query, results, onInput, onKeyDown, clear, pick }, inputRef];
 }

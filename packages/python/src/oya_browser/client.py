@@ -18,7 +18,7 @@ import httpx
 
 from . import _start as st
 from ._config import resolve
-from ._constants import READY_POLL_S, READY_TIMEOUT_S, START_TIMEOUT_S
+from ._constants import READY_POLL_S, START_TIMEOUT_S
 from ._http import AsyncHttp, Http, ModelOptions, model_headers, segment
 from ._namespace import Namespace
 from ._ops import Call
@@ -45,7 +45,7 @@ class Browsers:
         persona: str | None = None,
         provider: str | None = None,
         name: str | None = None,
-        ready_timeout_s: float = READY_TIMEOUT_S,
+        ready_timeout_s: float | None = None,
         idempotency_key: str | None = None,
         captcha: str | None = None,
         **extra: Any,
@@ -54,7 +54,7 @@ class Browsers:
         body, headers = st.start_body(persona, provider, name, extra), st.start_headers(idempotency_key)
         started = self._http.request("POST", "/api/browsers/start", body, START_TIMEOUT_S, headers=headers)
         if started.get("status") == "starting":
-            self._wait(started["id"], ready_timeout_s)
+            self._wait(started["id"], st.ready_timeout(ready_timeout_s, body))
             started["cdpUrl"] = self._record(started["id"]).get("cdpUrl")
         return Browser(self._http, started, captcha == "auto")
 
@@ -155,7 +155,7 @@ class AsyncBrowsers:
         persona: str | None = None,
         provider: str | None = None,
         name: str | None = None,
-        ready_timeout_s: float = READY_TIMEOUT_S,
+        ready_timeout_s: float | None = None,
         idempotency_key: str | None = None,
         captcha: str | None = None,
         **extra: Any,
@@ -164,7 +164,7 @@ class AsyncBrowsers:
         body, headers = st.start_body(persona, provider, name, extra), st.start_headers(idempotency_key)
         started = await self._http.request("POST", "/api/browsers/start", body, START_TIMEOUT_S, headers=headers)
         if started.get("status") == "starting":
-            await self._wait(started["id"], ready_timeout_s)
+            await self._wait(started["id"], st.ready_timeout(ready_timeout_s, body))
             started["cdpUrl"] = (await self._record(started["id"])).get("cdpUrl")
         return AsyncBrowser(self._http, started, captcha == "auto")
 

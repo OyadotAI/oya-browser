@@ -35,8 +35,9 @@ describe('usage', () => {
     assert.equal(now.hour, '2026-01-01T10:00:00.000Z');
   });
 
-  it("forgets an erased owner's counters, ended hours included, so no flush writes them back", async () => {
+  it("forgets an erased owner's counters, open clocks and ended hours included, so no flush writes them back", async () => {
     usage.record('key-a', 'commands');
+    usage.browserConnected('key-a', 'cloud-a', true);
     usage.record('key-b', 'commands');
     mock.timers.tick(MS_PER_HOUR);
     usage.record('key-a', 'commands');
@@ -44,6 +45,7 @@ describe('usage', () => {
     const actors = usage.snapshot().map((r) => r.actor);
     assert.equal(actors.length, 1);
     assert.equal(usage.current('key-a').commands, 0);
+    assert.equal(usage.current('key-a').openBrowsers, 0);
     await usage.drain();
     assert.equal(await storedRow('key-a'), undefined);
   });

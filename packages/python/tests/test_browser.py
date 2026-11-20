@@ -132,3 +132,21 @@ def test_extract_sends_its_schema_and_only_the_values_given(fake):
     schema = {"type": "object"}
     assert browser(f).extract("Heading?", schema) == {"heading": "Example Domain"}
     assert f.calls[0][2] == {"messages": [{"role": "user", "content": "Heading?"}], "schema": schema}
+
+
+def test_extract_raises_422_when_failed_or_missing_data(fake):
+    f = fake({("POST", "/api/browsers/b1/chat"): {"text": "FAILED: price missing", "failed": True}})
+    with pytest.raises(OyaError, match="FAILED: price missing") as e:
+        browser(f).extract("Price?", {"type": "number"})
+    assert e.value.status == 422
+    f_none = fake({("POST", "/api/browsers/b1/chat"): {"text": "Nothing found"}})
+    with pytest.raises(OyaError, match="Nothing found") as e2:
+        browser(f_none).extract("Price?", {"type": "number"})
+    assert e2.value.status == 422
+
+
+def test_element_id_rejects_booleans_floats_and_negatives(fake):
+    b = browser(fake({}))
+    for bad in (True, False, -1, 1.5, "1.5", "-1", "", " 2 "):
+        with pytest.raises(ValueError, match="non-negative integer"):
+            b.click(bad)  # type: ignore[arg-type]

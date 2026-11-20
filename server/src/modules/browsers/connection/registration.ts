@@ -14,11 +14,13 @@ import {
   ACTION_NAME,
   CLAIMABLE_PROVIDERS,
   CLOUD_PROVIDER,
+  CloseCode,
   DEFAULT_PROVIDER,
   MAX_ANNOUNCED_ACTIONS,
   MAX_BROWSERS_PER_KEY,
   SERVER_RUN,
 } from './constants.ts';
+import { releaseBrowser } from './release.ts';
 import { container } from '../../../app/container.ts';
 
 /** The persona fields registration uses. */
@@ -92,16 +94,31 @@ async function noteDesktop(reg: Registration, msg) {
     track.desktopUpdated(reg.apiKey, { platform, from, to: version });
 }
 
-/** Lists the browser and starts counting it. */
-export async function list(reg: Registration, provider: string, msg) {
+/** Lists the browser in the registry and starts its usage clock synchronously. */
+export function enlist(reg: Registration, provider: string, msg) {
+  clearConcurrent(reg.browserId, reg.apiKey);
   addToRegistry(reg, provider, msg);
-  if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
+  usage.browserConnected(reg.apiKey, reg.browserId, SERVER_RUN.has(provider));
   metrics.wsConnections.inc({ outcome: 'ok' });
   metrics.browsersConnected.set({}, registry.browsers.size);
-  const inCloud = SERVER_RUN.has(provider);
-  usage.browserConnected(reg.apiKey, reg.browserId, inCloud);
+}
+
+/** Records desktop telemetry and cloud billing attribution once listed. */
+export async function list(reg: Registration, provider: string, msg) {
+  if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
   // Before the welcome: the proxy it is given depends on its owner's plan.
-  if (inCloud) await container.billing.entitlements.attribute(reg.apiKey);
+  if (SERVER_RUN.has(provider)) await container.billing.entitlements.attribute(reg.apiKey);
+}
+
+/** Releases an earlier registration if a concurrent handshake reached the registry first. */
+function clearConcurrent(browserId: string, apiKey: string) {
+  const existing = registry.get(browserId);
+  if (!existing) return;
+  if (existing.apiKey !== apiKey) throw new Error('browser_id registered to a different key');
+  releaseBrowser(browserId, existing, 'reconnected');
+  try {
+    existing.ws.close(CloseCode.REPLACED, 'Replaced by new connection');
+  } catch {}
 }
 
 /**

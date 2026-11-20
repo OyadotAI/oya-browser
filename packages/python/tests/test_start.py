@@ -86,3 +86,16 @@ def test_captcha_auto_is_kept_by_the_client_not_sent_and_makes_goto_solve(fake):
     client(f).browser.start(captcha="auto").goto("https://example.com")
     assert "captcha" not in f.calls[0][2]
     assert f.calls[-1][1] == "/api/browsers/b1/captcha"
+
+
+def test_start_normalizes_snake_case_options_and_validates_idempotency_key(fake):
+    from oya_browser import _start as st
+
+    f = fake({("POST", "/api/browsers/start"): {"id": "b1", "status": "ready"}})
+    client(f).browser.start(profile_group="pool", queue_ms=45_000, ws_url="ws://127.0.0.1:9222")
+    body = f.calls[0][2]
+    assert body == {"personaGroup": "pool", "queueMs": 45_000, "wsUrl": "ws://127.0.0.1:9222"}
+    assert st.ready_timeout(None, body) == 165.0
+    assert st.ready_timeout(10.0, body) == 10.0
+    with pytest.raises(ValueError, match="idempotency_key"):
+        client(f).browser.start(idempotency_key="bad\nkey")

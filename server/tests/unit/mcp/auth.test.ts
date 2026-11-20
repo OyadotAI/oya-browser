@@ -35,7 +35,7 @@ describe('authorize', () => {
 
   it('confines a share link to its own browser, never the pool', async () => {
     stubControl({ authenticate: async () => ({ key: 'k-op', role: 'operator', sessionId: 'b-1' }) });
-    assert.deepEqual((await check('oya_share', { browserId: 'b-1' })).caller, { key: 'k-op' });
+    assert.deepEqual((await check('oya_share', { browserId: 'b-1' })).caller, { key: 'k-op', share: true });
     for (const params of [{}, { browserId: 'b-2' }]) {
       const { caller, res } = await check('oya_share', params);
       assert.equal(caller, null);

@@ -125,16 +125,27 @@ async function guardKek(existing: Record<string, string>, answers: Answers, root
   if (reused) existing.OYA_PROFILE_SECRET = reused;
 }
 
+/** Migration URL for Postgres/Supabase, falling back to `.env`'s DATABASE_URL on replay. */
+const migrateUrlFor = (i: Interview, existing: Record<string, string>) =>
+  i.migrateUrl || (i.answers.database !== 'sqlite' ? existing.DATABASE_URL || '' : '');
+
+/** Assembles a complete Plan from the interview, `.env` path and previous `.env` values. */
+function buildPlan(interviewed: Gathered, envPath: string, existing: Record<string, string>): Plan {
+  const { answers, secrets } = interviewed;
+  const migrateUrl = migrateUrlFor(interviewed, existing);
+  return { ...interviewed, migrateUrl, envPath, existing, env: buildEnv(answers, secrets, existing) };
+}
+
 /** Everything decided, checked and resolved, before anything is written. */
 async function plan(m: RunMode): Promise<Plan> {
   const interviewed = await gather(m);
   const { root, answers, secrets } = interviewed;
   await checkMachine(root, answers, m.dryRun);
-  warnLocalDatabase(answers, secrets.DATABASE_URL);
   const envPath = join(root, '.env');
   const existing = readEnv(envPath);
+  warnLocalDatabase(answers, secrets.DATABASE_URL || existing.DATABASE_URL);
   await guardKek(existing, answers, root, m);
-  return { ...interviewed, envPath, existing, env: buildEnv(answers, secrets, existing) };
+  return buildPlan(interviewed, envPath, existing);
 }
 
 /** Writes .env and the answers file, warning when the KEK is new. */

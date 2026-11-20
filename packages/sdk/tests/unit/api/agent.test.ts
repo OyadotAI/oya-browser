@@ -6,7 +6,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, lstatSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Oya } from '../../../dist/index.js';
@@ -57,6 +57,18 @@ describe('Oya.signup', () => {
   it('does not save when asked not to', async () => {
     const result = await Oya.signup({ email: 'e@x.test', baseUrl: BASE, fetch: signupRoutes().fetch, save: false });
     assert.equal(result.saved, false);
+  });
+
+  it('replaces a world-readable file or a symlink with an owner-only regular file without following the link', async () => {
+    const target = join(home, 'target.json');
+    writeFileSync(target, '{}', { mode: 0o644 });
+    const cfg = join(home, 'config.json');
+    symlinkSync(target, cfg);
+    await Oya.signup({ email: 'me@x.test', baseUrl: BASE, fetch: signupRoutes().fetch });
+    assert.equal(readFileSync(target, 'utf8'), '{}', 'symlink target is untouched');
+    assert.equal(lstatSync(cfg).isSymbolicLink(), false);
+    assert.equal(statSync(cfg).mode & 0o777, 0o600);
+    assert.equal(statSync(home).mode & 0o777, 0o700);
   });
 });
 

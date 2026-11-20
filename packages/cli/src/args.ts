@@ -68,16 +68,19 @@ export const VALUE_FLAGS: Record<string, string> = {
   'ws-url': '--ws-url ws://127.0.0.1:9222',
 };
 
+/** First positional is the command (`help` when omitted); the rest are its arguments. */
+const invocation = ([command = 'help', ...args]: string[], flags: Flags): Invocation => ({ command, args, flags });
+
 /** Splits argv (without node and the script) into command, arguments and flags; a flag it does not know throws. */
 export function parse(argv: string[]): Invocation {
-  const [command = 'help', ...rest] = argv;
-  const args: string[] = [];
+  const positionals: string[] = [];
   const flags: Flags = {};
-  for (let i = 0; i < rest.length; i++) {
-    if (!rest[i].startsWith('--')) args.push(rest[i]);
-    else if (takeFlag(rest[i].slice('--'.length), rest[i + 1], flags)) i++;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') return invocation([...positionals, ...argv.slice(i + 1)], flags);
+    if (!argv[i].startsWith('--')) positionals.push(argv[i]);
+    else if (takeFlag(argv[i].slice('--'.length), argv[i + 1], flags)) i++;
   }
-  return { command, args, flags };
+  return invocation(positionals, flags);
 }
 
 /** Records one flag; returns true when it consumed the next token as its value. */

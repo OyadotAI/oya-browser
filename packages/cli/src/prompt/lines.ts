@@ -121,16 +121,21 @@ function writeMask(output: NodeJS.WriteStream, newline: boolean): void {
 /** Return display geometry without revealing the masked line. */
 export const maskedCells = (): number => maskCells;
 
+/** Drops masked or setup entries so secrets are never recalled via Up-arrow. */
+function scrubHistory(history: string[]): void {
+  if (masked || setupInput) history.shift();
+}
+
 /** The process's readline, opened on first use. */
 function iface(): Interface {
   if (rl) return rl;
   rl = createReader();
   rl.setPrompt(currentPrompt);
+  rl.on('history', scrubHistory);
   rl.on('line', readLine);
   rl.on('close', close);
   rl.on('SIGINT', interruptLine);
-  maskEcho(rl);
-  return rl;
+  return (maskEcho(rl), rl);
 }
 
 /** Capture the listeners introduced by this reader, preserving all unrelated stream listeners. */

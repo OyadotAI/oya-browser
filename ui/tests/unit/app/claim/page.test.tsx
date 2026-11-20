@@ -6,13 +6,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import ClaimPage from '@/app/claim/page';
-import { importApiKey } from '@/lib/api';
+import { AccountError, importApiKey } from '@/lib/api';
 import { afterSignIn } from '@/components/auth/use-auth-form';
 
 const auth = { token: null as string | null, loading: false };
 vi.mock('@/components/auth-provider', () => ({ useAuth: () => auth }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
-vi.mock('@/lib/api', () => ({ importApiKey: vi.fn() }));
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  importApiKey: vi.fn(),
+}));
 
 /** The agent key the link carries. */
 const KEY = 'k'.repeat(32);
@@ -66,6 +69,39 @@ describe('ClaimPage', () => {
     openLink();
     render(<ClaimPage />);
     expect((await screen.findByRole('alert')).textContent).toBe('Key cannot be imported');
+  });
+
+  it('preserves the pending claim across a second-factor step-up', async () => {
+    sessionStorage.setItem('oya_mfa_pending', '1');
+    auth.token = 'jwt';
+    openLink();
+    render(<ClaimPage />);
+    expect(window.location.hash).toBe('');
+    expect(sessionStorage.getItem('oya_pending_claim')).toBe(KEY);
+    expect(importApiKey).not.toHaveBeenCalled();
+  });
+
+  it('preserves the pending claim when importApiKey is refused with mfa_required', async () => {
+    vi.mocked(importApiKey).mockRejectedValue(new AccountError('Enter the code', 'mfa_required', 401));
+    auth.token = 'jwt';
+    openLink();
+    render(<ClaimPage />);
+    await vi.waitFor(() => expect(importApiKey).toHaveBeenCalledWith('jwt', KEY, 'Agent'));
+    expect(sessionStorage.getItem('oya_pending_claim')).toBe(KEY);
+    expect(sessionStorage.getItem('oya_mfa_pending')).toBe('1');
+  });
+
+  it('keeps the settled claim screen when the session renews its access token', async () => {
+    vi.mocked(importApiKey).mockResolvedValue({ ok: true });
+    auth.token = 'jwt';
+    openLink();
+    const view = render(<ClaimPage />);
+    expect(await screen.findByText('Key claimed')).toBeTruthy();
+    auth.token = 'jwt-renewed';
+    view.rerender(<ClaimPage />);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByText('Key claimed')).toBeTruthy();
+    expect(importApiKey).toHaveBeenCalledTimes(1);
   });
 
   it('says so when the link carries no key', async () => {

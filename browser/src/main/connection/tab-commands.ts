@@ -83,14 +83,19 @@ async function playWorkflow(runner: CommandRunner, id: CommandId | undefined, pa
   runner.sendResult(id, true, { id: run.id, status: run.status, assertions: run.assertions || 0, error: run.error });
 }
 
+/** Records the lane's starting tab and opens a new tab in its lane without stealing human focus. */
+function createAgentTab({ tabs, agentTab }: CommandDeps, url: string): number {
+  agentTab.noteHome?.();
+  return agentTab.opened(tabs.createTab(url, agentTab.following()));
+}
+
 /** Opens a tab on a web address and answers once it is ready; any other address is the caller's way into this machine, and a tab that could not be protected is refused. */
 async function openTab(runner: CommandRunner, id: CommandId | undefined, params?: RemoteParams): Promise<void> {
-  const { tabs, actions, agentTab } = runner.deps;
+  const { tabs, actions } = runner.deps;
   const url = params?.url || 'about:blank';
   if (!isWebAddress(url)) return runner.sendResult(id, false, null, NOT_A_WEB_ADDRESS);
-  // Shown only when the person is watching the agent's tab: never pulled out from under their own.
   // With no address it opens on the start page, which the agent drives like a blank one, so a person never sees a bare about:blank.
-  const tabId = agentTab.opened(tabs.createTab(params?.url ? url : HOME_URL, agentTab.following()));
+  const tabId = createAgentTab(runner.deps, params?.url ? url : HOME_URL);
   const tab = tabs.list.find((t: ListedTab) => t.id === tabId);
   await whenProtected(tab);
   await actions.waitForTabReady(tab);

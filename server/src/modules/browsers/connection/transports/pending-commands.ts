@@ -59,10 +59,12 @@ class PendingCommands {
     }
   }
 
-  /** Stops waiting on `id` after a failed send. */
-  abandon(id: string) {
+  /** Stops waiting on `id` after a failed send, balancing `pending` and reporting the disconnect. */
+  abandon(id: string, error?: string) {
     const waiter = this.waiters.get(id);
-    if (waiter) this.take(id, waiter.call.browserId);
+    if (!waiter) return;
+    this.take(id, waiter.call.browserId);
+    reportOutcome(waiter.call, 'disconnected', Date.now() - waiter.startedAt, error);
   }
 
   /** The answer never came. */

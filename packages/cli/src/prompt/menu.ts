@@ -126,12 +126,29 @@ const select: KeyAction = (menu) => ({ id: menu.options[menu.active].id });
 const KEYS: Record<string, KeyAction> = {
   '\u0003': () => ({ id: null }),
   [`${ESC}[A`]: move(-1),
+  [`${ESC}OA`]: move(-1),
   k: move(-1),
   [`${ESC}[B`]: move(1),
+  [`${ESC}OB`]: move(1),
   j: move(1),
   '\r': select,
   '\n': select,
 };
+
+/** Pattern splitting raw TTY chunks into CSI/SS3 escape sequences and single characters. */
+const KEY_PATTERN = new RegExp(`${ESC}(?:\\[[0-9;]*[A-Za-z~]|O[A-Za-z])|[\\s\\S]`, 'g');
+
+/** Splits a raw TTY chunk into individual key tokens. */
+const keyTokens = (chunk: string): string[] => chunk.match(KEY_PATTERN) ?? [];
+
+/** Runs every key token in `chunk` until one settles the menu. */
+function runChunk(menu: Menu, chunk: string): Outcome | undefined {
+  for (const key of keyTokens(chunk)) {
+    const outcome = actionFor(key)?.(menu);
+    if (outcome) return outcome;
+  }
+  return undefined;
+}
 
 /** The action for a key press, if it has one. */
 function actionFor(key: string): KeyAction | undefined {
@@ -223,7 +240,7 @@ function release(onData: (buf: Buffer) => void, wasRaw: boolean): void {
 function listen(menu: Menu, wasRaw: boolean, resolve: (id: string) => void, reject: (e: Error) => void): void {
   const onData = (buf: Buffer) => {
     if (windowChanged(menu, buf)) return resizeFallback(menu, onData, wasRaw, resolve, reject);
-    const outcome = actionFor(buf.toString())?.(menu);
+    const outcome = runChunk(menu, buf.toString());
     if (!outcome) return;
     release(onData, wasRaw);
     finish(menu, outcome, resolve, reject);
@@ -233,7 +250,7 @@ function listen(menu: Menu, wasRaw: boolean, resolve: (id: string) => void, reje
 
 /** Detailed menus own their geometry and must stop cursor navigation after a resize. */
 function windowChanged(menu: Menu, buffer: Buffer): boolean {
-  return buffer.toString() !== '\u0003' && !!menu.presentation && !menu.presentation.canNavigate(menu.options);
+  return !buffer.toString().includes('\u0003') && !!menu.presentation && !menu.presentation.canNavigate(menu.options);
 }
 
 /** Stop raw navigation after resize and offer a visible numbered choice instead. */

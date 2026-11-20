@@ -119,7 +119,7 @@ export class Downloads {
   private start(item: DownloadItem, partition: string): void {
     const path = claimPath(this.deps.electron.app.getPath('downloads'), item.getFilename());
     item.setSavePath(path);
-    const entry = this.listed(item, path, partition, item.getFilename());
+    const entry = this.listed(item, path, partition);
     item.on('updated', () => this.update(entry, item));
     item.once('done', (_event, state) => this.finish(entry, item, state));
   }
