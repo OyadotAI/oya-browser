@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "oya-browser",
-      "source": "./",
+      "source": "./plugins/oya-browser",
       "description": "Oya Cloud MCP tools and a browsing skill for coding agents. Requires OYA_API_KEY. For desktop browsing, use Connect in Oya instead.",
       "homepage": "https://oyabrowser.com",
       "repository": "https://github.com/OyadotAI/oya-browser",
