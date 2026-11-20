@@ -68,7 +68,10 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
   constructor(bridge: OnboardingBridge, ready: () => void) {
     super({ path: null, page: 'choices', busy: false, error: '', connected: false, chatgptReady: false, step: 0 });
     this.bridge = bridge;
-    this.technical = new TechnicalSetupViewModel(bridge);
+    // "Continue with Oya" is the developer route: after sign-in, walk through the control panel.
+    this.technical = new TechnicalSetupViewModel(bridge, () =>
+      this.set({ path: 'expert', page: 'guide', step: 0, connected: true, error: '' }),
+    );
     this.ready = ready;
     this.watch();
   }
@@ -91,6 +94,16 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
     const pages = { technical: 'technical', nontechnical: 'assistant', expert: 'expert' } as const;
     this.set({ path, page: path ? pages[path] : 'choices', busy: false, error: '', chatgptReady: false });
     this.ready();
+  }
+
+  /**
+   * From the connect screen, opens the AI apps list or the AI key form. An app id opens the list with
+   * that app's test already showing, so clicking "Codex" lands on Codex, not on a list to search.
+   */
+  openDetail(view: 'agents' | 'model', app?: string): void {
+    this.choose('technical');
+    this.technical.show(view);
+    if (app) this.technical.agents.select(app);
   }
 
   /** Opens a detail screen without changing the selected starting point. */
@@ -180,7 +193,7 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
 
   /** Opens the paired workspace without claiming a guide step was completed. */
   openConsole(): void {
-    void this.bridge.openConsole().catch(() => this.set({ error: 'Could not open the control plane. Try again.' }));
+    void this.bridge.openConsole().catch(() => this.set({ error: 'Could not open the control panel. Try again.' }));
   }
 
   /** Explicit browsing releases the main-process hold and fences pending provider work. */
