@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.265](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.265) · 2026-11-20
+
 ### Added
 
 - Coding agents connected to the desktop app can test a web app and pull data from pages: `read_console` and `read_network` show what the page in the agent's own tab logged and fetched, and `wait_for` waits for text or an element. An agent reads only a tab it opened itself, never the person's tabs or another agent's.
