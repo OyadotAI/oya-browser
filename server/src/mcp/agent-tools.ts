@@ -168,6 +168,9 @@ const agentTools = (): Record<string, AgentTool> => ({
   ...OWN_TOOLS,
 });
 
+/** Single-browser page tools safe to expose to an operator share link. */
+export const PAGE_TOOL_NAMES = [...PAGE_TOOLS];
+
 /** Every tool this file serves, by name. */
 export const AGENT_TOOL_NAMES = [...PAGE_TOOLS, ...CHALLENGES, 'list_playbooks', 'run_playbook', 'run_task'];
 

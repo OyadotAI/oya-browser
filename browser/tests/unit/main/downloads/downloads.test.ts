@@ -86,14 +86,16 @@ it('saves a download straight to the Downloads folder and lists it, newest first
 });
 
 it('never overwrites: a second file of the same name gets " (2)"', () => {
-  const { start } = setup();
+  const { downloads, start } = setup();
   start();
   assert.equal(start().path, join(folder, 'report (2).pdf'));
+  assert.equal(downloads.list()[0].title, 'report (2).pdf');
 });
 
 it('keeps a suggested name to a plain file name in the Downloads folder', () => {
-  const { start } = setup();
+  const { downloads, start } = setup();
   assert.equal(start(new FakeItem(undefined, '../../etc/passwd')).path, join(folder, '.._.._etc_passwd'));
+  assert.equal(downloads.list()[0].title, '.._.._etc_passwd');
 });
 
 it('records progress at most once per interval, and the end at once', () => {

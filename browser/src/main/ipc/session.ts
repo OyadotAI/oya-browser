@@ -28,6 +28,8 @@ type Deps = Pick<
   | 'onboarding'
   | 'desktopSignIn'
   | 'modelSettings'
+  | 'chatAbort'
+  | 'chatRuns'
 >;
 
 /** The channels this group answers. */
@@ -203,11 +205,20 @@ export class SessionHandlers {
     this.leaveWindows();
   }
 
-  /** Sign-out revokes all windows' pending login and credential operations. */
+  /** Sign-out revokes all windows' pending login, chat, and credential operations. */
   private clearSetup(): void {
     this.deps.desktopSignIn?.cancel();
     this.deps.modelSettings?.cancel();
     this.deps.onboarding?.reset?.();
+    this.abortChats();
+  }
+
+  /** Aborts any in-flight Ask chat or playbook runs on sign-out. */
+  private abortChats(): void {
+    this.deps.chatRuns?.forEach((run) => run.abort());
+    this.deps.chatRuns?.clear();
+    this.deps.chatAbort?.abort();
+    this.deps.chatAbort = null;
   }
   /** Sign-out clears private windows and returns each ordinary window to account recovery. */
   private leaveWindows(): void {

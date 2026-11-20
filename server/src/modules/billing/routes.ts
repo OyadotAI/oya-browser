@@ -50,17 +50,26 @@ const checkout = (billing: Billing, req) => billing.subscriptions.checkout(req.u
 const summary = async (billing: Billing, userId: string) =>
   hosted() ? billing.subscriptions.summary(userId) : { enabled: false };
 
+/** Parses a signed webhook's JSON event, or null when the body is not an object. */
+function parseWebhookEvent(raw: Buffer | string) {
+  try {
+    const parsed = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * POST /api/billing/webhook, Stripe's report of a subscription change. Mounted
  * ahead of the JSON parser: the signature is over the raw bytes.
  */
-export function billingWebhook(billing: Billing) {
-  return async (req, res) => {
-    if (!hosted() || !verifySignature(req.body, String(req.headers['stripe-signature'] || ''), webhookSecret()))
-      return res.status(Status.BAD_REQUEST).json({ error: 'Bad signature', code: 'invalid_request' });
-    const event = JSON.parse(req.body.toString('utf8'));
-    await billing.subscriptions.applyEvent(event);
-    notePayment(event);
-    res.json({ received: true });
-  };
-}
+export const billingWebhook = (billing: Billing) => async (req, res) => {
+  if (!hosted() || !verifySignature(req.body, String(req.headers['stripe-signature'] || ''), webhookSecret()))
+    return res.status(Status.BAD_REQUEST).json({ error: 'Bad signature', code: 'invalid_request' });
+  const event = parseWebhookEvent(req.body);
+  if (!event) return res.status(Status.BAD_REQUEST).json({ error: 'Invalid payload', code: 'invalid_request' });
+  await billing.subscriptions.applyEvent(event);
+  notePayment(event);
+  res.json({ received: true });
+};

@@ -15,7 +15,7 @@ import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
 import * as pageRender from '../../../browser/src/page/render.ts';
 import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
 import { fail } from './replies.ts';
-import { AGENT_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
+import { AGENT_TOOL_NAMES, PAGE_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
 import { toolConfig } from './annotations.ts';
 
 /** The keys press_key may press: navigation only, never modifiers or F-keys. */
@@ -264,6 +264,9 @@ type Options = {
 
 /** Every tool the per-browser MCP endpoint serves, for the docs drift test. */
 export const BROWSER_TOOL_NAMES = [...Object.keys(TOOLS), ...AGENT_TOOL_NAMES];
+
+/** Single-browser tools a control share link may use (no project playbooks, LLM agent, or persona secrets). */
+export const SHARE_TOOL_NAMES = [...Object.keys(TOOLS), ...PAGE_TOOL_NAMES];
 
 /**
  * Register the browser tools on `server`. `pick(advance)` names the browser a

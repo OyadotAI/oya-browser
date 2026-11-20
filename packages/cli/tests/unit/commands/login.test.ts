@@ -31,4 +31,16 @@ describe('oya login --key --url', () => {
     });
     assert.notEqual(load().apiKey, 'bad');
   });
+
+  it('normalizes schemeless local URLs and rejects non-http(s) URLs cleanly without TypeError', async () => {
+    const seen: string[] = [];
+    mock.method(globalThis, 'fetch', async (url: string) => (seen.push(String(url)), new Response('{}')));
+    await captured(() => cmdLogin({ key: 'k1', url: 'localhost:3100/' }));
+    assert.equal(seen[0], 'http://localhost:3100/api/config');
+    assert.equal(load().baseUrl, 'http://localhost:3100');
+    await assert.rejects(cmdLogin({ key: 'k1', url: 'ftp://bad.example' }), {
+      code: 'usage',
+      message: 'Control plane URL must be an http:// or https:// address.',
+    });
+  });
 });

@@ -75,6 +75,30 @@ describe('per-browser MCP endpoint', () => {
     assert.ok(!names.includes('start_browser'));
   });
 
+  it('withholds project playbooks, agent tasks and persona credential tools from share links', async () => {
+    stubControl({ authenticate: async () => ({ key: 'k-mine', role: 'operator', sessionId: B }) });
+    connectBrowser(B, 'k-mine');
+    const names = resultOf(await call(handleMcpRequest)).tools.map((t) => t.name);
+    assert.ok(names.includes('navigate') && names.includes('click') && names.includes('list_tabs'));
+    for (const hidden of [
+      'list_playbooks',
+      'run_playbook',
+      'run_task',
+      'solve_captcha',
+      'sign_in',
+      'complete_mfa',
+      'list_saved_logins',
+    ]) {
+      assert.ok(!names.includes(hidden), `${hidden} must not be exposed to a share token`);
+    }
+    const denied = await call(handleMcpRequest, {
+      method: 'tools/call',
+      params: { name: 'list_playbooks', arguments: {} },
+    });
+    const stream = denied.written.map((chunk) => Buffer.from(chunk).toString()).join('');
+    assert.match(stream, /not found|error/i);
+  });
+
   it('gives every tool a title and read-only and destructive hints', async () => {
     operatorOn('k-mine');
     connectBrowser(B, 'k-mine');

@@ -124,8 +124,20 @@ describe('DocsPage', () => {
     expect(screen.queryByRole('button', { name: 'MCP Setup' })).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     await user.click(screen.getByRole('button', { name: 'MCP Setup' }));
+    await act(() => vi.advanceTimersByTimeAsync(NAV_SCROLL_DELAY_MS));
     expect(scrolled).toHaveBeenCalledWith('mcp-setup');
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('');
+  });
+
+  it('renders the chat anchor and cancels pending search debounce on clear', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<DocsPage />);
+    expect(document.getElementById('chat')).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Search documentation' });
+    await user.type(box, 'MCP Setup');
+    await user.keyboard('{Escape}');
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(screen.queryByRole('button', { name: 'MCP Setup' })).toBeNull();
   });
 
   it('says so when nothing matches, and Escape clears and leaves the box', async () => {

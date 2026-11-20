@@ -12,7 +12,7 @@ import { describeCall } from '../../../../../src/modules/browsers/connection/rep
 import { settleResult } from '../../../../../src/modules/browsers/connection/commands.ts';
 import { takeDialogNote } from '../../../../../src/modules/browsers/connection/dialog-notes.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
-import { FakeSocket, connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
+import { connectBrowser, disconnectBrowser } from '../../../support/fakes.ts';
 
 const BROWSER = 'b-transport';
 
@@ -113,9 +113,12 @@ describe('SocketTransport', () => {
     assert.equal((await fine).code, undefined);
   });
 
-  it('fails at once when the socket cannot be written', async () => {
-    const ws = new FakeSocket();
+  it('fails with 503 browser_disconnected and balances pending when the socket cannot be written', async () => {
+    const ws = connectBrowser(BROWSER);
     ws.failWith = new Error('socket closed');
-    await assert.rejects(new SocketTransport(ws).send(describeCall(BROWSER, 'click', {}, 1000)), /socket closed/);
+    registry.commandStarted(BROWSER);
+    const err = await new SocketTransport(ws).send(describeCall(BROWSER, 'click', {}, 1000)).catch((e) => e);
+    assert.deepEqual([err.status, err.code], [503, 'browser_disconnected']);
+    assert.equal(registry.get(BROWSER).pending, 0);
   });
 });

@@ -1,23 +1,22 @@
 /** Agent access to the same local library and closed-tab stack the human uses. */
 import type { TabHandler } from './tab-commands.ts';
-import { isWebAddress, NOT_A_WEB_ADDRESS } from '../tabs/navigation.ts';
+import { isWebAddress } from '../tabs/navigation.ts';
 import { reopenClosed } from '../tabs/tab-order.ts';
 import { whenProtected } from '../tabs/load.ts';
 
-/** Reopening must not bypass the remote open_tab restriction on local files. */
-function reopenWebTab(tabs: Parameters<typeof reopenClosed>[0]): number | undefined {
-  const entry = tabs.closed.entries.at(-1);
-  if (entry && !isWebAddress(entry.url)) throw new Error(NOT_A_WEB_ADDRESS);
-  return reopenClosed(tabs);
+/** Reopens the newest closed web tab into the agent's lane without disturbing non-web entries. */
+function reopenWebTab(deps: Parameters<TabHandler>[0]['deps'], scope: Parameters<typeof reopenClosed>[0]) {
+  const tabId = reopenClosed(scope, deps.agentTab.following(), (entry) => isWebAddress(entry.url));
+  return tabId === undefined ? undefined : deps.agentTab.opened(tabId);
 }
 /** Reopen through the tab manager, so protection and normal tab ordering still apply. */
 const reopen: TabHandler = async (runner, id) => {
-  const { tabs, actions } = runner.deps;
-  const tabId = reopenWebTab(runner.deps.windows?.current.tabs ?? tabs);
+  const scope = runner.deps.windows?.current.tabs ?? runner.deps.tabs;
+  const tabId = reopenWebTab(runner.deps, scope);
   if (tabId === undefined) return runner.sendResult(id, true, { reopened: false });
-  const tab = tabs.find(tabId);
+  const tab = scope.find(tabId);
   await whenProtected(tab);
-  await actions.waitForTabReady(tab);
+  await runner.deps.actions.waitForTabReady(tab);
   runner.sendResult(id, true, { reopened: true, tab_id: tabId, url: tab?.url });
 };
 /** Local operations run behind the normal socket admission/control gate, never a separate backdoor. */

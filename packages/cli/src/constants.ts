@@ -27,6 +27,8 @@ export const ExitCode = {
 export const JSON_INDENT = 2;
 /** Where `oya` commands point when neither a flag, the environment nor the saved file says otherwise. */
 export const DEFAULT_BASE_URL = 'https://oyabrowser.com';
+/** The config folder holds credentials: owner access only. */
+export const CONFIG_DIR_MODE = 0o700;
 /** The saved config holds a credential: owner read/write only. */
 export const CONFIG_FILE_MODE = 0o600;
 /** Permissions for a file of exported cookies: owner only, because it holds live sessions. */

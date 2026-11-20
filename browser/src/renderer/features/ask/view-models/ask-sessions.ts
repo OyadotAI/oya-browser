@@ -19,6 +19,8 @@ export interface AskSessionsState {
 export class AskSessions extends ViewModel<AskSessionsState> {
   /** Each tab's conversation, by tab id. */
   private readonly sessions = new Map<number, AskViewModel>();
+  /** Pre-tab conversations finishing their last run before disposal. */
+  private readonly retiring = new Set<AskViewModel>();
   /** The main process and the panel. */
   private readonly services: AskServices;
   /** Reads attachments. */
@@ -41,7 +43,8 @@ export class AskSessions extends ViewModel<AskSessionsState> {
 
   /** Whether any tab's agent is working. */
   anyBusy(): boolean {
-    return this.state.current.state.sending || [...this.sessions.values()].some((s) => s.state.sending);
+    const busy = (list: Iterable<AskViewModel>) => [...list].some((s) => s.state.sending);
+    return this.state.current.state.sending || busy(this.sessions.values()) || busy(this.retiring);
   }
 
   /** Whether the shown tab's agent is busy. */
@@ -51,19 +54,37 @@ export class AskSessions extends ViewModel<AskSessionsState> {
 
   /** The strip changed: show the active tab's conversation, and let closed tabs' conversations go. */
   private follow(tabs: TabSummary[]): void {
-    const active = tabs.find((tab) => tab.active)?.id;
-    if (active === undefined) return;
-    if (!this.sessions.has(active)) this.sessions.set(active, new AskViewModel(this.services, this.readFile, active));
     this.forgetClosed(new Set(tabs.map((tab) => tab.id)));
+    const active = tabs.find((tab) => tab.active)?.id;
+    if (active === undefined) return this.resetEmpty();
+    if (!this.sessions.has(active)) this.sessions.set(active, new AskViewModel(this.services, this.readFile, active));
     this.show(this.sessions.get(active)!);
   }
 
-  /** Shows `next`; the conversation made before any tab was known goes, unless it is mid-run. */
+  /** Resets to an idle pre-tab conversation when the last tab closes (e.g. sign-out). */
+  private resetEmpty(): void {
+    if (this.state.current.tabId === null && !this.state.current.state.sending) return;
+    this.show(new AskViewModel(this.services, this.readFile));
+  }
+
+  /** Shows `next`; any replaced pre-tab conversation disposes now or once its run finishes. */
   private show(next: AskViewModel): void {
     const previous = this.state.current;
     if (previous === next) return;
     this.set({ current: next });
-    if (previous.tabId === null && !previous.state.sending) previous.dispose();
+    if (previous.tabId === null) this.retire(previous);
+  }
+
+  /** Disposes a replaced pre-tab conversation now, or as soon as its in-flight run ends. */
+  private retire(session: AskViewModel): void {
+    if (!session.state.sending) return session.dispose();
+    this.retiring.add(session);
+    const off = session.subscribe(() => {
+      if (session.state.sending) return;
+      off();
+      this.retiring.delete(session);
+      session.dispose();
+    });
   }
 
   /** Disposes the conversations of tabs that closed, stopping any run still going there. */
@@ -78,7 +99,8 @@ export class AskSessions extends ViewModel<AskSessionsState> {
 
   /** Disposes every conversation. */
   private disposeAll(): void {
-    for (const session of this.sessions.values()) session.dispose();
+    for (const session of [...this.sessions.values(), ...this.retiring]) session.dispose();
+    this.retiring.clear();
     if (this.state.current.tabId === null) this.state.current.dispose();
   }
 }

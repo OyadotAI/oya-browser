@@ -72,6 +72,15 @@ export function apiKeyHeader(req, _res, next) {
   next();
 }
 
+/** Parses an HTTP request's URL against its Host header, or null when either is malformed. */
+export function upgradeUrl(req): URL | null {
+  try {
+    return new URL(String(req?.url || '/'), `http://${req?.headers?.host || 'localhost'}`);
+  } catch {
+    return null;
+  }
+}
+
 /** Extract API key from Authorization header */
 export function getKey(req) {
   return req.headers.authorization?.slice(BEARER_PREFIX_LENGTH) || '';

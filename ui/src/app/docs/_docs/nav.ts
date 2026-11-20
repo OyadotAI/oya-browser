@@ -21,10 +21,11 @@ export const DocsNav = createContext<DocsNavValue>({ active: 'quickstart', navig
 /** The docs navigation, for any component on the page. */
 export const useDocsNav = () => useContext(DocsNav);
 
-/** Scrolls a section into view, if it exists. */
+/** Scrolls a section into view, or to the top of the page when `id` is empty. */
 export function scrollToSection(id: string) {
-  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-  document.getElementById(id)?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+  const behavior = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  if (!id) return window.scrollTo({ top: 0, behavior });
+  document.getElementById(id)?.scrollIntoView({ behavior, block: 'start' });
 }
 
 /** The last heading at or above the activation line. */
@@ -68,8 +69,8 @@ function revealActiveLink() {
 /** Goes to a section: closes the mobile menu, marks it active, updates the URL, then scrolls. */
 function goTo(id: string, setActive: (id: string) => void, closeMenu: () => void) {
   closeMenu();
-  setActive(id);
-  window.history.replaceState(null, '', '#' + id);
+  setActive(id || 'quickstart');
+  window.history.replaceState(null, '', id ? '#' + id : window.location.pathname + window.location.search);
   setTimeout(() => scrollToSection(id), NAV_SCROLL_DELAY_MS);
 }
 

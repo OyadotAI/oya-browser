@@ -29,6 +29,8 @@ export interface BrowsersSink {
   setBrowsers: Set<BrowserRow[]>;
   /** Why the last refresh failed, or null. */
   setLoadError: Set<string | null>;
+  /** Marks the current project's initial browser list as settled. */
+  setLoaded?: Set<boolean>;
 }
 
 /** Loads the browser table; a failure keeps the last rows and says why. */
@@ -46,6 +48,7 @@ export async function loadBrowsers(apiKey: string, live: Liveness, sink: Browser
 function showRows(sink: BrowsersSink, rows: BrowserRow[]) {
   sink.setBrowsers(rows);
   sink.setLoadError(null);
+  sink.setLoaded?.(true);
 }
 
 /** Where the fleet feed writes. */
@@ -112,7 +115,7 @@ export async function loadPersonas(apiKey: string, live: Liveness, sink: Persona
     const { personas } = await api<PersonaList>('/personas', { key: apiKey });
     if (live.keyRef.current === apiKey) showPersonas(sink, personas || []);
   } catch {
-    sink.setStatus(afterFailure);
+    if (live.keyRef.current === apiKey) sink.setStatus(afterFailure);
   }
 }
 

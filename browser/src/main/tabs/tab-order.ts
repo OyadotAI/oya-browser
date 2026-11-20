@@ -207,11 +207,15 @@ export function closeToRight(tabs: OrderedTabs, id: number, spare: (tab: Tab) =>
   if (index !== -1) closeWhere(tabs, (t, i) => i > index && !t.pinned && !spare(t));
 }
 
-/** Reopens the most recently closed tab where it was; returns its id, or undefined when none is left. */
-export function reopenClosed(tabs: OrderedTabs): number | undefined {
-  const entry = tabs.closed.pop();
-  if (!entry) return undefined;
-  const id = tabs.createTab(entry.url, true);
+/** Predicates over a closed tab entry. */
+type AllowClosed = (entry: ClosedTab) => boolean;
+
+/** Reopens the newest closed tab matching `allow` where it was; returns its id, or undefined when none matches. */
+export function reopenClosed(tabs: OrderedTabs, show = true, allow: AllowClosed = () => true): number | undefined {
+  const at = tabs.closed.entries.findLastIndex(allow);
+  if (at === -1) return undefined;
+  const [entry] = tabs.closed.entries.splice(at, 1);
+  const id = tabs.createTab(entry.url, show);
   moveTabTo(tabs, id, entry.index);
   return id;
 }

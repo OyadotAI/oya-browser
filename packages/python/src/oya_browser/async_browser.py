@@ -99,15 +99,21 @@ class AsyncBrowser(BrowserBase):
     async def complete_mfa(self) -> dict[str, Any]:
         """Completes an MFA prompt with the persona's stored factor; otherwise returns a link for a person."""
         result: dict[str, Any] = await self._call(ops.challenge(self.id, "mfa"))
-        return result
+        return ops.mfa_result(self._base_url, result)
 
     async def ask(self, prompt: str, data: dict[str, Any] | None = None, secrets: dict[str, Any] | None = None) -> str:
         """A task in plain language, on this key's model. `secrets` are typed for the agent but never shown to it."""
         return str(ops.agent_answer(await self._call(ops.ask(self.id, prompt, data, secrets))).get("text", ""))
 
-    async def extract(self, prompt: str, schema: dict[str, Any], data: dict[str, Any] | None = None) -> Any:
-        """ask() for data: the answer comes back in the shape of the JSON `schema`."""
-        return ops.agent_answer(await self._call(ops.ask(self.id, prompt, data, None, schema))).get("data")
+    async def extract(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        data: dict[str, Any] | None = None,
+        secrets: dict[str, Any] | None = None,
+    ) -> Any:
+        """ask() for data: the answer comes back in the shape of the JSON `schema`; raises 422 when it could not."""
+        return ops.extract_data(await self._call(ops.ask(self.id, prompt, data, secrets, schema)))
 
     async def to_playbook(self, name: str) -> dict[str, Any]:
         """Saves the last ask() as a playbook: Playwright code with the values as variables."""
@@ -174,9 +180,15 @@ class AsyncBrowser(BrowserBase):
         return browser_use(await self.fresh_cdp_url())
 
     async def stop(self) -> dict[str, Any]:
-        """Stops it; a borrowed desktop browser only closes this SDK's own tab."""
-        result: dict[str, Any] = await self._call(ops.stop(self.id, self.reused))
-        return result
+        """Stops it; a borrowed desktop browser only closes this SDK's own tab, best effort."""
+        if not self.reused:
+            result: dict[str, Any] = await self._call(ops.stop(self.id, False))
+            return result
+        try:
+            await self._call(ops.stop(self.id, True))
+        except Exception:
+            pass
+        return {"id": self.id, "ok": True, "reused": True}
 
     async def __aenter__(self) -> "AsyncBrowser":
         return self

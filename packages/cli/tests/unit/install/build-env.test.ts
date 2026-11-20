@@ -105,4 +105,16 @@ describe('buildEnv', () => {
     );
     assert.match(extra[2], /^# FLEET_TOKEN=/);
   });
+
+  it('preserves existing secrets and custom keys on replay when new secrets are empty, while honoring overrides', () => {
+    const existing = {
+      DATABASE_URL: 'postgres://u:p#ss@h:5432/db',
+      OPENAI_API_KEY: 'sk-old',
+      CUSTOM_FLAG: 'keep-me',
+    };
+    const { values } = buildEnv(BASE, { DATABASE_URL: '', OPENAI_API_KEY: 'sk-new' }, existing);
+    assert.equal(values.DATABASE_URL, 'postgres://u:p#ss@h:5432/db');
+    assert.equal(values.OPENAI_API_KEY, 'sk-new');
+    assert.equal(values.CUSTOM_FLAG, 'keep-me');
+  });
 });

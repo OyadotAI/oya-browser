@@ -9,8 +9,14 @@ import { MIN_REFRESH_DELAY_MS } from '@/lib/constants';
 const jwt = (payload: object) => `e30.${btoa(JSON.stringify(payload))}.sig`;
 
 describe('tokenExpiry', () => {
-  it('reads the exp claim', () => {
+  it('reads the exp claim, including unpadded Base64URL payloads with - and _', () => {
     expect(tokenExpiry(jwt({ exp: 1234 }))).toBe(1234);
+    const urlSafe = btoa(JSON.stringify({ sub: '>?>>>>', exp: 9876 }))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+    expect(urlSafe).toMatch(/[-_]/);
+    expect(tokenExpiry(`e30.${urlSafe}.sig`)).toBe(9876);
   });
 
   it('is null without an exp claim or for something that is not a JWT', () => {

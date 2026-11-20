@@ -6,6 +6,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Hardened server authorization and connection lifecycle: restricted pairing, persona-group, pool-cookie and credential-import writes to administrators, confined shared-browser MCP links to single-browser page tools, rejected invalid MFA domain clears, serialized WebSocket admission and command-send failure cleanup, and handled malformed upgrade URLs, billing state, and usage accounting cleanly.
+- Improved desktop browser reliability: kept alert/confirm/prompt dialogs scoped per page, preserved control ownership and local MCP session cleanup on disconnect or `DELETE /mcp`, kept offline MCP access to the starting tab after opening new tabs, aborted in-flight chats on sign-out and empty tab strips, deduplicated download titles, and fixed Library site filtering for hostless items.
+- Fixed console and docs behavior: decoded Base64URL JWT expiry for background session renewal, preserved MFA requirements on OAuth/claim callbacks, kept `/dashboard?browser=` deep links intact, reset workspace tabs and modals across project and manual API-key switches, persisted shared `/live` tokens across same-tab reloads with accurate initial control mode, aligned `/docs` search anchors and mobile scrolling, and fixed header menu dismissal and keyboard shortcuts.
+- Hardened the CLI, TypeScript SDK, and Python SDK: wrote config, `.env`, and cookie jar files atomically owner-only without following symlinks, scrubbed secret prompts from readline history, preserved existing `.env` secrets and quoted special characters on `oya install --config`, normalized schemeless `oya login` URLs, improved global flag and TTY menu input handling, URL-encoded SDK path segments, and aligned Python SDK start options, timeouts, header checks, and element validation.
+
 ## [1.0.261](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.261) · 2026-11-20
 
 ### Added

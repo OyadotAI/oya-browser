@@ -34,6 +34,13 @@ def test_a_saved_key_never_goes_to_another_deployment(tmp_path):
         resolve(base_url="https://oyabrowser.com")
 
 
+def test_an_https_saved_key_never_downgrades_to_http_on_the_same_host(tmp_path):
+    save(tmp_path, apiKey="prod-key", baseUrl="https://oyabrowser.com")
+    with pytest.raises(ValueError, match="No API key"):
+        resolve(base_url="http://oyabrowser.com")
+    assert resolve(base_url="https://OyaBrowser.com:443/").api_key == "prod-key"
+
+
 def test_no_key_anywhere_says_where_to_get_one():
     with pytest.raises(ValueError) as e:
         resolve()
@@ -65,3 +72,14 @@ def test_saving_a_key_never_writes_through_a_symlink_at_the_config_path(tmp_path
     assert elsewhere.read_text() == "{}"
     assert not (tmp_path / "config.json").is_symlink()
     assert list(tmp_path.glob(".config.json.*.tmp")) == []
+
+
+def test_saving_a_key_succeeds_even_when_a_pid_temp_file_was_left_behind(tmp_path):
+    import os
+
+    from oya_browser._config import save_key
+
+    stale = tmp_path / f".config.json.{os.getpid()}.tmp"
+    stale.write_text("stale")
+    assert save_key("new-key", "https://oyabrowser.com") is True
+    assert json.loads((tmp_path / "config.json").read_text())["apiKey"] == "new-key"

@@ -26,6 +26,13 @@ describe('documentation anchor scrolling', () => {
     vi.stubGlobal('matchMedia', undefined);
     expect(() => scrollToSection('missing')).not.toThrow();
   });
+  it('scrolls to the top of the page when the section id is empty', () => {
+    const scrollTo = vi.fn();
+    vi.stubGlobal('scrollTo', scrollTo);
+    vi.stubGlobal('matchMedia', () => ({ matches: true }));
+    scrollToSection('');
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' });
+  });
 });
 
 /** A side menu 600px tall holding the current link at the given top edge. */

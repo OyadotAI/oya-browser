@@ -3,7 +3,7 @@
  * Each browser gets its own endpoint: POST/GET/DELETE /mcp/:browserId
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { registerBrowserTools } from './browser-tools.ts';
+import { registerBrowserTools, SHARE_TOOL_NAMES } from './browser-tools.ts';
 import { registry } from '../modules/browsers/registry.ts';
 import { Status } from '../platform/http-status.ts';
 import { authorize } from './auth.ts';
@@ -13,12 +13,13 @@ import { MCP_VERSION } from './constants.ts';
 /** The current-page resource's address. */
 const CURRENT_PAGE = 'browser://current-page';
 
-/** Create an MCP server for a browser session. */
-function createMcpServer(browserId) {
+/** Create an MCP server for a browser session; share links receive only single-browser tools. */
+function createMcpServer(browserId, share = false) {
   const browser = registry.get(browserId);
   const serverName = browser ? `Oya Browser, ${browser.name}` : `Oya Browser, ${browserId}`;
   const server = new McpServer({ name: serverName, version: MCP_VERSION });
-  registerBrowserTools(server, { pick: () => browserId, oneBrowser: true });
+  const only = share ? SHARE_TOOL_NAMES : undefined;
+  registerBrowserTools(server, { pick: () => browserId, oneBrowser: true, only });
   const description = 'Current URL and page title of the connected browser';
   server.resource('current-page', CURRENT_PAGE, { description }, async () => currentPage(browserId));
   return server;
@@ -38,13 +39,13 @@ export async function handleMcpRequest(req, res) {
   if (!caller) return;
   if (!reachable(browserId, caller.key))
     return res.status(Status.NOT_FOUND).json({ error: `Browser ${browserId} not connected` });
-  await serveBrowser(browserId, req, res);
+  await serveBrowser(browserId, !!caller.share, req, res);
 }
 
 /** Serves the request from a fresh server for the browser; a failure is logged and answered 500. */
-async function serveBrowser(browserId, req, res) {
+async function serveBrowser(browserId, share, req, res) {
   try {
-    await serve(createMcpServer(browserId), req, res);
+    await serve(createMcpServer(browserId, share), req, res);
   } catch (err) {
     console.error(`[mcp] Request error for browser ${browserId}:`, err.message);
     answerFailure(res, err);

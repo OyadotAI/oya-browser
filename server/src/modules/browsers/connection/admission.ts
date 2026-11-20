@@ -44,20 +44,25 @@ export interface Admitted {
   browserId: string;
 }
 
-/** Checks the server is accepting and the key and browser id are the caller's; replaces a stale socket. */
+/** Checks the server is accepting and resolves the caller's key and browser id. */
 export async function admit(msg): Promise<Admitted> {
   // Draining: finish what is in flight, accept nothing new, so an instance can restart without dropping sessions.
   if (registry.draining) throw new Rejection(CloseCode.DRAINING, 'Server draining', 'draining', 'server is draining');
   const apiKey = await keyFor(msg.api_key, msg.browser_id);
   const browserId = msg.browser_id || randomUUID();
-  const existing = registry.get(browserId);
-  if (existing && existing.apiKey !== apiKey) throw hijack(browserId);
-  if (existing) replaceSocket(browserId, existing);
   return { apiKey, browserId };
 }
 
+/** Refuses another tenant's browser id, or releases and closes a prior registered socket for the same key. */
+export function claimRegistered(browserId: string, apiKey: string) {
+  const existing = registry.get(browserId);
+  if (!existing) return;
+  if (existing.apiKey !== apiKey) throw hijack(browserId);
+  replaceSocket(browserId, existing);
+}
+
 /** Another tenant's browser id: refused, or any valid key could take over that browser. */
-const hijack = (browserId: string) =>
+export const hijack = (browserId: string) =>
   new Rejection(
     CloseCode.REJECTED,
     'browser_id registered to a different key',

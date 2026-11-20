@@ -131,6 +131,19 @@ describe('DesktopControl', () => {
     assert.equal(ctx.control.snapshot().busy, false);
   });
 
+  it('settles locally to human control when the socket drops while draining a local command', async () => {
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    const finishLocal = await ctx.control.beginLocalCommand();
+    const taking = ctx.control.change('acquire');
+    await flush();
+    ctx.control.disconnect();
+    finishLocal();
+    mock.timers.tick(50);
+    await flush();
+    const settled = await taking;
+    assert.deepEqual([settled.mode, settled.mine, settled.interactive], ['human', true, true]);
+  });
+
   it('refuses an unknown action and a second handoff', async () => {
     await assert.rejects(ctx.control.change('steal'), /Invalid control action/);
     const first = ctx.control.change('acquire');

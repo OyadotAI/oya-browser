@@ -206,12 +206,18 @@ describe('authMiddleware', () => {
     for (const path of [
       '/config',
       '/personas/p1',
+      '/persona-groups',
+      '/persona-groups/g1',
       '/proxies',
+      '/pairing',
+      '/pool/cookies',
+      '/browsers/b1/credentials/import',
       '/gateway/providers',
       '/gateway/strategy',
+      '/gateway/profiles/pr1',
       '/Personas',
     ]) {
-      const { res } = await admit(token, { method: 'PUT', path });
+      const { res } = await admit(token, { method: 'POST', path });
       assert.equal(res.body?.error, 'Administrator permission required', path);
     }
   });
@@ -286,9 +292,11 @@ describe('authMiddleware with a share link', () => {
     }
   });
 
-  it('matches the path after decoding it', async () => {
+  it('matches the path after decoding it, and refuses malformed percent-encoding with 403', async () => {
     const token = await share('viewer', 'sess 1');
     assert.equal((await at(token, 'GET', '/live/sess%201')).passed, true);
+    const bad = await at(token, 'GET', '/live/%E0%A4%A');
+    assert.deepEqual([bad.passed, bad.res.statusCode, bad.res.body.error], [false, Status.FORBIDDEN, REFUSED]);
   });
 });
 

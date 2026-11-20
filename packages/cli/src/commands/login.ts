@@ -63,12 +63,21 @@ const credentials = (token?: string, cookie = '') => ({
   ...(cookie ? { Cookie: cookie } : {}),
 });
 
+/** Origin of `url` for error messages, falling back to `url` if unparseable. */
+function originOf(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
 /** POSTs JSON and returns the response with its parsed body. */
 async function postJson<T>(url: string, body: unknown, token?: string, cookie = ''): Promise<JsonReply<T>> {
   const headers = { ...credentials(token, cookie), 'Content-Type': 'application/json' };
   const signal = AbortSignal.timeout(LOGIN_TIMEOUT_MS);
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal }).catch(() => {
-    throw new CliError(`Could not reach ${new URL(url).origin}.`, 'unreachable', {
+    throw new CliError(`Could not reach ${originOf(url)}.`, 'unreachable', {
       hint: 'Check the address, then run oya login again.',
     });
   });
@@ -168,11 +177,39 @@ function namedFailure(err: unknown, baseUrl: string): unknown {
   return new CliError(`${baseUrl} rejected that key.`, 'invalid_key', { hint: `Check the key, ${again}` });
 }
 
+/** Adds `http://` for local addresses or `https://` for remote ones when no scheme was typed. */
+function withScheme(raw: string): string {
+  const trimmed = raw.trim();
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^[^:/]+:\d+(\/|$)/.test(trimmed)) return trimmed;
+  return `${/^(localhost|127\.)/i.test(trimmed) ? 'http' : 'https'}://${trimmed}`;
+}
+
+/** Validates a control-plane URL; returns an error message when invalid, else undefined. */
+function urlProblem(raw: string): string | undefined {
+  const bad = 'That is not a URL, try https://oyabrowser.com or http://localhost:3100';
+  try {
+    const parsed = new URL(withScheme(raw));
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'Must be http:// or https://';
+    return parsed.hostname ? undefined : bad;
+  } catch {
+    return bad;
+  }
+}
+
+/** Normalized http(s) control-plane URL without trailing slashes, or a usage error. */
+function normalizeLoginUrl(raw: string): string {
+  if (urlProblem(raw)) throw usage('Control plane URL must be an http:// or https:// address.');
+  return withScheme(raw).replace(/\/+$/, '');
+}
+
 /** The control plane: `--url`, else the current one when a key was passed, else asked. Trailing slashes dropped. */
 async function loginUrl(flags: Flags): Promise<string> {
   const current = resolved().baseUrl;
-  const url = flagStr(flags, 'url') || (flagStr(flags, 'key') ? current : await ask('Control plane URL:', current));
-  return url.replace(/\/+$/, '');
+  const given = flagStr(flags, 'url');
+  if (given) return normalizeLoginUrl(given);
+  if (flagStr(flags, 'key')) return normalizeLoginUrl(current);
+  const raw = await ask('Control plane URL:', current, { validate: urlProblem });
+  return normalizeLoginUrl(raw);
 }
 
 /** `oya login [--key K] [--url U]`. With both flags it never prompts: that is the CI path. */

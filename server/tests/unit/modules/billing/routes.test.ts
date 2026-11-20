@@ -83,9 +83,18 @@ describe('billing routes', () => {
     assert.deepEqual(asked, []);
   });
 
-  it('takes no webhook on a self-hosted server', async () => {
-    delete process.env.STRIPE_SECRET_KEY;
+  it('takes no webhook on a self-hosted server, or with a missing or non-JSON body', async () => {
     const { billing, asked } = fakeBilling();
+    const missing = new FakeResponse();
+    await billingWebhook(billing)({ body: undefined, headers: { 'stripe-signature': 't=1,v1=deadbeef' } }, missing);
+    assert.equal(missing.statusCode, 400);
+    const badJson = new FakeResponse();
+    const raw = Buffer.from('not-json');
+    const t = Math.floor(Date.now() / 1000);
+    const sig = createHmac('sha256', 'whsec_test').update(`${t}.`).update(raw).digest('hex');
+    await billingWebhook(billing)({ body: raw, headers: { 'stripe-signature': `t=${t},v1=${sig}` } }, badJson);
+    assert.equal(badJson.statusCode, 400);
+    delete process.env.STRIPE_SECRET_KEY;
     const res = new FakeResponse();
     await billingWebhook(billing)(webhook({ type: 'customer.subscription.created' }), res);
     assert.equal(res.statusCode, 400);

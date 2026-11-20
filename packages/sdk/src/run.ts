@@ -2,7 +2,7 @@
  * Run: a task submitted with `browser.submit()`, running in the background.
  * The polling itself lives in run-watch.ts.
  */
-import type { Http } from './client.js';
+import { segment, type Http } from './client.js';
 import type { RunInfo, RunResult } from './types/index.js';
 import { RUN_POLL_MS } from './constants.js';
 import { watchRun, type RunCallbacks } from './run-watch.js';
@@ -24,13 +24,13 @@ export class Run {
   }
 
   /** The run's current state. */
-  status(): Promise<RunInfo> {
-    return this.http.request<RunInfo>('GET', `/api/runs/${encodeURIComponent(this.id)}`);
+  async status(): Promise<RunInfo> {
+    return this.http.request<RunInfo>('GET', `/api/runs/${segment(this.id)}`);
   }
 
   /** Answer the open attention request: `'done'` after handling it by hand, or your reply to the agent. */
   async respond(response = 'done'): Promise<void> {
-    await this.http.request('POST', `/api/runs/${encodeURIComponent(this.id)}/respond`, { response });
+    await this.http.request('POST', `/api/runs/${segment(this.id)}/respond`, { response });
   }
 
   /** Polls until the run ends, firing callbacks on the way. */

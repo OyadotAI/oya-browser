@@ -107,4 +107,15 @@ describe('Run', () => {
     await flush();
     await assert.rejects(run.done);
   });
+
+  it('refuses path-traversal run ids via segment()', async () => {
+    const { oya } = client({
+      'GET /api/browsers/b1': { body: { id: 'b1' } },
+      'POST /api/browsers/b1/runs': { body: { id: '../admin' } },
+    });
+    const b = await oya.browser.get('b1');
+    const bad = await b.submit({ prompt: 'go' }, { pollMs: 1000 });
+    await assert.rejects(bad.status(), /must be one path segment|single path segment|\.\./i);
+    await assert.rejects(bad.respond('done'), /must be one path segment|single path segment|\.\./i);
+  });
 });

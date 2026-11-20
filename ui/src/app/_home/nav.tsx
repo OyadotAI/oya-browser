@@ -1,5 +1,6 @@
 /** The landing navigation, with React-owned product and small-screen disclosures. */
 'use client';
+import { useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { ChevronDown, Menu, X } from 'lucide-react';
@@ -112,9 +113,11 @@ function NavActions({ state, toggle }: Navigation) {
 
 /** A compact header keeps its disclosures local to the landing page. */
 export function Nav() {
-  const nav = useNavigation();
+  const headerRef = useRef<HTMLElement>(null);
+  const nav = useNavigation(headerRef);
   return (
     <header
+      ref={headerRef}
       className={styles.header}
       onKeyDown={nav.escape}
       onBlur={(event) => {

@@ -6,9 +6,11 @@
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useAuth } from '@/components/auth-provider';
-import { importApiKey } from '@/lib/api';
+import { AccountError, importApiKey } from '@/lib/api';
+import { keepStepUp, stepUpPending } from '@/lib/auth/storage';
+import { stepUpUrl } from '@/lib/auth/step-up';
 import { forgetClaim, pendingClaim, rememberClaim } from '@/lib/claim';
 
 /** Where the claim stands. */
@@ -27,6 +29,19 @@ function takeKeyFromUrl() {
   return pendingClaim();
 }
 
+/** Redirects to the 2FA page while keeping the pending claim in storage. */
+function requestStepUp() {
+  keepStepUp(true);
+  window.location.replace(stepUpUrl('/claim'));
+}
+
+/** Handles a refused import, preserving the claim when a second factor is owed. */
+function failClaim(err: unknown, done: (state: ClaimState) => void) {
+  if (err instanceof AccountError && err.code === 'mfa_required') return requestStepUp();
+  forgetClaim();
+  done({ status: 'failed', error: err instanceof Error ? err.message : 'Could not claim this key' });
+}
+
 /** Imports `key` for the signed-in person and reports how it went. */
 async function claim(token: string, key: string, done: (state: ClaimState) => void) {
   try {
@@ -34,15 +49,21 @@ async function claim(token: string, key: string, done: (state: ClaimState) => vo
     forgetClaim();
     done({ status: 'claimed' });
   } catch (err) {
-    forgetClaim();
-    done({ status: 'failed', error: err instanceof Error ? err.message : 'Could not claim this key' });
+    failClaim(err, done);
   }
 }
 
+/** Marks the claim as started and imports `key` for the signed-in person. */
+function beginClaim(token: string, key: string, started: RefObject<boolean>, done: (state: ClaimState) => void) {
+  started.current = true;
+  void claim(token, key, done);
+}
+
 /** Claims the waiting key if there is one and someone is signed in, else says which of the two is missing. */
-function settle(token: string | null, done: (state: ClaimState) => void) {
+function settle(token: string | null, started: RefObject<boolean>, done: (state: ClaimState) => void) {
   const key = takeKeyFromUrl();
-  if (key && token) return void claim(token, key, done);
+  if (key && token && stepUpPending()) return window.location.replace(stepUpUrl('/claim'));
+  if (key && token) return beginClaim(token, key, started, done);
   const status = key ? 'signed-out' : 'missing';
   queueMicrotask(() => done({ status }));
 }
@@ -50,9 +71,10 @@ function settle(token: string | null, done: (state: ClaimState) => void) {
 /** Takes the key off the URL, then claims it once the session is known; what to show meanwhile. */
 export function useClaim(): ClaimState {
   const { token, loading } = useAuth();
+  const started = useRef(false);
   const [state, setState] = useState<ClaimState>({ status: 'claiming' });
   useEffect(() => {
-    if (!loading) settle(token, setState);
+    if (!loading && !started.current) settle(token, started, setState);
   }, [loading, token]);
   return state;
 }

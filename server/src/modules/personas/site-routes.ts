@@ -53,13 +53,17 @@ export function mountCredentials(router: Router, personas: PersonaService) {
   router.post('/browsers/:browserId/credentials/import', authMiddleware, requireBrowser, importCredentials(personas));
 }
 
+/** Normalizes an optional MFA site: null when omitted, or false when not a hostname. */
+const mfaSite = (raw: unknown): string | null | false =>
+  raw === undefined || raw === null ? null : typeof raw === 'string' ? credentials.domainOf(raw) || false : false;
+
 /** Stores a second factor, persona-wide or for one site. */
 const setMfa = (personas: PersonaService) => async (req: Request, res: Response) => {
   const p = ownedPersona(personas, req, res);
   if (!p) return;
   const { domain = null, ...config } = req.body || {};
-  const site = domain ? credentials.domainOf(domain) : null;
-  if (domain && !site) return res.status(Status.BAD_REQUEST).json({ error: 'domain is not a hostname' });
+  const site = mfaSite(domain);
+  if (site === false) return res.status(Status.BAD_REQUEST).json({ error: 'domain is not a hostname' });
   const described: any = await mfa.set(p.id, config, site);
   auditPersona(req, 'mfa.configure', p.id, { meta: { type: described.type, domain: site } });
   res.json(described);
@@ -75,7 +79,8 @@ const listMfa = (personas: PersonaService) => (req: Request, res: Response) => {
 const clearMfa = (personas: PersonaService) => async (req: Request, res: Response) => {
   const p = ownedPersona(personas, req, res);
   if (!p) return;
-  const site = req.query.domain ? credentials.domainOf(String(req.query.domain)) : null;
+  const site = mfaSite(req.query.domain);
+  if (site === false) return res.status(Status.BAD_REQUEST).json({ error: 'domain is not a hostname' });
   await mfa.clear(p.id, site);
   auditPersona(req, 'mfa.clear', p.id, { meta: { domain: site } });
   res.json({ ok: true });

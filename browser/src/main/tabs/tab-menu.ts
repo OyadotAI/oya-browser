@@ -44,7 +44,8 @@ export class TabMenu {
    * asking for whole-browser control left every item dead even with no agent running.
    */
   private item(tab: Tab, label: string, run: () => unknown, enabled = true): MenuItemConstructorOptions {
-    return { label, enabled, click: () => this.deps.agentTab.humanMay(tab.id) && run() };
+    const may = this.deps.agentTab.humanMay(tab.id);
+    return { label, enabled: enabled && may, click: () => this.deps.agentTab.humanMay(tab.id) && run() };
   }
 
   /** The items that open or reload: they act on tab `tab`. */
@@ -54,9 +55,15 @@ export class TabMenu {
       this.item(tab, 'New Tab to the Right', () => openBeside(tabs, tab.id, HOME_URL)),
       { type: 'separator' },
       this.item(tab, 'Reload', () => reloadOrRecover(this.deps, tab, () => tabs.reloadTab(tab)), !tab.home),
-      this.item(tab, 'Duplicate', () => openBeside(tabs, tab.id, tab.url || HOME_URL)),
+      this.duplicateItem(tab),
       ...this.placeItems(tab),
     ];
+  }
+
+  /** Duplicates a web or start-page tab beside itself; disabled on built-in collections. */
+  private duplicateItem(tab: Tab): MenuItemConstructorOptions {
+    const dup = () => !tab.collection && openBeside(this.deps.tabs, tab.id, tab.url || HOME_URL);
+    return this.item(tab, 'Duplicate', dup, !tab.collection);
   }
 
   /** Pin or Unpin, and Move to a new window: the items that change where the tab lives. */

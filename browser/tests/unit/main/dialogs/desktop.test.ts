@@ -142,6 +142,61 @@ test('a failed human presenter cancels instead of blocking or accepting', () => 
   assert.deepEqual(replies, [false]);
 });
 
+test('per-page ownership routes human and agent dialogs independently and answers the agent dialog while a human sheet is open', async () => {
+  const sheets: any[] = [];
+  const humanPage: any = Object.assign(new EventEmitter(), {
+    handler: null as any,
+    _oyaBeforeUnloadDialogs: true,
+    isDestroyed: () => false,
+    _setOyaDialogHandler(h: any) {
+      this.handler = h;
+    },
+  });
+  const agentPage: any = Object.assign(new EventEmitter(), {
+    handler: null as any,
+    _oyaBeforeUnloadDialogs: true,
+    isDestroyed: () => false,
+    _setOyaDialogHandler(h: any) {
+      this.handler = h;
+    },
+  });
+  let agentOwnsSecond = true;
+  const dialogs = new DesktopDialogs(
+    (page) => !(agentOwnsSecond && page === agentPage),
+    (page, info, answer) => {
+      const sheet = { page, info, answer, closed: 0 };
+      sheets.push(sheet);
+      return () => {
+        sheet.closed++;
+      };
+    },
+  );
+  dialogs.watch(humanPage);
+  dialogs.watch(agentPage);
+  const humanReplies: unknown[] = [];
+  const agentReplies: unknown[] = [];
+  humanPage.handler({ dialogType: 'confirm', messageText: 'Human?', frame: { url: 'https://h.test' } }, (a: boolean) =>
+    humanReplies.push(a),
+  );
+  agentPage.handler({ dialogType: 'confirm', messageText: 'Agent?', frame: { url: 'https://a.test' } }, (a: boolean) =>
+    agentReplies.push(a),
+  );
+  assert.equal(sheets.length, 1, 'human tab opens its native sheet');
+  assert.equal(dialogs.current()?.message, 'Agent?', 'agent tab queues its dialog for handle_dialog');
+  assert.equal((await dialogs.answer(true)).ok, true, 'open human sheet never blocks agent handle_dialog');
+  assert.deepEqual(agentReplies, [true]);
+  assert.equal((await dialogs.answer(true)).error, 'Human control owns this dialog');
+  sheets[0].answer(false);
+  assert.deepEqual(humanReplies, [false]);
+  agentPage.handler({ dialogType: 'confirm', messageText: 'Flip?', frame: { url: 'https://a.test' } }, (a: boolean) =>
+    agentReplies.push(a),
+  );
+  agentOwnsSecond = false;
+  dialogs.controlChanged();
+  assert.equal(dialogs.current(), null);
+  assert.equal(sheets.length, 2, 'releasing agent tab transfers its pending dialog to a human sheet');
+});
+
 test('replacement navigation declines an old sheet without accepting unsaved changes', () => {
   const f = fixture();
   const prompt = f.open('prompt');
