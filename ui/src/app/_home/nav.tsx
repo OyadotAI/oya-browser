@@ -3,6 +3,7 @@
 import { useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { usePathname } from 'next/navigation';
 import { ChevronDown, Menu, X } from 'lucide-react';
 import { SCREENSHOT_HEIGHT, SCREENSHOT_WIDTH } from './constants';
 import { OyaLogo } from '@/components/oya-logo';
@@ -64,6 +65,7 @@ function ProductDisclosure({ state, toggle }: Navigation) {
 
 /** Following any navigation destination dismisses the small-screen disclosure. */
 function NavLinks(props: Navigation) {
+  const pathname = usePathname();
   return (
     <nav
       className={styles.links}
@@ -76,7 +78,7 @@ function NavLinks(props: Navigation) {
     >
       <ProductDisclosure {...props} />
       {WORDS.map(({ word, href }) => (
-        <a key={word} href={href}>
+        <a key={word} href={href} aria-current={pathname === href ? 'page' : undefined}>
           {word}
         </a>
       ))}

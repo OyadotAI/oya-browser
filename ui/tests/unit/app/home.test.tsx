@@ -374,7 +374,7 @@ describe('landing page', () => {
       'Docs',
       'Security',
     ]);
-    expect(main.getByRole('link', { name: 'Pricing' }).getAttribute('href')).toBe('/#pricing');
+    expect(main.getByRole('link', { name: 'Pricing' }).getAttribute('href')).toBe('/pricing');
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));
     expect(main.getByRole('link', { name: /^Control plane/ }).getAttribute('href')).toBe('/#control-plane');
     expect(main.getByRole('button', { name: 'Product' }).getAttribute('aria-expanded')).toBe('true');
@@ -382,7 +382,7 @@ describe('landing page', () => {
     for (const [name, href] of [
       ['Compare', '/vs'],
       ['Research', '/research'],
-      ['Pricing', '/#pricing'],
+      ['Pricing', '/pricing'],
       ['Questions', '/#faq'],
     ])
       expect(footer.getByRole('link', { name }).getAttribute('href')).toBe(href);

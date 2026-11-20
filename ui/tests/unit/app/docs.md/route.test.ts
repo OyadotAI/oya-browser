@@ -9,6 +9,16 @@ import { serveDocsHtml } from '../../support/docs-html';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('GET /docs.md', () => {
+  it('carries the desktop-first setup and bounded detection claims from rendered HTML into agent docs', async () => {
+    serveDocsHtml();
+    const body = await (await GET()).text();
+    expect(body.indexOf('### Desktop app')).toBeLessThan(body.indexOf('### Oya Cloud: servers, containers and CI'));
+    expect(body).toMatch(/start a new\s+agent session/);
+    expect(body).toContain('Sites can still require verification or block automation');
+    expect(body).not.toContain('never flagged as a bot');
+    expect(body).toContain('[Oya for coding agents](https://oyabrowser.com/browser-for-claude-code)');
+  });
+
   it('serves the whole page as Markdown, pointing at the HTML as canonical', async () => {
     serveDocsHtml();
     const res = await GET();

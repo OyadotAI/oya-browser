@@ -8,6 +8,7 @@ import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
 import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import styles from '../page.module.css';
 import trust from './trust.module.css';
 import { SiteHeader } from '../_home/site-header';
@@ -29,7 +30,7 @@ export const dynamic = 'force-static';
 export const metadata: Metadata = {
   title: 'Trust center',
   description: 'How Oya Browser secures customer data: HIPAA status, security practices, controls and subprocessors.',
-  alternates: { canonical: '/trust' },
+  alternates: { canonical: '/trust', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The generated evidence; the site is built from ui/, one folder down from compliance/. */

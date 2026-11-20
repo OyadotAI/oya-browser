@@ -50,6 +50,19 @@ const SECTIONS = [
 const REFERENCE = '/docs/api/reference';
 
 describe('DocsPage', () => {
+  it('leads with local Connect and recovery before presenting cloud authentication', () => {
+    render(<DocsPage />);
+    const desktop = document.getElementById('desktop-app')!;
+    const cloud = document.getElementById('cloud-mcp')!;
+    expect(desktop.compareDocumentPosition(cloud) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(desktop.parentElement!.textContent).toContain('start a new agent session');
+    expect(desktop.parentElement!.textContent).toContain('Browser not ready');
+    expect(cloud.parentElement!.textContent).toContain('Listing tools does not grant browser access');
+    expect(screen.getByRole('link', { name: 'Oya for coding agents' }).getAttribute('href')).toBe(
+      '/browser-for-claude-code',
+    );
+  });
+
   it('links each sidebar group heading to its topic page, which is how a crawler on /docs finds them', () => {
     render(<DocsPage />);
     const aside = document.querySelector('aside')!;

@@ -355,6 +355,26 @@ export const PG_CONNECT_TIMEOUT_MS = 10_000;
 /** Idle Postgres connections are closed after this. */
 export const PG_IDLE_TIMEOUT_MS = 30_000;
 /**
+ * How long one statement may wait for its answer unless OYA_PG_QUERY_TIMEOUT_MS
+ * says otherwise. Without it, queries whose answers a network blip lost held
+ * every pool connection forever and storage stayed down until a restart
+ * (2026-11-20). Generous on purpose: control prune and audit verification run
+ * on this pool and must not be cut short.
+ */
+export const DEFAULT_PG_QUERY_TIMEOUT_MS = 60_000;
+/** Milliseconds a statement may wait for its answer; read here and nowhere else. */
+export const pgQueryTimeoutMs = () =>
+  positiveOr(Number(process.env.OYA_PG_QUERY_TIMEOUT_MS), DEFAULT_PG_QUERY_TIMEOUT_MS);
+/** `value` when it is a number above zero, else `fallback`: a typo like -5 must not fail every query at once. */
+const positiveOr = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback);
+/**
+ * Idle time before TCP keepalive starts probing a Postgres socket. A backstop
+ * for a peer that vanished outright; it cannot see a proxy that stays up and
+ * answers probes while the database behind it is gone, which the query
+ * timeout covers.
+ */
+export const PG_KEEPALIVE_DELAY_MS = 10_000;
+/**
  * How DATABASE_URL's TLS is read when OYA_DB_TLS is unset: `libpq`, its own
  * sslmode as psql reads it (`require` encrypts without verifying). Set
  * OYA_DB_TLS=verify-full to require TLS with the certificate and host checked.

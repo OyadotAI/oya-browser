@@ -61,7 +61,11 @@ when the scope exits, errors included.
 
 ## For AI agents
 
-No key yet? Get your own, and use your person's own browser with their logins:
+For desktop browsing without an Oya account or API key, use the app's Connect
+action and start a new agent session. See [Oya for coding agents](https://oyabrowser.com/browser-for-claude-code).
+
+The optional **SDK desktop pairing** path below uses an SDK key. It is separate
+from local MCP setup:
 
 ```js
 await Oya.signup({ email: 'person@example.com' }); // saved to ~/.oya/config.json
@@ -69,6 +73,9 @@ const browser = await new Oya().desktop.connect(); // pairs the Oya desktop app
 ```
 
 Written for agents: [oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
+On a server or CI runner without a desktop, use an authenticated Oya Cloud key,
+call `oya.browser.start()` and stop the browser in `finally`. A signup key must
+be claimed before cloud browsers are enabled.
 
 ## Portal automation: record once, replay with new inputs
 

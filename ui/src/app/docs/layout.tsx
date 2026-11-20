@@ -4,7 +4,7 @@
  */
 import type { PropsWithChildren } from 'react';
 import type { Metadata } from 'next';
-import { SITE_NAME, SITE_URL } from '@/lib/site';
+import { SITE_NAME, SITE_URL, SITE_ALTERNATE_TYPES } from '@/lib/site';
 
 /**
  * The docs page is a client component and cannot export metadata itself.
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
     'Desktop and Cursor, live view, CAPTCHA and MFA handling, and self-hosting.',
   alternates: {
     canonical: '/docs',
-    types: { 'text/markdown': '/docs.md', 'text/plain': '/llms.txt', 'application/json': '/openapi.json' },
+    types: { ...SITE_ALTERNATE_TYPES, 'text/markdown': '/docs.md' },
   },
   openGraph: {
     type: 'article',

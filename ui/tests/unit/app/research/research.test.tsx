@@ -59,6 +59,30 @@ describe('research post pages', () => {
     expect(stealthMetadata.alternates?.canonical).toBe(STEALTH_POST.path);
   });
 
+  it('emits TechArticle and BreadcrumbList structured data for each research post', () => {
+    for (const [Page, post] of [
+      [ReplayResearch, REPLAY_POST],
+      [StealthResearch, STEALTH_POST],
+    ] as const) {
+      const { container } = render(<Page />);
+      const script = container.querySelector('script[type="application/ld+json"]') as HTMLScriptElement;
+      const graph = JSON.parse(script.textContent ?? '')['@graph'] as Record<string, unknown>[];
+      const article = graph.find((n) => n['@type'] === 'TechArticle')!;
+      expect(article).not.toHaveProperty('datePublished');
+      expect(article).not.toHaveProperty('dateModified');
+      expect(graph.find((n) => n['@type'] === 'TechArticle')).toMatchObject({
+        headline: post.title,
+        description: post.summary,
+        url: `${SITE_URL}${post.path}`,
+      });
+      const crumbs = graph.find((n) => n['@type'] === 'BreadcrumbList') as {
+        itemListElement: { name: string; item: string }[];
+      };
+      expect(crumbs.itemListElement.map((item) => item.name)).toEqual(['Home', 'Research', post.title]);
+      cleanup();
+    }
+  });
+
   it('says the stealth run measured headless Chrome, not the desktop app', () => {
     expect(STEALTH_POST.method).toContain('not the desktop app');
   });

@@ -2,7 +2,7 @@
 /** The main navigation words and their destinations. */
 export const WORDS = [
   { word: 'Workflows', href: '/#workflows' },
-  { word: 'Pricing', href: '/#pricing' },
+  { word: 'Pricing', href: '/pricing' },
   { word: 'Docs', href: '/docs' },
   { word: 'Security', href: '/trust' },
 ];
@@ -13,6 +13,7 @@ export const PRODUCT = [
     group: 'Browsers',
     links: [
       ['AI browser', 'Free desktop app, an agent in a tab', '/ai-browser'],
+      ['For coding agents', 'Connect Claude Code, Codex or Cursor', '/browser-for-claude-code'],
       ['Agentic browser', 'Many browsers, run by agents', '/agentic-browser'],
       ['HIPAA-compliant browser', 'Oya Cloud and enterprise, with a BAA', '/hipaa-compliant-browser'],
     ],

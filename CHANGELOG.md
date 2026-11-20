@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Made coding-agent setup easier to discover from Product navigation and documentation, and aligned desktop welcome, Connect, session restart and recovery instructions across the website, README and agent guides.
+- Distinguished authenticated cloud MCP and plugin setup from local desktop Connect, corrected headless SDK examples to start and stop cloud browsers, and replaced an absolute bot-detection claim with explicit limitations.
+- Kept canonical HTML pages in the sitemap, retained Markdown discovery through agent docs and alternate links, and omitted modification dates because request times, benchmark dates and vendor-check dates do not establish an editorial update.
+- Preserved RSS, agent-document and API alternate links on public pages with their own canonical metadata, including pricing, comparisons and documentation topics.
+- Added a dedicated `/pricing` page, a static `/feed.xml` RSS feed, a concise `/llms.txt` index mirrored at `/.well-known/llms.txt` with public cache headers, unified JSON-LD structured data (`Organization`, `SoftwareApplication`, `TechArticle` and `BreadcrumbList`), and broadened coding-agent discovery metadata in `server.json` and `.claude-plugin/plugin.json`.
+
 ## [1.0.266](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.266) · 2026-11-20
 
 ### Changed

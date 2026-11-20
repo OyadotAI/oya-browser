@@ -160,10 +160,18 @@ const PAGES = [
   },
 ];
 
-/** The FAQPage structured data the page rendered. */
-function structuredData(container: HTMLElement) {
+/** The JSON-LD @graph nodes the page rendered. */
+function structuredGraph(container: HTMLElement): Record<string, unknown>[] {
   const script = container.querySelector('script[type="application/ld+json"]') as HTMLScriptElement;
-  return JSON.parse(script.textContent ?? '');
+  const parsed = JSON.parse(script.textContent ?? '');
+  return parsed['@graph'];
+}
+
+/** Finds a node by @type inside the page's JSON-LD @graph. */
+function graphNode(container: HTMLElement, type: string): Record<string, unknown> {
+  const node = structuredGraph(container).find((entry) => entry['@type'] === type);
+  expect(node).toBeTruthy();
+  return node!;
 }
 
 describe.each(PAGES)('/$name', ({ Page, metadata, content }) => {
@@ -219,13 +227,24 @@ describe.each(PAGES)('/$name', ({ Page, metadata, content }) => {
     }
   });
 
-  it('repeats exactly the visible questions as FAQPage structured data', () => {
+  it('repeats the visible questions as FAQPage alongside TechArticle and BreadcrumbList', () => {
     const { container } = render(<Page />);
-    const data = structuredData(container);
-    expect(data['@type']).toBe('FAQPage');
-    expect(
-      data.mainEntity.map((e: { name: string; acceptedAnswer: { text: string } }) => [e.name, e.acceptedAnswer.text]),
-    ).toEqual(content.faq.map(({ q, a }) => [q, a]));
+    const faq = graphNode(container, 'FAQPage') as {
+      mainEntity: { name: string; acceptedAnswer: { text: string } }[];
+    };
+    expect(faq.mainEntity.map((e) => [e.name, e.acceptedAnswer.text])).toEqual(content.faq.map(({ q, a }) => [q, a]));
+    const article = graphNode(container, 'TechArticle');
+    expect(article).toMatchObject({
+      headline: content.title,
+      description: content.lead,
+      url: `${SITE_URL}${content.path}`,
+    });
+    expect(article.dateModified).toBeUndefined();
+    const crumbs = graphNode(container, 'BreadcrumbList') as { itemListElement: { name: string; item: string }[] };
+    const names = crumbs.itemListElement.map((item) => item.name);
+    expect(names[0]).toBe('Home');
+    expect(names.at(-1)).toBe(content.label);
+    if (content.path.startsWith('/vs/')) expect(names).toEqual(['Home', 'Compare', content.label]);
   });
 
   it('has its own title, its answer as the description, and a canonical address', () => {
@@ -314,7 +333,8 @@ describe('answer page structured data', () => {
     const scripts = container.querySelectorAll('script');
     expect(scripts.length).toBe(1);
     expect(scripts[0].innerHTML.includes('</')).toBe(false);
-    expect(structuredData(container).mainEntity[0].acceptedAnswer.text).toBe(hostile.faq[0].a);
+    const faq = graphNode(container, 'FAQPage') as { mainEntity: { acceptedAnswer: { text: string } }[] };
+    expect(faq.mainEntity[0].acceptedAnswer.text).toBe(hostile.faq[0].a);
   });
 });
 

@@ -68,7 +68,7 @@ export const DOC_PAGES: DocPage[] = [
     topic: {
       heading: 'MCP setup for Claude Code, Cursor and Codex',
       description:
-        'Connect Oya Browser to Claude Code, Cursor, Codex, claude.ai, Claude Desktop or the Oya desktop app as an MCP server, through one endpoint that starts browsers itself.',
+        'Connect Claude Code, Codex or Cursor to the Oya desktop app, then start a new agent session. For servers and CI, configure authenticated Oya Cloud MCP instead.',
     },
   },
   {

@@ -1,7 +1,6 @@
 /**
- * The Agent tab of the sign-in page. An agent does not sign in here: it signs
- * itself up through the API (see llms.txt), so this shows the one line to
- * paste into it, pointed at this deployment rather than a hard-coded host.
+ * The Agent tab offers the desktop connection prompt instead of asking people
+ * to create a cloud key for local browsing. Links use this deployment's origin.
  */
 'use client';
 
@@ -23,9 +22,9 @@ function useOrigin() {
   );
 }
 
-/** What to tell an agent: the SDK quickstart in llms.txt, which signs it up and pairs the desktop app with the person's logins. */
+/** Direct the agent to the current desktop quickstart while preserving the person's connection consent. */
 const promptFor = (origin: string) =>
-  `Set up Oya Browser for me: read ${origin}/llms.txt and follow "Agent quickstart" with my email. Use the @oya-ai/browser SDK, not MCP, and connect my Oya desktop app so you browse with my logins.`;
+  `Set up Oya Browser for me: read ${origin}/llms.txt and follow "Desktop setup for coding agents". Help me complete welcome and Connect, then tell me to start a new agent session to use the oya-browser tools.`;
 
 /** PromptBox's props. */
 interface PromptProps {
@@ -45,16 +44,16 @@ function PromptBox({ text }: PromptProps) {
   );
 }
 
-/** The prompt, and what the agent can do before its person claims its key. */
+/** Explain desktop consent and optional import without conflating local setup with cloud signup. */
 export function AgentSetup() {
   const origin = useOrigin();
   return (
     <div className="text-sm text-text-muted">
-      <p>Agents sign themselves up. Paste this into yours:</p>
+      <p>Connect your agent to the desktop app. Paste this into yours:</p>
       <PromptBox text={promptFor(origin)} />
       <p className="text-xs">
-        It gets its own key and pairs your Oya desktop app. Click Connect when the app asks, and keep &quot;Also import
-        my logins&quot; ticked so it is signed in where you are. For Oya Cloud browsers it sends you a claim link.{' '}
+        No Oya account or cloud key is needed. You confirm Connect and any permission for optional login import; you can
+        also sign in within Oya. Keep Oya open and start a new agent session after connecting.{' '}
         <a href="/llms.txt" className="font-medium text-accent hover:text-accent-hover">
           What agents read
         </a>

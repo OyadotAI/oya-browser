@@ -181,11 +181,13 @@ describe('LoginPage with the captcha on', () => {
 });
 
 describe('LoginPage for an agent', () => {
-  it('tells the agent to sign itself up from this deployment, with no key and no form', async () => {
+  it('uses the desktop quickstart from this deployment without forcing cloud signup or SDK-only setup', async () => {
     render(<LoginPage />);
     await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
     expect(screen.getByText(new RegExp(`read ${window.location.origin}/llms.txt`))).toBeTruthy();
     expect(screen.queryByText(/API key/)).toBeNull();
+    expect(screen.getByText(/Help me complete welcome and Connect/).textContent).toContain('start a new agent session');
+    expect(screen.queryByText(/SDK, not MCP|with my email|Agents sign themselves up/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
     expect(screen.getByRole('link', { name: 'What agents read' }).getAttribute('href')).toBe('/llms.txt');
   });

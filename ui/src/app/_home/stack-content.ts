@@ -13,7 +13,7 @@ export interface StackLine {
   /** Who this is for, as they would describe themselves. */
   who: string;
   /** The language of the line, shown beside it. */
-  lang: 'Python' | 'TypeScript' | 'Shell';
+  lang: 'Python' | 'TypeScript' | 'Shell' | 'Desktop';
   /** The one line. */
   line: string;
   /** What the line assumes, in a few words. */
@@ -53,9 +53,9 @@ export const STACK_LINES: StackLine[] = [
   {
     id: 'mcp',
     who: 'Claude Code, Codex, Cursor',
-    lang: 'Shell',
-    line: 'claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"',
-    note: 'or click Connect in the Oya desktop app',
+    lang: 'Desktop',
+    line: 'Open Oya → Connect next to your agent → start a new session.',
+    note: 'Complete the welcome screen first. Servers, containers and CI use authenticated Oya Cloud MCP; see MCP setup.',
   },
 ];
 

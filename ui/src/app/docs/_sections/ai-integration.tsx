@@ -15,7 +15,7 @@ const SUB = 'text-base font-semibold mt-6 mb-2 text-text scroll-mt-28';
 const TRY_PROMPTS: [string, string, string, string][] = [
   [
     'Prompt 1 \u00b7 any agent',
-    'Works with the desktop app connected or the cloud endpoint configured.',
+    'Use this on your own computer to connect the Oya desktop app.',
     'Read https://oyabrowser.com/llms.txt, install Oya on this computer and set yourself up to browse the web through it instead of Chrome. Tell me when you need me to click Connect, then open https://news.ycombinator.com in Oya and read me the top three titles.',
     'Expected: the agent installs and opens Oya, asks you for the Connect click, then reads the three Hacker News titles from Oya.',
   ],
@@ -39,8 +39,22 @@ function McpSetup() {
     <>
       {/* ============ MCP SETUP ============ */}
       <SectionHeading id="mcp-setup">MCP Setup</SectionHeading>
+      <DesktopApp />
+      <CloudSetup />
+      <Cursor />
+      <McpSetupPart2 />
+    </>
+  );
+}
+
+/** Remote MCP is a separate authenticated choice for environments without the desktop app. */
+function CloudSetup() {
+  return (
+    <>
+      <SubHeading id="cloud-mcp">Oya Cloud: servers, containers and CI</SubHeading>
       <p className="mb-3 text-[15px] leading-relaxed">
-        One endpoint for everything you have. It starts browsers itself, so there is no id to look up first:
+        Without a desktop app, use Oya Cloud with an Oya API key or a supported OAuth client. The cloud endpoint starts
+        browsers itself:
       </p>
       <CodeBlock>{'https://oyabrowser.com/mcp/pool'}</CodeBlock>
       <p className={PARA}>
@@ -55,17 +69,23 @@ function McpSetup() {
       <p className={PARA}>
         <InlineCode>/mcp/pool</InlineCode> answers <InlineCode>initialize</InlineCode> and{' '}
         <InlineCode>tools/list</InlineCode> without a key, so an agent can list the tools before you sign in. Calls
-        return 401 until you do. For everything an agent needs in one page, point it at{' '}
-        <InlineLink href="/llms.txt">oyabrowser.com/llms.txt</InlineLink>.
+        return 401 until authenticated. Listing tools does not grant browser access. For everything an agent needs in
+        one page, point it at <InlineLink href="/llms.txt">oyabrowser.com/llms.txt</InlineLink>.
       </p>
-      <DesktopApp />
+    </>
+  );
+}
 
+/** The manual Cursor example configures cloud access; local configuration is owned by desktop Connect. */
+function Cursor() {
+  return (
+    <>
       <h3 id="cursor" className={SUB}>
         Cursor
       </h3>
       <p className={PARA}>
-        Add to <InlineCode>.cursor/mcp.json</InlineCode> in your project, or let the desktop app write it for you with
-        Connect:
+        For Oya Cloud, add this to <InlineCode>.cursor/mcp.json</InlineCode> with your Oya API key. For the desktop app,
+        use Connect instead; it writes the local configuration for you.
       </p>
       <CodeBlock>{`{
   "mcpServers": {
@@ -78,8 +98,6 @@ function McpSetup() {
     }
   }
 }`}</CodeBlock>
-
-      <McpSetupPart2 />
     </>
   );
 }
@@ -94,26 +112,28 @@ function McpSetupPart2() {
       <p className={PARA}>On a machine with no Oya app, add the cloud endpoint with Claude Code&apos;s own CLI:</p>
       <CodeBlock label="Terminal">{`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \\
   --header "Authorization: Bearer $OYA_API_KEY"`}</CodeBlock>
-      <p className={PARA}>Or install the plugin, which brings the MCP server and a skill that teaches the workflow:</p>
+      <p className={PARA}>
+        <strong>Cloud plugin for Claude Code:</strong> requires <InlineCode>OYA_API_KEY</InlineCode> and includes the
+        remote MCP server and a browsing skill. For desktop browsing, use Connect in Oya instead.
+      </p>
       <CodeBlock label="Terminal">{`claude plugin marketplace add OyadotAI/oya-browser
-claude plugin install oya-browser@oya
-
-# any agent that reads skills, without the plugin:
-npx skills add OyadotAI/oya-browser`}</CodeBlock>
+claude plugin install oya-browser@oya`}</CodeBlock>
+      <p className={PARA}>The optional skill teaches the workflow; it does not configure an MCP connection:</p>
+      <CodeBlock label="Agent skill">{'npx skills add OyadotAI/oya-browser'}</CodeBlock>
       <Codex />
       <ClaudeAi />
     </>
   );
 }
 
-/** Codex: the TOML section the desktop app writes, pointed at the cloud when there is no desktop. */
+/** The Codex example is explicitly cloud-only so readers do not replace app-managed local credentials. */
 function Codex() {
   return (
     <>
       <SubHeading id="codex">Codex</SubHeading>
       <p className={PARA}>
-        Codex reads <InlineCode>~/.codex/config.toml</InlineCode>. This is the section the desktop app writes; swap the
-        URL and token for the cloud endpoint and your key when there is no desktop:
+        For Oya Cloud, add this to <InlineCode>~/.codex/config.toml</InlineCode> with your Oya API key. For the desktop
+        app, use Connect instead; Oya writes the correct local URL and authentication for you.
       </p>
       <CodeBlock label="~/.codex/config.toml">{`[mcp_servers.oya-browser]
 url = "https://oyabrowser.com/mcp/pool"
@@ -147,11 +167,17 @@ function DesktopApp() {
         Desktop app
       </h3>
       <p className={PARA}>
-        Install the <InlineLink href="/#download">desktop app</InlineLink>, then click <strong>Connect</strong> next to
-        your agent&apos;s name in the Oya window footer. Claude Code, Codex, Cursor and VS Code appear there when
-        installed. Connect writes an MCP server named <InlineCode>oya-browser</InlineCode> at{' '}
-        <InlineCode>http://127.0.0.1:47321/mcp</InlineCode> into that agent&apos;s config; Claude Code also gets
-        Oya&apos;s tools allowed without prompts. Start a new session and the tools are there. No account, no key.
+        Download and open the <InlineLink href="/#download">Oya desktop app</InlineLink>. Complete the welcome screen,
+        click <strong>Connect</strong> next to your installed agent in the window footer, then start a new agent
+        session. Claude Code, Codex, Cursor and VS Code are supported. Oya writes the local MCP configuration for you:{' '}
+        <InlineCode>oya-browser</InlineCode> at <InlineCode>http://127.0.0.1:47321/mcp</InlineCode>. No Oya account or
+        API key is required. The desktop app includes the MCP server; no separate extension or MCP package is required.
+      </p>
+      <p className={PARA}>
+        You confirm the connection and any OS permission for optional login import. If you skip import, sign in within
+        Oya. Keep Oya open for repeat use; your agent uses its configured tools. If tools are missing, open Oya and
+        check Connect, then start a new agent session. If you see &quot;Browser not ready&quot;, complete Oya&apos;s
+        welcome screen and retry. Report persistent connection errors.
       </p>
     </>
   );
