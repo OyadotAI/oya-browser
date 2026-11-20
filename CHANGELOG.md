@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.262](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.262) · 2026-11-20
+
 ### Fixed
 
 - Hardened server authorization and connection lifecycle: restricted pairing, persona-group, pool-cookie and credential-import writes to administrators, confined shared-browser MCP links to single-browser page tools, rejected invalid MFA domain clears, serialized WebSocket admission and command-send failure cleanup, and handled malformed upgrade URLs, billing state, and usage accounting cleanly.
