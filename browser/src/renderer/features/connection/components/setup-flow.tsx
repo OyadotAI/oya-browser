@@ -120,12 +120,12 @@ function Current(props: Props) {
 export function SetupFlow(props: Props) {
   const { vm } = props;
   const s = useViewModel(vm.onboarding);
-  // One back button at a time: card 1's inner screens have their own, one step back.
+  // One back button at a time: the app and key screens have their own; once signed in, there is no going back to sign-in.
   const technical = useViewModel(vm.onboarding.technical);
   const inner = s.page === 'technical' && technical.view !== 'choices';
   return (
     <div className="setup-flow">
-      {s.page !== 'choices' && !inner && (
+      {!['choices', 'guide', 'optional'].includes(s.page) && !inner && (
         <Button className="welcome-back" onClick={() => vm.onboarding.choose(null)}>
           ← Back to start
         </Button>

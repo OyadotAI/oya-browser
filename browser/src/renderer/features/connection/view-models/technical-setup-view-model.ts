@@ -21,10 +21,13 @@ export class TechnicalSetupViewModel extends ViewModel<State> {
   /** Technical status includes missing installations, unlike the footer. */ readonly agents: AgentsViewModel;
   /** Main owns authentication and credential writes. */ private readonly bridge: TechnicalBridge;
   /** Direct sign-in cancellation cannot finish a later chosen path. */ private abort = new AbortController();
+  /** What a finished Oya sign-in does: opens browsing unless the owner wants the control panel walkthrough. */
+  private readonly signedIn: () => void;
   /** Compose the bounded technical flow under the existing onboarding owner. */
-  constructor(bridge: TechnicalBridge) {
+  constructor(bridge: TechnicalBridge, signedIn: () => void = () => void bridge.finishOnboarding()) {
     super({ view: 'choices', busy: false, progress: '', error: '' });
     this.bridge = bridge;
+    this.signedIn = signedIn;
     this.model = new TechnicalModelViewModel(bridge);
     this.agents = new AgentsViewModel(bridge, true);
     this.own(() => this.destroy());
@@ -70,7 +73,7 @@ export class TechnicalSetupViewModel extends ViewModel<State> {
   }
   /** Only the current successful sign-in enters browsing. */
   private connected(signal: AbortSignal): void {
-    if (!signal.aborted) void this.bridge.finishOnboarding();
+    if (!signal.aborted) this.signedIn();
   }
   /** Inline recovery keeps the equal choices visible. */
   private failed(error: unknown, signal: AbortSignal): void {
