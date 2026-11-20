@@ -68,7 +68,7 @@ Cloud browsers do not automatically inherit desktop logins. Use the persona's co
 On a machine with the user's Oya app, SDK callers with a key can use `oya.desktop.connect()`. This pairs a desktop and can wait for the person; it is separate from headless cloud setup and from local no-key MCP. The person confirms Connect and any OS permission for optional login import, or signs in within Oya instead. If the app is missing, the error gives its download link.
 
 For cloud MCP, when the user has a cloud-enabled key:
-`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`. The optional Claude Code cloud plugin also requires OYA_API_KEY; use desktop Connect for local browsing instead. The CLI is `npm install -g @oya-ai/cli`.
+`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`. The optional Claude Code cloud plugin signs in with the user's Oya account instead of a key; use desktop Connect for local browsing. The CLI is `npm install -g @oya-ai/cli`.
 
 ## Over MCP
 

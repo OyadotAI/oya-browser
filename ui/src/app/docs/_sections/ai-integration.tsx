@@ -113,7 +113,7 @@ function McpSetupPart2() {
       <CodeBlock label="Terminal">{`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \\
   --header "Authorization: Bearer $OYA_API_KEY"`}</CodeBlock>
       <p className={PARA}>
-        <strong>Cloud plugin for Claude Code:</strong> requires <InlineCode>OYA_API_KEY</InlineCode> and includes the
+        <strong>Cloud plugin for Claude Code:</strong> signs in with your Oya account (no key to set) and includes the
         remote MCP server and a browsing skill. For desktop browsing, use Connect in Oya instead.
       </p>
       <CodeBlock label="Terminal">{`claude plugin marketplace add OyadotAI/oya-browser
