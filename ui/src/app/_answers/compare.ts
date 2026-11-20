@@ -5,13 +5,14 @@
  * never that the vendor lacks it. One module, so the overview tables and the per-vendor pages cannot
  * disagree, and a refresh changes every page at once.
  */
+import { NOT_STATED } from './constants';
 import type { AnswerSource, AnswerTable } from './content';
 
 /** When the vendor pages below were read. Re-read them and move this date together. */
-export const CHECKED = '2026-11-18';
+export const CHECKED = '2026-11-20';
 
 /** Shown where a vendor's pages did not say. */
-const NS = 'Not stated';
+const NS = NOT_STATED;
 
 /** A vendor in a comparison: its column header, its cells by row key, and where they come from. */
 export interface Vendor {
@@ -75,6 +76,17 @@ export const OYA: Vendor = {
     price: 'Free desktop app and 1 cloud browser hour; $500 a month for 100 hours',
     kind: 'Self-serve: desktop app, Oya Cloud, or your own infrastructure',
     mfa: 'Sealed TOTP; staff take over for a text-message code and hand back',
+    mcpSetup:
+      'One-click Connect adds oya-browser to Claude Code, Codex, Cursor or VS Code over MCP; cloud MCP also available',
+    mcpRuntime: 'Desktop app (macOS, Windows), Oya Cloud, or self-hosted; agents drive real Chromium tabs',
+    mcpTakeover: 'Each agent session gets its own tab while you keep yours; watch live, take over and hand back',
+    mcpSecurity: 'Project host allowlists refuse off-list hosts; desktop app runs locally with optional cloud sync',
+    mcpCloud:
+      'Oya Cloud and self-hosted community (free up to 5 browsers) or enterprise edition (Docker, ECS, GCP, Kubernetes)',
+    mcpPrice:
+      'Free desktop app (500 agent steps/mo); Oya Cloud 1 free browser hour, then $500/mo for 100 hours; source-available community edition',
+    devKind:
+      'Browser and control plane for signed-in agent workflows: desktop app, Oya Cloud, self-hosted, MCP and CDP',
   },
   sources: [],
 };
@@ -403,3 +415,115 @@ export const EGO: Vendor = {
 
 /** The AI browsers people compare Oya's desktop app with. */
 export const AI_BROWSER_VENDORS = [COMET, DIA, CLAUDE_IN_CHROME, ASIDE, EGO];
+
+/** What a coding-agent developer checks when comparing local MCP browser servers with Oya. */
+export const MCP_ROWS: Row[] = [
+  { key: 'mcpSetup', label: 'How coding agents connect' },
+  { key: 'mcpRuntime', label: 'Browser and runtime model' },
+  { key: 'mcpTakeover', label: 'Separate agent tab and live takeover' },
+  { key: 'replay', label: 'Replays a finished task with no model' },
+  { key: 'code', label: 'Reusable Playwright code you own' },
+  { key: 'secrets', label: 'Passwords and TOTP hidden from the model' },
+  { key: 'mcpSecurity', label: 'Published security and telemetry notes' },
+  { key: 'mcpCloud', label: 'Cloud fleet and self-hosted edition' },
+  { key: 'audit', label: 'Audit trail of agent and person actions' },
+  { key: 'baa', label: 'HIPAA compliance and signed BAA' },
+  { key: 'mcpPrice', label: 'Price and licence' },
+];
+
+/** What an engineering team checks when comparing web-data APIs or browser SDKs with Oya. */
+export const DEV_STACK_ROWS: Row[] = [
+  { key: 'devKind', label: 'What it is built for' },
+  { key: 'replay', label: 'Replays a finished task with no model' },
+  { key: 'code', label: 'Replay is standard Playwright you own' },
+  { key: 'secrets', label: 'Model never sees passwords' },
+  { key: 'takeover', label: 'A person can take over live' },
+  { key: 'selfHost', label: 'Runs in your own infrastructure' },
+  { key: 'soc2', label: 'SOC 2' },
+  { key: 'baa', label: 'Signs a BAA for HIPAA work' },
+  { key: 'audit', label: 'Audit trail of agent and person actions' },
+  { key: 'price', label: 'Free tier, then first paid plan' },
+];
+
+/** Playwright MCP, from its GitHub README. */
+export const PLAYWRIGHT_MCP: Vendor = {
+  name: 'Playwright MCP',
+  cells: {
+    mcpSetup:
+      'npx @playwright/mcp@latest over MCP (Node 20+); README notes modern coding agents often favor playwright-cli and skills',
+    mcpRuntime:
+      'Playwright driving Chromium, Firefox or WebKit via accessibility snapshots; persistent profile, --storage-state or Chrome/Edge extension',
+    code: 'Optional --codegen flag generates Playwright test code in TypeScript, Python, Java or C#',
+    secrets: '--secrets loads dotenv values and --redact-url-params masks URL parameters',
+    mcpSecurity:
+      'README states Playwright MCP is not a security boundary and --allowed-origins/--blocked-origins do not govern redirects',
+    mcpPrice: 'Free, open source (Apache-2.0)',
+  },
+  sources: [{ label: 'Playwright MCP on GitHub', url: 'https://github.com/microsoft/playwright-mcp' }],
+};
+
+/** Chrome DevTools MCP, from its GitHub README and Chrome for Developers documentation. */
+export const CHROME_DEVTOOLS_MCP: Vendor = {
+  name: 'Chrome DevTools MCP',
+  cells: {
+    mcpSetup:
+      'npx -y chrome-devtools-mcp@latest over MCP (Node LTS + Google Chrome stable); also ships chrome-devtools CLI and agent skills',
+    mcpRuntime:
+      'Puppeteer connected to Chrome DevTools with console, network, Lighthouse and performance trace inspection',
+    mcpSecurity:
+      'README warns full browser and DevTools content is exposed to MCP clients; usage statistics on by default (--no-usage-statistics) and trace URLs may call Google CrUX (--no-performance-crux)',
+    mcpPrice: 'Free, open source (Apache-2.0)',
+  },
+  sources: [
+    { label: 'Chrome DevTools MCP on GitHub', url: 'https://github.com/ChromeDevTools/chrome-devtools-mcp' },
+    {
+      label: 'Chrome for Developers: DevTools MCP for agents',
+      url: 'https://developer.chrome.com/docs/devtools/agents',
+    },
+  ],
+};
+
+/** Firecrawl, from its pricing, Interact docs, MCP docs and GitHub repository. */
+export const FIRECRAWL: Vendor = {
+  name: 'Firecrawl',
+  cells: {
+    devKind: 'Web data API (scrape, crawl, map, search) plus /interact Browser Sandbox, MCP server and local Rust CLI',
+    code: 'Not stated: /interact accepts prompts or Playwright code inside its sandbox',
+    takeover: 'Interactive Live View on Firecrawl Cloud Browser Sandbox',
+    selfHost: 'Self-hostable apps/api (AGPL-3.0) and firecrawl-local Rust binary',
+    soc2: 'Type II on all plans; Zero Data Retention on Enterprise',
+    price:
+      'Free (1,000 credits, 2 concurrent); Hobby $16/mo annual ($19 monthly), Standard $83/mo, Growth $333/mo, Scale $599/mo, Enterprise custom',
+  },
+  sources: [
+    { label: 'Firecrawl pricing', url: 'https://www.firecrawl.dev/pricing' },
+    { label: 'Firecrawl Interact docs', url: 'https://docs.firecrawl.dev/features/interact' },
+    { label: 'Firecrawl MCP server docs', url: 'https://docs.firecrawl.dev/mcp-server' },
+    { label: 'Firecrawl on GitHub', url: 'https://github.com/firecrawl/firecrawl' },
+  ],
+};
+
+/** Stagehand, from its site, GitHub README, caching docs and quickstart. */
+export const STAGEHAND: Vendor = {
+  name: 'Stagehand',
+  cells: {
+    devKind:
+      'Open-source MIT SDK (TypeScript, Python, Go) with act, extract and observe primitives over local or Browserbase browsers',
+    replay:
+      'Local Cache (cacheDir) or Browserbase Cache; docs advise Browserbase Cache only for non-personalized pages without credentials or personal data',
+    code: 'Not stated: cached actions stay inside Stagehand rather than exporting as standalone Playwright',
+    secrets:
+      'observe() returns selectors so your code fills credentials from environment variables without sending them to the model',
+    takeover: 'Provided when paired with Browserbase live view, not built into the standalone SDK',
+    selfHost: 'Runs locally against your own Chromium or CDP browser (MIT); hosted fleet comes from Browserbase',
+    soc2: 'Not stated for standalone SDK; Browserbase states SOC 2 Type II',
+    baa: 'Not stated for standalone SDK; Browserbase states BAA on its Scale plan',
+    price: 'Free open-source SDK (MIT); you pay your own model API and browser host costs',
+  },
+  sources: [
+    { label: 'Stagehand', url: 'https://www.stagehand.dev/' },
+    { label: 'Stagehand on GitHub', url: 'https://github.com/browserbase/stagehand' },
+    { label: 'Stagehand caching docs', url: 'https://docs.stagehand.dev/v3/best-practices/caching' },
+    { label: 'Stagehand quickstart', url: 'https://docs.stagehand.dev/v4/first-steps/quickstart' },
+  ],
+};

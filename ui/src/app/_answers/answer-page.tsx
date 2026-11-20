@@ -10,6 +10,7 @@ import answers from './answers.module.css';
 import { AnswerHero } from './answer-hero';
 import { AnswerSection } from './answer-section';
 import { AnswerInvitation } from './answer-action';
+import { CompareFit, CompareTable } from './compare-view';
 import { SiteHeader } from '../_home/site-header';
 import { SiteFooter } from '../_home/site-footer';
 import { SITE_NAME, SITE_ALTERNATE_TYPES, type QA } from '@/lib/site';
@@ -21,7 +22,7 @@ import {
   techArticleNode,
   type BreadcrumbItem,
 } from '@/lib/structured-data';
-import type { AnswerPageContent, AnswerSources, AnswerTable } from './content';
+import type { AnswerPageContent, AnswerSources } from './content';
 
 /** The card image every page shares; Next replaces openGraph and twitter whole, so it is repeated here. */
 const CARD_IMAGE = '/oya-ask-poster.jpg';
@@ -59,39 +60,6 @@ function answerStructuredData(content: AnswerPageContent) {
     breadcrumbNode(answerBreadcrumbs(content)),
     faqNode(content.faq),
   ]);
-}
-
-/**
- * A comparison as a real table, not a picture or a grid of divs: a crawler and an assistant read
- * its rows as text, and a screen reader announces each cell with its column.
- */
-function CompareTable({ caption, columns, rows }: AnswerTable) {
-  return (
-    <div className={answers.scroll} role="region" aria-label={caption} tabIndex={0}>
-      <table className={`${trust.table} ${answers.compare}`}>
-        <caption>{caption}</caption>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column} scope="col">
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(([name, ...cells]) => (
-            <tr key={name}>
-              <th scope="row">{name}</th>
-              {cells.map((cell, i) => (
-                <td key={columns[i + 1]}>{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
 }
 
 /** Where the page's claims about other companies come from, with the date they were read. */
@@ -141,7 +109,8 @@ export function AnswerPage({ content }: { /** What the page says. */ content: An
           <AnswerHero content={content} />
           {content.sections.map((section) => (
             <AnswerSection key={section.heading} section={section} path={content.path}>
-              {section.table && <CompareTable {...section.table} />}
+              {section.table && <CompareTable table={section.table} sources={content.sources} />}
+              {section.fit && <CompareFit fit={section.fit} />}
             </AnswerSection>
           ))}
           {content.sources && <Sources {...content.sources} />}

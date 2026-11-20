@@ -26,6 +26,7 @@ import {
   COMPARISON_REQUIREMENTS,
   PUBLISHED_DIFFERENCES,
   COMPARISON_CLOSING,
+  SELF_HOST_FAQ as SELF_HOST,
 } from './review-chapters';
 import type { QA } from '@/lib/site';
 import { THROUGHPUT } from '../_home/content';
@@ -47,6 +48,26 @@ import {
   sourcesOf,
   STEEL,
 } from './compare';
+
+import { VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_PLAYWRIGHT_MCP, VS_SKYVERN, VS_STAGEHAND } from './vs-pages';
+
+export { VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_PLAYWRIGHT_MCP, VS_SKYVERN, VS_STAGEHAND };
+
+/** One side of a side-by-side fit card grounded in the comparison table. */
+export interface AnswerFitSide {
+  /** Column heading for this option. */
+  heading: string;
+  /** Concise criteria grounded in the sourced comparison table. */
+  points: string[];
+}
+
+/** Side-by-side decision summary contrasting when Oya fits versus the compared tool or vendor. */
+export interface AnswerFit {
+  /** When Oya is the stronger fit. */
+  oya: AnswerFitSide;
+  /** When the compared tool or vendor is the stronger fit. */
+  other: AnswerFitSide;
+}
 
 /** A comparison table: rows are what a buyer checks, columns are Oya and the others. */
 export interface AnswerTable {
@@ -85,6 +106,8 @@ export interface AnswerSection {
   items?: string[];
   /** A comparison under the paragraph; a page with one must list its sources. */
   table?: AnswerTable;
+  /** Optional side-by-side decision summary rendered directly under the comparison table. */
+  fit?: AnswerFit;
   /** The grouping appropriate to this chapter, independent of its wording. */
   layout?: AnswerLayout;
   /** Optional existing desktop illustration for this chapter. */
@@ -138,12 +161,6 @@ const OYA_CONTROLS = [
   'A person can watch any session live, take over and hand it back.',
   'Browsers reach only the hosts you allow.',
 ];
-
-/** The answer to "can we host it ourselves", shared by the pages that are asked it. */
-const SELF_HOST: QA = {
-  q: 'Can I self-host a HIPAA-compliant agentic browser?',
-  a: 'Yes, with the enterprise edition: it runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Write to sales@getoya.ai. The source-available community edition self-hosts too, without the HIPAA offering. Every playbook exports as Playwright code you keep.',
-};
 
 /** /hipaa-compliant-browser: what one is, and how Oya is one. */
 export const HIPAA_BROWSER: AnswerPageContent = {
@@ -1312,4 +1329,9 @@ export const ANSWER_PAGES = [
   VS_STEEL,
   VS_ANCHOR,
   VS_BROWSER_USE,
+  VS_PLAYWRIGHT_MCP,
+  VS_CHROME_DEVTOOLS_MCP,
+  VS_FIRECRAWL,
+  VS_STAGEHAND,
+  VS_SKYVERN,
 ];

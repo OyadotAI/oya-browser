@@ -6,8 +6,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Added five sourced comparison pages (`/vs/playwright-mcp`, `/vs/chrome-devtools-mcp`, `/vs/firecrawl`, `/vs/stagehand`, `/vs/skyvern`) linked from `/vs`, site footers, `/sitemap.xml` and `/llms.txt`, with an upgraded comparison table provenance bar, highlighted Oya column, differentiated "Not stated" pills and side-by-side fit summary cards.
+
 ### Changed
 
+- Re-audited all public vendor comparisons on `2026-11-20`, expanded root `Organization.sameAs` with verified public profiles (`oya.dev`, Glama, YouTube, X), and lengthened meta descriptions on `/release-notes`, `/privacy`, `/terms` and `/vs` to 150-160 characters.
 - Notified IndexNow automatically after successful full and server-only production deployments, with bounded requests and a visible, nonblocking warning when notification failed.
 
 ## [1.0.268](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.268) · 2026-11-20

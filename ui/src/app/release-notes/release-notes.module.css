@@ -25,6 +25,9 @@
   font-weight: 500;
   letter-spacing: -0.01em;
 }
+.indexLink {
+  display: block;
+}
 .release p {
   margin-top: 12px;
   color: var(--muted);

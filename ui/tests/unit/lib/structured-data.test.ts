@@ -38,6 +38,15 @@ describe('siteStructuredData', () => {
     const org = graph.find((node) => node['@type'] === 'Organization');
     const app = graph.find((node) => node['@type'] === 'SoftwareApplication');
     expect(org?.sameAs).toEqual([...ORGANIZATION_SAME_AS]);
+    expect(new Set(ORGANIZATION_SAME_AS).size).toBe(ORGANIZATION_SAME_AS.length);
+    for (const url of [
+      'https://oya.dev',
+      'https://glama.ai/mcp/servers/OyadotAI/oya-browser',
+      'https://www.youtube.com/@oyaAI',
+      'https://x.com/oyadotai',
+    ]) {
+      expect(ORGANIZATION_SAME_AS).toContain(url);
+    }
     expect(app).toMatchObject({
       operatingSystem: 'macOS, Windows, Linux',
       downloadUrl: `${SITE_URL}/#download`,

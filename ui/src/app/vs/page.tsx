@@ -12,7 +12,8 @@ import { ANSWER_PAGES } from '../_answers/content';
 /** The page's title and description for search and link previews. */
 export const metadata: Metadata = {
   title: 'Compare Oya Browser',
-  description: 'How Oya Browser differs from other browsers for AI agents: Browserbase, Steel, Anchor and Browser Use.',
+  description:
+    'Compare Oya Browser with Browserbase, Steel, Anchor, Browser Use, Playwright MCP, Chrome DevTools MCP, Firecrawl, Stagehand and Skyvern from public docs.',
   alternates: { canonical: '/vs', types: SITE_ALTERNATE_TYPES },
 };
 
@@ -36,7 +37,9 @@ export default function Compare() {
           {COMPARISONS.map(({ path, title, lead, hero }) => (
             <section key={path} className={notes.release}>
               <h2>
-                <Link href={path}>{hero?.headline ?? title}</Link>
+                <Link href={path} className={notes.indexLink}>
+                  {hero?.headline ?? title}
+                </Link>
               </h2>
               <p>{hero?.paragraphs[0] ?? firstSentence(lead)}</p>
             </section>

@@ -34,8 +34,12 @@ export const ORGANIZATION_SAME_AS = [
   'https://pypi.org/project/oya-browser/',
   'https://registry.modelcontextprotocol.io/v0/servers?search=io.github.OyadotAI/oya-browser',
   'https://getoya.ai',
+  'https://oya.dev',
   'https://discord.gg/wqSeXJPygn',
   'https://mcptry.com/servers/io.github.OyadotAI/oya-browser',
+  'https://glama.ai/mcp/servers/OyadotAI/oya-browser',
+  'https://www.youtube.com/@oyaAI',
+  'https://x.com/oyadotai',
 ] as const;
 
 /** Capabilities listed in the root SoftwareApplication schema node. */

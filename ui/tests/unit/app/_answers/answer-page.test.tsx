@@ -10,6 +10,11 @@ import VsBrowserbase, { metadata as vsMetadata } from '@/app/vs/browserbase/page
 import VsSteel, { metadata as steelMetadata } from '@/app/vs/steel/page';
 import VsAnchor, { metadata as anchorMetadata } from '@/app/vs/anchor/page';
 import VsBrowserUse, { metadata as browserUseMetadata } from '@/app/vs/browser-use/page';
+import VsPlaywrightMcp, { metadata as playwrightMcpMetadata } from '@/app/vs/playwright-mcp/page';
+import VsChromeDevtoolsMcp, { metadata as chromeDevtoolsMcpMetadata } from '@/app/vs/chrome-devtools-mcp/page';
+import VsFirecrawl, { metadata as firecrawlMetadata } from '@/app/vs/firecrawl/page';
+import VsStagehand, { metadata as stagehandMetadata } from '@/app/vs/stagehand/page';
+import VsSkyvern, { metadata as skyvernMetadata } from '@/app/vs/skyvern/page';
 import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
 import AgenticBrowser, { metadata as agenticMetadata } from '@/app/agentic-browser/page';
 import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
@@ -58,8 +63,14 @@ import {
   VS_ANCHOR,
   VS_BROWSERBASE,
   VS_BROWSER_USE,
+  VS_CHROME_DEVTOOLS_MCP,
+  VS_FIRECRAWL,
+  VS_PLAYWRIGHT_MCP,
+  VS_SKYVERN,
+  VS_STAGEHAND,
   VS_STEEL,
 } from '@/app/_answers/content';
+import { CHECKED } from '@/app/_answers/compare';
 import { WORKFLOW_CHAPTERS } from '@/app/_answers/workflow-chapters';
 import { PORTAL_CONTEXT } from '@/app/_home/workflow-story-content';
 import { SiteFooter } from '@/app/_home/site-footer';
@@ -75,6 +86,16 @@ const PAGES = [
   { name: 'vs/steel', Page: VsSteel, metadata: steelMetadata, content: VS_STEEL },
   { name: 'vs/anchor', Page: VsAnchor, metadata: anchorMetadata, content: VS_ANCHOR },
   { name: 'vs/browser-use', Page: VsBrowserUse, metadata: browserUseMetadata, content: VS_BROWSER_USE },
+  { name: 'vs/playwright-mcp', Page: VsPlaywrightMcp, metadata: playwrightMcpMetadata, content: VS_PLAYWRIGHT_MCP },
+  {
+    name: 'vs/chrome-devtools-mcp',
+    Page: VsChromeDevtoolsMcp,
+    metadata: chromeDevtoolsMcpMetadata,
+    content: VS_CHROME_DEVTOOLS_MCP,
+  },
+  { name: 'vs/firecrawl', Page: VsFirecrawl, metadata: firecrawlMetadata, content: VS_FIRECRAWL },
+  { name: 'vs/stagehand', Page: VsStagehand, metadata: stagehandMetadata, content: VS_STAGEHAND },
+  { name: 'vs/skyvern', Page: VsSkyvern, metadata: skyvernMetadata, content: VS_SKYVERN },
   { name: 'ai-browser', Page: AiBrowser, metadata: aiMetadata, content: AI_BROWSER },
   { name: 'agentic-browser', Page: AgenticBrowser, metadata: agenticMetadata, content: AGENTIC_BROWSER },
   {
@@ -312,7 +333,20 @@ describe('the answer page list', () => {
 });
 
 describe('the comparison pages', () => {
-  const VS = [VS_BROWSERBASE, VS_STEEL, VS_ANCHOR, VS_BROWSER_USE];
+  afterEach(() => cleanup());
+
+  const VS = [
+    VS_BROWSERBASE,
+    VS_STEEL,
+    VS_ANCHOR,
+    VS_BROWSER_USE,
+    VS_PLAYWRIGHT_MCP,
+    VS_CHROME_DEVTOOLS_MCP,
+    VS_FIRECRAWL,
+    VS_STAGEHAND,
+    VS_SKYVERN,
+  ];
+  const NON_PROVIDER_VS = [VS_PLAYWRIGHT_MCP, VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_STAGEHAND, VS_SKYVERN];
 
   it('each open with a different answer, so they are not one page with the name swapped', () => {
     expect(new Set(VS.map((page) => page.lead)).size).toBe(VS.length);
@@ -321,6 +355,36 @@ describe('the comparison pages', () => {
 
   it('sit together at the end of the list, which groups them in both footers', () => {
     expect(ANSWER_PAGES.slice(-VS.length)).toEqual(VS);
+  });
+
+  it('reflects the 2026-11-20 re-audit and avoids false remote-provider claims on non-provider comparisons', () => {
+    expect(CHECKED).toBe('2026-11-20');
+    for (const page of NON_PROVIDER_VS) {
+      const text = [page.lead, ...page.sections.map((s) => s.body), ...page.faq.map((f) => f.a)].join(' ');
+      expect(text).not.toMatch(/behind the same API|run browsers on/i);
+    }
+    const stagehandText = [
+      VS_STAGEHAND.lead,
+      ...VS_STAGEHAND.sections.map((s) => s.body),
+      ...VS_STAGEHAND.faq.map((f) => f.a),
+    ].join(' ');
+    expect(stagehandText).toContain('Stagehand v3');
+    expect(stagehandText).toContain('Stagehand v4');
+  });
+
+  it('renders the provenance bar, highlighted Oya column, exact Not stated pills and side-by-side fit cards', () => {
+    const { container } = render(<VsSkyvern />);
+    expect(container.textContent).toContain(`Sources checked ${CHECKED}`);
+    const sourceJump = container.querySelector('a[href="#sources"]');
+    expect(sourceJump?.textContent).toContain(`(${VS_SKYVERN.sources?.links.length})`);
+    expect(container.querySelectorAll('thead th[data-oya="true"]').length).toBe(1);
+    expect(container.querySelectorAll('tbody td[data-oya="true"]').length).toBeGreaterThan(0);
+    const notStatedSpans = [...container.querySelectorAll('tbody td span')].map((el) => el.textContent);
+    expect(notStatedSpans).toContain('Not stated');
+    expect(notStatedSpans.every((text) => text === 'Not stated')).toBe(true);
+    expect(container.textContent).toContain('Not stated; it says HIPAA compliant');
+    expect(screen.getByRole('heading', { level: 3, name: 'Choose Oya when' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 3, name: 'Choose Skyvern when' })).toBeTruthy();
   });
 });
 
