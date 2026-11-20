@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Coding agents connected to the desktop app can test a web app and pull data from pages: `read_console` and `read_network` show what the page in the agent's own tab logged and fetched, and `wait_for` waits for text or an element. An agent reads only a tab it opened itself, never the person's tabs or another agent's.
+- One line installs and connects Oya for a coding agent: `curl -fsSL https://oyabrowser.com/install-desktop.sh | sh -s -- claude-code` (and a PowerShell line for Windows) installs the app if it is missing, checks Oya's signature before copying it, opens it, and asks the person in a dialog before connecting. Cancel is the default; after a Cancel, further requests are ignored for five minutes.
+- llms.txt and the agent skill lead with that line, and add two recipes: testing a web app on localhost, and extracting data from pages into rows.
+
+### Fixed
+
+- Reading a page's console or requests through the browser commands returned every tab's entries, the person's own tabs among them. It now returns only the calling agent's own tab.
+
 ## [1.0.264](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.264) · 2026-11-20
 
 ### Changed

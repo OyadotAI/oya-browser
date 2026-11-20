@@ -15,6 +15,12 @@ const SECURITY_HEADERS = [
 ];
 
 /**
+ * The desktop install scripts are read as text by `curl | sh` and PowerShell's `irm`. Left to its
+ * extension, the .ps1 would go out as a download, and `irm` would hand back bytes, not a script.
+ */
+const INSTALL_SCRIPT_HEADERS = [{ key: "Content-Type", value: "text/plain; charset=utf-8" }];
+
+/**
  * Dev-only: Next blocks cross-origin requests to /_next dev assets, which a tunnel
  * always is. Reaching the console through one is how Slack's OAuth redirect and the
  * live-browser share links get exercised locally, so the tunnel hosts are allowed by
@@ -32,7 +38,10 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: __dirname,
   turbopack: { root: __dirname },
   async headers() {
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      { source: "/install-desktop.:shell(sh|ps1)", headers: INSTALL_SCRIPT_HEADERS },
+    ];
   },
   // Direct pricing visits land on the visible homepage plans. Keep this
   // temporary so a separate pricing page can take the path later.

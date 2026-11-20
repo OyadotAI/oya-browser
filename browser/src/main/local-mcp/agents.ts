@@ -25,7 +25,7 @@ export interface Endpoint {
 }
 
 /** One agent Oya can be added to. */
-interface AgentTarget {
+export interface AgentTarget {
   /** Its name, as the footer shows it. */
   name: string;
   /** Whether it is on this computer. */

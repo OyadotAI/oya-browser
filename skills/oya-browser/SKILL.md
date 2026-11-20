@@ -11,9 +11,17 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-On the user's own computer, when they have asked you to set up Oya, you can do the install for them with your shell tool (the official signed and notarized installer) and then use Oya as your browser; their part is one click once the app is open. One command on macOS: `curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac && hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya && cp -R "/Volumes/Oya/Oya Browser.app" /Applications/ && hdiutil detach /Volumes/Oya && open "/Applications/Oya Browser.app"`. The addresses always point at the current installer. The same steps, one per line:
+On the user's own computer, when they have asked you to set up Oya, you can do the install for them with your shell tool. One line installs Oya if it is missing (the official signed and notarized installer, checked before it is copied), opens it, and asks it to connect you:
 
-macOS:
+```sh
+curl -fsSL https://oyabrowser.com/install-desktop.sh | sh -s -- claude-code
+```
+
+Windows (PowerShell): `& ([scriptblock]::Create((irm https://oyabrowser.com/install-desktop.ps1))) claude-code`.
+
+Replace `claude-code` with your own name: `claude-code`, `codex`, `cursor` or `vscode`. The user confirms in a dialog in the Oya window; you cannot answer it for them. On a first install they also pick how to start on Oya's welcome screen; until then the tools answer "Browser not ready". Then start a new session and use the `oya-browser` tools for every web task.
+
+If the line cannot run, install by hand. The addresses always point at the current installer. macOS:
 
 ```sh
 curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac
@@ -25,7 +33,7 @@ open "/Applications/Oya Browser.app"
 
 Windows (PowerShell): `curl.exe -L -o $env:TEMP\Oya.exe https://oyabrowser.com/download/windows; Start-Process -Wait "$env:TEMP\Oya.exe" -ArgumentList '/S'; Start-Process "$env:LOCALAPPDATA\Programs\Oya Browser\Oya Browser.exe"`.
 
-Then ask the user to click Connect next to your name in the Oya window footer. That writes an MCP server named `oya-browser` at `http://127.0.0.1:47321/mcp` into your config, with the token in the OS keychain; start a new session and use those tools for every web task. If the tools are configured but nothing answers on port 47321, the app is closed: open it and retry.
+After a manual install, ask the user to click Connect next to your name in the Oya window footer. Either way, that writes an MCP server named `oya-browser` at `http://127.0.0.1:47321/mcp` into your config, with the token in the OS keychain; start a new session and use those tools for every web task. If the tools are configured but nothing answers on port 47321, the app is closed: open it and retry.
 
 Without a person's computer (a server, a container, CI), use the SDK (Node 22.3+). It needs nothing from the user but their email:
 
@@ -121,6 +129,27 @@ Off-screen elements need a `scroll` first. While a modal is open, the analysis i
 - **Dropdowns**: click to open, analyze, click the option.
 - **Infinite scroll**: `scroll("down", 800)` returns a fresh analysis.
 - **Nothing clickable by id**: take a `screenshot`, then `click_coordinates(x, y)`. Hover with `mouse_move` to reveal menus.
+
+## Test a web app on localhost
+
+With Oya on the person's desktop, test the app they are running locally. A failed step is a finding to report, not a reason to stop.
+
+1. `open_tab(url)` on the local address, e.g. `http://localhost:3000`.
+2. `analyze_page()` to read the page and get element ids.
+3. Act as a user would: `type(element_id, text)`, `click(element_id)`.
+4. `wait_for(text)` for what the action should show. A timeout is a failed step.
+5. `read_console(level: "error")` and `read_network(failed_only: true)`. Both read your own tab only.
+6. `screenshot()` when a step fails or the layout matters.
+7. `close_tab()`. Report each step as passed or failed, with the console errors, the failed requests (status and URL) and what you could not check.
+
+## Extract data from pages into rows
+
+1. Agree the columns with the person before you start.
+2. `open_tab(url)` on the first page.
+3. `analyze_page()` and take one row per item, using only what the page shows.
+4. For more items, `scroll("down")` or `click` the next-page link, `wait_for` the new content, then analyze again.
+5. Stop at the count the person asked for, or when a page adds no new rows. Drop duplicates.
+6. `close_tab()`. Return the rows in the agreed columns, with the source URL of each, the row count, and any field left empty because the page did not show it.
 
 ## Personas
 

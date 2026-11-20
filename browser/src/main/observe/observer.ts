@@ -95,6 +95,8 @@ export interface ConsoleQuery {
   pattern?: string;
   /** At most this many entries. */
   limit?: number;
+  /** Only this page's entries. The caller's own tab, set by the command, never by the agent. */
+  webContentsId?: number;
 }
 
 /** What readNetwork() is asked. */
@@ -105,6 +107,8 @@ export interface NetworkQuery {
   pattern?: string;
   /** At most this many records. */
   limit?: number;
+  /** Only this page's requests. The caller's own tab, set by the command, never by the agent. */
+  webContentsId?: number;
 }
 
 /** A url without its query, fragment or credentials; anything unparsable is dropped whole. */
@@ -169,10 +173,26 @@ export class Observer {
   readonly console: ConsoleEntry[] = [];
   /** Network records, oldest first. */
   readonly network: NetworkEntry[] = [];
+  /**
+   * The page each entry came from, kept beside the rings so an entry's shape stays what is read
+   * back. Without it a read returned every tab's entries, the person's own among them.
+   */
+  private readonly pages = new WeakMap<object, number>();
+
+  /** Remembers the page an entry came from; one from no page (a service worker) belongs to none. */
+  private from<T extends object>(entry: T, webContentsId: number | undefined): T {
+    if (webContentsId !== undefined) this.pages.set(entry, webContentsId);
+    return entry;
+  }
+
+  /** Whether a read limited to one page may see an entry; an unlimited read sees them all. */
+  private visible(entry: object, webContentsId: number | undefined): boolean {
+    return webContentsId === undefined || this.pages.get(entry) === webContentsId;
+  }
 
   /** Records one console entry from a renderer. */
   addConsole(input: ConsoleInput): void {
-    const entry = consoleEntry(input);
+    const entry = this.from(consoleEntry(input), input.webContentsId);
     push(this.console, entry, CONSOLE_MAX);
     this.traces.add(input.webContentsId, 'console', entry);
   }
@@ -184,28 +204,35 @@ export class Observer {
    */
   addRequest(request: RequestInput): void {
     if (!isPageRequest(request.url)) return;
-    push(this.network, networkEntry(request), NETWORK_MAX);
+    push(this.network, this.from(networkEntry(request), request.webContentsId), NETWORK_MAX);
   }
 
-  /** Console entries, newest first, optionally only one level or matching text. */
-  readConsole({ level, pattern, limit = DEFAULT_READ_LIMIT }: ConsoleQuery = {}): ConsoleEntry[] {
+  /**
+   * Console entries, newest first, optionally only one level or matching text. A read limited to
+   * one page narrows to that page before the pattern runs: a pattern tried against every tab's
+   * text told the caller, by how long it took, what another tab had logged.
+   */
+  readConsole({ level, pattern, limit = DEFAULT_READ_LIMIT, webContentsId }: ConsoleQuery = {}): ConsoleEntry[] {
+    const mine = this.console.filter((e) => this.visible(e, webContentsId));
     const hit = matcher(
       pattern,
-      this.console.map((e) => e.message),
+      mine.map((e) => e.message),
     );
-    return filtered(this.console, (e, i) => (!level || e.level === level) && hit(i), limit);
+    return filtered(mine, (e, i) => (!level || e.level === level) && hit(i), limit);
   }
 
   /**
    * Network records, newest first. `failedOnly` is the question an agent
-   * actually has: which request did the server refuse?
+   * actually has: which request did the server refuse? Narrowed to one page first, as the console is.
    */
-  readNetwork({ failedOnly = false, pattern, limit = DEFAULT_READ_LIMIT }: NetworkQuery = {}): NetworkEntry[] {
+  readNetwork(query: NetworkQuery = {}): NetworkEntry[] {
+    const { failedOnly = false, pattern, limit = DEFAULT_READ_LIMIT, webContentsId } = query;
+    const mine = this.network.filter((e) => this.visible(e, webContentsId));
     const hit = matcher(
       pattern,
-      this.network.map((e) => e.url),
+      mine.map((e) => e.url),
     );
-    return filtered(this.network, (e, i) => (!failedOnly || failed(e)) && hit(i), limit);
+    return filtered(mine, (e, i) => (!failedOnly || failed(e)) && hit(i), limit);
   }
 }
 

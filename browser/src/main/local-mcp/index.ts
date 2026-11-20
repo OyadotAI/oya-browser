@@ -6,8 +6,9 @@ import { agentInstallation, agentPlatform } from './agent-platform.ts';
 import type { LocalAgent } from '../../shared/ipc.ts';
 
 export { LocalMcp } from './server.ts';
-export { AGENTS, installedAgents, type AgentStatus } from './agents.ts';
+export { AGENTS, installedAgents, type AgentStatus, type Endpoint } from './agents.ts';
 export { AgentLauncher } from './launcher.ts';
+export { AgentConnectLink, isAgentConnectLink } from './connect-link.ts';
 
 /** Current-instance status must compare URL and credentials without returning either to the renderer. */
 export function knownAgents(endpoint: Endpoint, all = false, platform = agentPlatform()): LocalAgent[] {

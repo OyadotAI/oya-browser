@@ -15,6 +15,7 @@ it('introduces itself on initialize, with tools and how to behave', async () => 
   assert.ok(reply.result.capabilities.tools);
   assert.match(reply.result.instructions, /own tab/);
   assert.match(reply.result.instructions, /in place of other browser tools/);
+  assert.match(reply.result.instructions, /testing an app on localhost and extracting data from pages/);
 });
 
 it('lists the same tools the hosted MCP offers', async () => {

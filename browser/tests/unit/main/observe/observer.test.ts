@@ -129,3 +129,80 @@ describe('readNetwork', () => {
     assert.equal(o.network.length, NETWORK_MAX);
   });
 });
+
+/** Long enough that a nested quantifier cannot finish on it within the pattern budget. */
+const SLOW_TEXT = 40;
+
+describe('a read limited to one page', () => {
+  /** Two tabs: the person's (1) and the agent's (2), each with one console entry and one failed request. */
+  function twoTabs() {
+    const o = new Observer();
+    o.addConsole({ level: 3, message: 'theirs', webContentsId: 1 });
+    o.addConsole({ level: 3, message: 'mine', webContentsId: 2 });
+    o.addRequest({ url: 'https://bank.example.com/account', statusCode: 500, webContentsId: 1 });
+    o.addRequest({ url: 'http://localhost:3000/api', statusCode: 404, webContentsId: 2 });
+    return o;
+  }
+
+  it('never returns what another page logged', () => {
+    assert.deepEqual(
+      twoTabs()
+        .readConsole({ webContentsId: 2 })
+        .map((e) => e.message),
+      ['mine'],
+    );
+  });
+
+  it('never returns what another page fetched', () => {
+    assert.deepEqual(
+      twoTabs()
+        .readNetwork({ webContentsId: 2 })
+        .map((e) => e.url),
+      ['http://localhost:3000/api'],
+    );
+  });
+
+  it('never returns an entry that came from no page', () => {
+    const o = twoTabs();
+    o.addConsole({ level: 3, message: 'worker' });
+    o.addRequest({ url: 'https://x.test/sw.js', statusCode: 500 });
+    assert.equal(o.readConsole({ webContentsId: 2 }).length, 1);
+    assert.equal(o.readNetwork({ webContentsId: 2 }).length, 1);
+  });
+
+  it('still applies the level, failure and pattern filters within the page', () => {
+    const o = twoTabs();
+    o.addConsole({ level: 1, message: 'mine too', webContentsId: 2 });
+    o.addRequest({ url: 'http://localhost:3000/ok', statusCode: 200, webContentsId: 2 });
+    assert.equal(o.readConsole({ webContentsId: 2, level: 'error' }).length, 1);
+    assert.equal(o.readNetwork({ webContentsId: 2, failedOnly: true }).length, 1);
+    assert.equal(o.readNetwork({ webContentsId: 2, pattern: 'bank' }).length, 0);
+  });
+
+  it('never tries a pattern against another page, so its timing says nothing of what that page logged', () => {
+    const o = new Observer();
+    // A pattern that runs out of time on this text, and so throws, if it is ever tried against it.
+    o.addConsole({ level: 3, message: `${'a'.repeat(SLOW_TEXT)}!`, webContentsId: 1 });
+    o.addConsole({ level: 3, message: 'mine', webContentsId: 2 });
+    assert.throws(() => o.readConsole({ pattern: '(a+)+$' }), /too long|slow/i);
+    assert.deepEqual(o.readConsole({ pattern: '(a+)+$', webContentsId: 2 }), []);
+  });
+
+  it('counts its limit within the page: the newest of this page, whatever other pages logged since', () => {
+    const o = twoTabs();
+    o.addConsole({ level: 3, message: 'theirs again', webContentsId: 1 });
+    assert.deepEqual(
+      o.readConsole({ webContentsId: 2, limit: 1 }).map((e) => e.message),
+      ['mine'],
+    );
+  });
+
+  it('leaves the shape of an entry as it was, with no page id on it', () => {
+    assert.equal('webContentsId' in twoTabs().readConsole({ webContentsId: 2 })[0], false);
+  });
+
+  it('leaves a read with no page unlimited, as the dev panel reads it', () => {
+    assert.equal(twoTabs().readConsole().length, 2);
+    assert.equal(twoTabs().readNetwork().length, 2);
+  });
+});

@@ -21,6 +21,24 @@ export const MCP_MAX_BODY_BYTES = 1_048_576;
 /** How long one tool call may run before the agent is told it timed out. */
 export const MCP_CALL_TIMEOUT_MS = 120_000;
 
+/** How long after a connect link no other is answered, so a page opening it in a loop cannot stack dialogs. */
+export const CONNECT_LINK_COOLDOWN_MS = 10_000;
+
+/**
+ * How long after a Cancel no other connect link is answered: a page that may open oya:// links
+ * could otherwise raise the dialog every few seconds, waiting for a misclick.
+ */
+export const CONNECT_LINK_CANCEL_QUIET_MS = 300_000;
+
+/** How long a connect link waits for the port: a link that launched the app arrives before it is up. */
+export const CONNECT_LINK_PORT_WAIT_MS = 15_000;
+
+/** How often a waiting connect link looks for the port. */
+export const CONNECT_LINK_POLL_MS = 250;
+
+/** The longest wait_for may wait; past this an agent should read the page, not keep waiting. */
+export const WAIT_FOR_MAX_MS = 20_000;
+
 /** How many agent sessions are remembered; the oldest is forgotten past this. */
 export const MCP_MAX_SESSIONS = 64;
 
