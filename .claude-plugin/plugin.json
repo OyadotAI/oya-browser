@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "description": "Real Chrome browsers for coding agents: MCP server (start_browser, analyze_page, click, type, playbooks) plus workflow skill. Free local desktop app (no API key) or Oya Cloud with OYA_API_KEY.",
-  "version": "1.0.267",
+  "version": "1.0.268",
   "author": {
     "name": "Oya",
     "url": "https://getoya.ai"
