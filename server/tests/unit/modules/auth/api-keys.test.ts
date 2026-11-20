@@ -15,6 +15,7 @@ const ENV_KEY = 'env-integration-key'.padEnd(32, 'e');
 process.env.API_KEYS = [process.env.API_KEYS, ENV_KEY].filter(Boolean).join(',');
 const apiKeys = await import('../../../../src/modules/auth/api-keys.ts');
 const keys = await import('../../../../src/modules/auth/keys.ts');
+const { findKey } = await import('../../../../src/modules/auth/repository.ts');
 const { control, projectId } = await import('../../../../src/modules/control/service.ts');
 const { registry } = await import('../../../../src/modules/browsers/registry.ts');
 const { sessions } = await import('../../../../src/modules/gateway/service.ts');
@@ -99,6 +100,83 @@ describe('registerApiKey', () => {
     await apiKeys.registerApiKey(key, 'user-a', 'first');
     await apiKeys.registerApiKey(key, 'user-a', 'second');
     assert.equal((await projectOf(key)).ownerUser, 'user-a');
+  });
+
+  it('leaves a revoked key dead when another account tries to import it', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-a', 'mine');
+    await apiKeys.deleteApiKey(keys.keyDigest(key), 'user-a');
+    await assert.rejects(apiKeys.registerApiKey(key, 'user-b', 'theirs'), { status: Status.FORBIDDEN });
+    assert.equal(await findKey(keys.keyDigest(key)), null, 'the refused import stores no row');
+    assert.equal(await keys.validateApiKey(key), false);
+    assert.equal(await apiKeys.registeredOwner(key), null);
+  });
+
+  it('lets the owner restore a key they revoked', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-a', 'mine');
+    await apiKeys.deleteApiKey(keys.keyDigest(key), 'user-a');
+    await apiKeys.registerApiKey(key, 'user-a', 'mine');
+    assert.equal(await keys.validateApiKey(key), true);
+    assert.equal(await apiKeys.registeredOwner(key), 'user-a');
+  });
+});
+
+describe('claimAgentApiKey', () => {
+  /** What every refused claim answers. */
+  const refused = { status: Status.FORBIDDEN, message: /^This key cannot be claimed\./ };
+
+  it('hands an agent’s unclaimed key and its project to the person claiming it', async () => {
+    const key = await apiKeys.registerAgentKey('agent@example.com');
+    assert.equal(await apiKeys.claimAgentApiKey(key, 'user-claim'), true);
+    assert.equal(await apiKeys.registeredOwner(key), 'user-claim');
+    assert.equal((await projectOf(key)).ownerUser, 'user-claim');
+    assert.equal(await apiKeys.isUnclaimedAgentKey(key), false);
+  });
+
+  it('refuses a key no agent was issued, and creates neither a row nor a project', async () => {
+    const key = keys.generateKey();
+    await assert.rejects(apiKeys.claimAgentApiKey(key, 'user-claim'), refused);
+    assert.equal(await findKey(keys.keyDigest(key)), null);
+    assert.equal(await projectOf(key), null);
+  });
+
+  it('refuses a key that is already on another account', async () => {
+    const key = keys.generateKey();
+    await apiKeys.registerApiKey(key, 'user-a', 'mine');
+    await assert.rejects(apiKeys.claimAgentApiKey(key, 'user-b'), refused);
+    assert.equal(await apiKeys.registeredOwner(key), 'user-a');
+  });
+
+  it('refuses a key an operator provisioned, which no agent made', async () => {
+    const [key] = await apiKeys.provisionKeys(1);
+    await assert.rejects(apiKeys.claimAgentApiKey(key, 'user-claim'), refused);
+    assert.equal(await apiKeys.registeredOwner(key), null);
+  });
+
+  it('answers false, not a refusal, when the owner claims their own key again', async () => {
+    const key = await apiKeys.registerAgentKey('agent@example.com');
+    await apiKeys.claimAgentApiKey(key, 'user-claim');
+    assert.equal(await apiKeys.claimAgentApiKey(key, 'user-claim'), false);
+  });
+
+  it('finishes claiming the project when a retry follows a claim that failed halfway', async () => {
+    const key = await apiKeys.registerAgentKey('agent@example.com');
+    const transact = mock.method(control().store, 'transact', async () => {
+      throw new Error('store unavailable');
+    });
+    await assert.rejects(apiKeys.claimAgentApiKey(key, 'user-retry'), /store unavailable/);
+    transact.mock.restore();
+    assert.equal(await apiKeys.claimAgentApiKey(key, 'user-retry'), false);
+    assert.equal((await projectOf(key)).ownerUser, 'user-retry');
+  });
+
+  it('lets only one of two people racing for the same claim link win', async () => {
+    const key = await apiKeys.registerAgentKey('agent@example.com');
+    const results = await Promise.allSettled(['user-x', 'user-y'].map((u) => apiKeys.claimAgentApiKey(key, u)));
+    assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+    const winner = await apiKeys.registeredOwner(key);
+    assert.equal((await projectOf(key)).ownerUser, winner);
   });
 });
 

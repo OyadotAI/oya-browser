@@ -34,3 +34,9 @@ export function forgetClaim() {
     // Nothing stored to forget.
   }
 }
+
+/** How much of a key the confirm step shows: what the server lists as a key's prefix. */
+const HINT_CHARS = 8;
+
+/** The start of a key, enough to recognise it by and too little to use. */
+export const claimHint = (key: string) => `${key.slice(0, HINT_CHARS)}…`;

@@ -17,6 +17,7 @@ export {
   getKeyOwner,
   registeredOwner,
   registerApiKey,
+  claimAgentApiKey,
   keyExpiry,
   registerAgentKey,
   isUnclaimedAgentKey,

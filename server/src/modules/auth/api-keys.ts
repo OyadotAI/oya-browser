@@ -106,14 +106,37 @@ function validDays(days: unknown) {
  */
 export async function registerApiKey(key, userId, label, expiresAt: string | null = null) {
   const digest = keyDigest(key);
-  if (userId) {
-    const existing = await ownerRow(digest);
-    if (existing) return reimport(key, digest, userId, existing);
-    await insertKeyRow(key, userId, label, expiresAt);
-  }
-  // Claim first: a refused claim must not leave the key cached as the refused user's.
+  const existing = userId ? await ownerRow(digest) : null;
+  if (existing) return reimport(key, digest, userId, existing);
+  // Claim before storing anything: a refused claim that left a row behind would
+  // bring a revoked key back to life for whoever tried to import it.
   await claimNewProject(key, userId, label);
+  if (userId) await insertKeyRow(key, userId, label, expiresAt);
   remember(key, digest, userId, expiresAt);
+}
+
+/** What every refused claim says, whatever the reason, so the answer does not reveal which keys exist. */
+const CLAIM_REFUSED =
+  'This key cannot be claimed. It may already be on an account, or it was not issued to an agent. Ask your agent for its claim_url again.';
+
+/**
+ * Claims the key in an agent's claim link for `userId`. Only a key an agent
+ * minted and nobody owns yet can be claimed: a link carrying any other key
+ * would otherwise plant a project whose key the link's author already holds.
+ * Resolves true when newly adopted, false when `userId` already owns it (a
+ * retry after a lost answer); anything else is refused, with nothing created.
+ */
+export async function claimAgentApiKey(key, userId): Promise<boolean> {
+  const digest = keyDigest(key);
+  const row = await ownerRow(digest);
+  const owned = row?.user_id === userId;
+  if (!owned && !isUnclaimedAgent(row)) throw new HttpError(Status.FORBIDDEN, CLAIM_REFUSED);
+  if (!owned) await adoptAgentKey(digest, userId, CLAIM_REFUSED);
+  // Claimed again even when already owned: a retry after a failure between the
+  // two steps must still leave the project this person's.
+  await claimProject(key, userId);
+  remember(key, digest, userId, row.expires_at);
+  return !owned;
 }
 
 /** A key this user already registered: re-seal its project under this server's secret. */
@@ -141,8 +164,8 @@ const isUnclaimedAgent = (row) => Boolean(row?.agent_email && !row.user_id);
  * Hands an agent's key to the person claiming it. Conditional on the row still
  * being unowned, so two people racing for one claim link cannot both win.
  */
-async function adoptAgentKey(digest, userId) {
-  if (!(await claimAgentKey(digest, userId))) throw new HttpError(Status.FORBIDDEN, 'Key cannot be imported');
+async function adoptAgentKey(digest, userId, refusal = 'Key cannot be imported') {
+  if (!(await claimAgentKey(digest, userId))) throw new HttpError(Status.FORBIDDEN, refusal);
   noteAgentKey(digest, false);
 }
 
