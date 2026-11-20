@@ -645,6 +645,38 @@ jobs:
       if: always()
       run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}
 
+  # A failed search notification must never undo a rollout or delay package publishing.
+  indexnow:
+    name: Notify IndexNow (production)
+    needs: [deploy, server-only]
+    # One deployment path normally skips; an explicit status function preserves the successful path.
+    if: ${{ !cancelled() && (needs.deploy.result == 'success' || needs['server-only'].result == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: 24
+
+    - name: Submit production sitemap
+      env:
+        SITE_URL: https://oyabrowser.com
+      run: npm run indexnow
+
+    - name: Report notification failure
+      if: failure()
+      run: |
+        # The retry command is literal text, not shell substitution.
+        # shellcheck disable=SC2016
+        echo '::warning title=IndexNow notification failed::Production deployment succeeded; the IndexNow notification failed. See the script error above. Retry from the repository root: `npm run indexnow`.'
+
   publish-npm:
     name: Publish SDK and CLI to npm
     # After the deploy, so a new SDK never calls a route the server does not
