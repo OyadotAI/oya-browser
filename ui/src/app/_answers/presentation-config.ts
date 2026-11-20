@@ -1,4 +1,4 @@
-/** Explicit paths and subject families give all22 answer pages an intentional visual treatment. */
+/** Explicit paths and subject families give all 23 answer pages an intentional visual treatment. */
 import type { AnswerPresentation } from './presentation';
 
 /** Configuration describes existing content; unknown pages fall back to complete prose. */
@@ -11,6 +11,10 @@ export const PRESENTATIONS: Record<string, AnswerPresentation> = {
   '/vs/browser-use': { family: 'comparison', eyebrow: 'Compare approaches' },
   '/ai-browser': { family: 'desktop', eyebrow: 'Your browser, with an agent' },
   '/browser-for-healthcare': { family: 'controls', eyebrow: 'Healthcare & compliance' },
+  '/browser-automation-for-regulated-industries': {
+    family: 'controls',
+    eyebrow: 'Security & compliance',
+  },
   '/hipaa-browser-automation': { family: 'controls', eyebrow: 'Healthcare & compliance' },
   '/prior-authorization-automation': { family: 'workflow', eyebrow: 'Healthcare workflows' },
   '/payer-portal-automation': { family: 'workflow', eyebrow: 'Healthcare workflows' },
