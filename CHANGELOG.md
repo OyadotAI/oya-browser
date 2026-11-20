@@ -6,6 +6,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.267](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.267) · 2026-11-20
+
+### Added
+
+- Added a dedicated pricing page, an RSS feed for research and releases, and structured data for public pages and published plans.
+- Added cached agent-discovery aliases for the documentation index and agent card while preserving OAuth discovery routes.
+
 ### Changed
 
 - Made coding-agent setup easier to discover from Product navigation and documentation, and aligned desktop welcome, Connect, session restart and recovery instructions across the website, README and agent guides.
