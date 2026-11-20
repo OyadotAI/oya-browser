@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- Notified IndexNow automatically after successful full and server-only production deployments, with bounded requests and a visible, nonblocking warning when notification failed.
+
 ## [1.0.268](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.268) · 2026-11-20
 
 ### Fixed
