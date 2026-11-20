@@ -154,79 +154,10 @@ body.mode-browsing .setup-screen {
 .setup-flow ol {
   line-height: 1.5;
 }
-.setup-choices {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--setup-gap);
-  margin-top: 12px;
-}
-.setup-choice {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--setup-gap);
-  width: 100%;
-  min-width: 0;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-}
-.setup-choice:hover {
-  border-color: var(--accent);
-  background: var(--muted-surface);
-}
-/* The tools a choice works with, as logo-and-name chips people recognise before they read. */
-.brand-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-right: 20px;
-}
-.brand-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
 .brand-mark {
   width: 16px;
   height: 16px;
   flex: none;
-}
-.setup-choice-copy {
-  display: grid;
-  gap: 6px;
-  padding-right: 20px;
-}
-.setup-choice-copy strong {
-  font-size: var(--text-lg);
-}
-.setup-choice-copy > span {
-  color: var(--secondary);
-  line-height: 1.4;
-}
-.setup-choice > .icon {
-  position: absolute;
-  right: 16px;
-  bottom: 22px;
-  width: 16px;
-  height: 16px;
-}
-.setup-provider-choices {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--setup-gap);
 }
 .setup-screen button:focus-visible,
 .setup-screen select:focus-visible,
@@ -279,44 +210,6 @@ body.mode-browsing .setup-screen {
 }
 .setup-help p {
   margin: 8px 0;
-}
-.setup-mini-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: setup-step;
-}
-.setup-mini-steps li {
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  align-content: start;
-  gap: 4px 8px;
-  font-size: var(--text-sm);
-  counter-increment: setup-step;
-}
-.setup-mini-steps li::before {
-  content: counter(setup-step);
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  grid-row: span 2;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 700;
-}
-.setup-mini-steps strong {
-  align-self: center;
-}
-.setup-mini-steps span,
-.setup-mini-steps code {
-  grid-column: 2;
-  color: var(--secondary);
-  overflow-wrap: anywhere;
 }
 .setup-agent-list {
   list-style: none;
@@ -424,21 +317,9 @@ body.mode-browsing .setup-screen {
     transform: rotate(360deg);
   }
 }
-@media (max-width: 820px) {
-  .setup-choices,
-  .setup-provider-choices {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .setup-choice {
-    padding: 12px;
-  }
-}
 @media (max-width: 500px) {
   .setup-screen {
     --setup-space: 20px;
-  }
-  .setup-mini-steps {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (max-height: 600px) {
@@ -690,4 +571,104 @@ body.mode-browsing .setup-screen {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+/* The connect screen: sign-in buttons on top, a row of AI apps, then the less common routes as rows. */
+.connect-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--setup-gap);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.connect-accounts,
+.connect-more {
+  display: grid;
+  gap: 10px;
+}
+.setup-screen .connect-account,
+.setup-screen .connect-app,
+.setup-screen .connect-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--setup-target);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.setup-screen .connect-account {
+  justify-content: center;
+  flex-wrap: wrap;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 12px 16px;
+}
+.connect-options:enabled .connect-account:hover,
+.connect-options:enabled .connect-app:hover,
+.connect-options:enabled .connect-row:hover {
+  border-color: var(--accent);
+  background: var(--muted-surface);
+}
+.connect-options:disabled button {
+  cursor: wait;
+  opacity: 0.6;
+}
+.connect-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 0;
+  font-size: var(--text-sm);
+}
+.connect-divider::before,
+.connect-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+.connect-apps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.setup-screen .connect-app {
+  justify-content: center;
+  padding: 10px 8px;
+}
+.setup-screen .connect-row {
+  justify-content: space-between;
+  padding: 10px 16px;
+  text-align: left;
+}
+.connect-account small {
+  flex-basis: 100%;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.connect-row small {
+  margin-left: 6px;
+  font-size: var(--text-sm);
+  font-weight: 400;
+}
+.connect-row > .icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.connect-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+@media (max-width: 500px) {
+  .connect-apps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
