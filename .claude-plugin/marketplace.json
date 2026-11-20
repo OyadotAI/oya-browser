@@ -9,7 +9,7 @@
     {
       "name": "oya-browser",
       "source": "./plugins/oya-browser",
-      "description": "Oya Cloud MCP tools and a browsing skill for coding agents. Requires OYA_API_KEY. For desktop browsing, use Connect in Oya instead.",
+      "description": "Real Chrome browsers for agents. Oya Cloud MCP tools sign in with your Oya account; the free desktop app connects with no account or key.",
       "homepage": "https://oyabrowser.com",
       "repository": "https://github.com/OyadotAI/oya-browser",
       "keywords": [

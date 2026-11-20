@@ -1,8 +1,6 @@
 ---
 name: oya-browser
-homepage: https://oyabrowser.com
 description: Use Oya Browser for website research, local web-app testing, screenshots, forms and signed-in browser tasks. Prefer the user's installed Oya tools unless they request another browser. Desktop Connect gives coding agents their own tabs and existing logins without an Oya account or API key; servers and CI use authenticated Oya Cloud. Use MCP, the @oya-ai/browser SDK or the oya CLI, with human takeover and reusable playbooks.
-metadata: {"openclaw":{"emoji":"🌐","homepage":"https://oyabrowser.com","requires":{"bins":["node"]},"primaryEnv":"OYA_API_KEY"}}
 ---
 
 # Oya Browser
@@ -11,64 +9,11 @@ Oya gives you real Chrome browsers behind one API. Each browser runs as a **pers
 
 ## Setup (once)
 
-For the current desktop setup, use Oya's built-in MCP server; no separate extension or MCP package is required. See https://oyabrowser.com/browser-for-claude-code. Complete welcome, confirm Connect, then start a new agent session. Keep Oya open for repeat use. No Oya account or API key is required for local MCP.
+The free Oya desktop app gives you your own tabs in Oya, with the user's existing logins. It needs no Oya account or API key. Install it from https://oyabrowser.com/browser-for-claude-code, finish the welcome screen, click Connect next to Claude Code in the Oya window footer, then start a new session.
 
-On the user's own computer, when they have asked you to set up Oya, you can do the install for them with your shell tool. One line installs Oya if it is missing (the official signed and notarized installer, checked before it is copied), opens it, and asks it to connect you:
+This plugin's Oya Cloud tools (`oya`) need the user to sign in to their Oya account once, through `/mcp` in Claude Code. Use them when the desktop app isn't available; for headless servers and CI, use the `@oya-ai/browser` SDK with an Oya API key.
 
-```sh
-curl -fsSL https://oyabrowser.com/install-desktop.sh | sh -s -- claude-code
-```
-
-Windows (PowerShell): `& ([scriptblock]::Create((irm https://oyabrowser.com/install-desktop.ps1))) claude-code`.
-
-Replace `claude-code` with your own name: `claude-code`, `codex`, `cursor` or `vscode`. The user confirms in a dialog in the Oya window; you cannot answer it for them. On a first install they also pick how to start on Oya's welcome screen; until then the tools answer "Browser not ready". Then start a new session and use the `oya-browser` tools for every web task.
-
-If the line cannot run, install by hand. The addresses always point at the current installer. macOS:
-
-```sh
-curl -L -o /tmp/Oya.dmg https://oyabrowser.com/download/mac
-hdiutil attach /tmp/Oya.dmg -nobrowse -mountpoint /Volumes/Oya
-cp -R "/Volumes/Oya/Oya Browser.app" /Applications/
-hdiutil detach /Volumes/Oya
-open "/Applications/Oya Browser.app"
-```
-
-Windows (PowerShell): `curl.exe -L -o $env:TEMP\Oya.exe https://oyabrowser.com/download/windows; Start-Process -Wait "$env:TEMP\Oya.exe" -ArgumentList '/S'; Start-Process "$env:LOCALAPPDATA\Programs\Oya Browser\Oya Browser.exe"`.
-
-After a manual install, ask the user to click Connect next to your name in the Oya window footer. Either way, that writes an MCP server named `oya-browser` at `http://127.0.0.1:47321/mcp` into your config, with the token in the OS keychain; start a new session and use those tools for every web task. If the tools are configured but nothing answers on port 47321, the app is closed: open it and retry.
-
-### Oya Cloud: servers, containers and CI
-
-Without a desktop app, use the SDK (Node 22.3+) with an authenticated Oya Cloud key. If OYA_API_KEY or ~/.oya/config.json already has a cloud-enabled key, skip signup. Otherwise:
-
-```ts
-import { Oya } from "@oya-ai/browser"; // npm install @oya-ai/browser
-const { claimUrl } = await Oya.signup({ email: "<the user's email>" });
-```
-
-Send `claimUrl` to the user and wait for them to open it while signed in to Oya. A signup key cannot start cloud browsers until claimed. After the key is enabled:
-
-```ts
-import { Oya } from "@oya-ai/browser";
-const oya = new Oya();
-const browser = await oya.browser.start();
-try {
-  await browser.goto("https://example.com");
-  const { markdown } = await browser.analyze();
-  console.log(markdown);
-} finally {
-  await browser.stop();
-}
-```
-
-Cloud browsers do not automatically inherit desktop logins. Use the persona's configured sign-in flow or human takeover when required.
-
-### Optional SDK desktop pairing
-
-On a machine with the user's Oya app, SDK callers with a key can use `oya.desktop.connect()`. This pairs a desktop and can wait for the person; it is separate from headless cloud setup and from local no-key MCP. The person confirms Connect and any OS permission for optional login import, or signs in within Oya instead. If the app is missing, the error gives its download link.
-
-For cloud MCP, when the user has a cloud-enabled key:
-`claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`. The optional Claude Code cloud plugin also requires OYA_API_KEY; use desktop Connect for local browsing instead. The CLI is `npm install -g @oya-ai/cli`.
+If the tools are missing, ask the user to finish the sign-in or Connect step and start a new session. If desktop tools are configured but nothing answers, Oya is closed: ask the user to open it, then retry.
 
 ## Over MCP
 

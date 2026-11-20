@@ -1,12 +1,13 @@
 {
   "name": "oya-browser",
-  "description": "Real Chrome browsers for coding agents: MCP server (start_browser, analyze_page, click, type, playbooks) plus workflow skill. Free local desktop app (no API key) or Oya Cloud with OYA_API_KEY.",
+  "description": "Real Chrome browsers for agents, with HIPAA-compliant Oya Cloud for healthcare. MCP tools and a browsing skill. Cloud signs in with your Oya account; the free desktop app needs none.",
   "version": "1.0.268",
   "author": {
     "name": "Oya",
     "url": "https://getoya.ai"
   },
   "homepage": "https://oyabrowser.com",
+  "privacyPolicyUrl": "https://oyabrowser.com/privacy",
   "repository": "https://github.com/OyadotAI/oya-browser",
   "keywords": [
     "browser",
@@ -24,10 +25,7 @@
   "mcpServers": {
     "oya": {
       "type": "http",
-      "url": "https://oyabrowser.com/mcp/pool",
-      "headers": {
-        "Authorization": "Bearer ${OYA_API_KEY}"
-      }
+      "url": "https://oyabrowser.com/mcp/pool"
     }
   }
 }

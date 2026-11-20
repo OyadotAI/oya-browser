@@ -203,8 +203,8 @@ claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \
   --header "Authorization: Bearer $OYA_API_KEY"
 ```
 
-The optional Claude Code plugin connects to **Oya Cloud**, requires `OYA_API_KEY`,
-and includes a browsing skill. For desktop browsing, use Connect instead.
+The optional Claude Code plugin connects to **Oya Cloud**, signs in with your Oya account
+(no key to set), and includes a browsing skill. For desktop browsing, use Connect instead.
 
 Setup instructions written for agents are published at
 [oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
