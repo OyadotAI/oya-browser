@@ -5,7 +5,7 @@
  * the hop the outermost trusted proxy appended, counted from the right.
  */
 import { isIP } from 'node:net';
-import { trustedProxyHops } from './constants.ts';
+import { clientIpHeader, trustedProxyHops } from './constants.ts';
 
 /** A request as far as its address goes. */
 type AddressedRequest = {
@@ -31,6 +31,18 @@ const forwardedHops = (req: AddressedRequest) =>
  * (the nearest proxy's view) is the most that can be believed.
  */
 export function forwardedClient(req: AddressedRequest): string | null {
+  return proxySetAddress(req) || forwardedHop(req);
+}
+
+/** The address our proxy wrote into OYA_CLIENT_IP_HEADER, when one is configured and it holds an IP. */
+function proxySetAddress(req: AddressedRequest): string | null {
+  const header = clientIpHeader();
+  const value = header ? String(req.headers?.[header] ?? '').trim() : '';
+  return value && isIP(value) ? value : null;
+}
+
+/** The X-Forwarded-For hop the outermost trusted proxy appended, else the socket. */
+function forwardedHop(req: AddressedRequest): string | null {
   const hops = forwardedHops(req);
   const trusted = trustedProxyHops();
   const hop = hops.length >= trusted ? hops.at(-trusted) : hops.at(-1);
