@@ -45,6 +45,9 @@ spec:
         env:
         - name: PORT
           value: "3100"
+        # Cloudflare then ingress-nginx: the pod sees "<client>, <node>" in X-Forwarded-For.
+        - name: OYA_TRUSTED_PROXY_HOPS
+          value: "2"
         livenessProbe:
           httpGet:
             path: /api/health

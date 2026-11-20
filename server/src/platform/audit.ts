@@ -17,6 +17,7 @@
  * No event is dropped: past the in-memory bound they go to an overflow file.
  */
 
+import { forwardedClient } from './client-address.ts';
 import { createHash } from 'crypto';
 import { appendFileSync } from 'fs';
 import { link, verifyAll } from './audit-chain.ts';
@@ -193,18 +194,8 @@ function requestFields(req: AuditEvent['req']) {
   };
 }
 
-/**
- * The caller's address: the last X-Forwarded-For hop, the one the ingress
- * appended, as auth/agents.ts clientAddress reads it. Earlier hops are
- * whatever the client claimed and would let it write any address it liked.
- */
-function clientIp(req: AuditEvent['req']) {
-  const hops = String(req.headers?.['x-forwarded-for'] || '')
-    .split(',')
-    .map((hop) => hop.trim())
-    .filter(Boolean);
-  return hops.at(-1) || req.socket?.remoteAddress || null;
-}
+/** The caller's address as every rate limit reads it, or null when nothing names one. */
+const clientIp = (req: AuditEvent['req']) => forwardedClient(req);
 
 /** The authenticating credential, its member and role, each null when the request had none. */
 function principalFields(principal: NonNullable<AuditEvent['req']>['principal']) {

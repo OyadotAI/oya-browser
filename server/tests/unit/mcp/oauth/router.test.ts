@@ -19,6 +19,8 @@ const { authenticateToken } = await import('../../../../src/modules/auth/service
 const { patchRow } = await import('../../support/control.ts');
 
 const REDIRECT = 'https://claude.ai/api/mcp/auth_callback';
+/** Registrations the MCP SDK allows one address per hour before answering 429. */
+const PER_ADDRESS_REGISTRATIONS = 20;
 
 /** Runs `work` against the OAuth router on a throwaway loopback server. */
 async function withServer(work: (base: string) => Promise<void>) {
@@ -141,6 +143,27 @@ describe('OAuth router', () => {
       });
       assert.equal(res.status, 400);
       assert.equal((await res.json()).error, 'invalid_request');
+    });
+  });
+
+  it('limits registrations per caller, so one address running out leaves everyone else able to sign in', async () => {
+    process.env.OYA_CONSOLE_URL = 'https://oya.example';
+    /** Registers once as if forwarded from `address`; the status it got. */
+    const registerFrom = async (base: string, address: string) => {
+      const body = { client_name: 'Claude', redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none' };
+      const res = await fetch(`${base}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': address },
+        body: JSON.stringify(body),
+      });
+      return res.status;
+    };
+    await withServer(async (base) => {
+      const statuses = [];
+      for (let i = 0; i <= PER_ADDRESS_REGISTRATIONS; i++) statuses.push(await registerFrom(base, '198.51.100.7'));
+      assert.equal(statuses.at(-1), 429, 'the next registration past the per-address limit is refused');
+      assert.ok(statuses.slice(0, -1).every((status) => status === 201));
+      assert.equal(await registerFrom(base, '198.51.100.8'), 201, 'another caller still registers');
     });
   });
 

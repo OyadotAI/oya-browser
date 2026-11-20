@@ -21,7 +21,7 @@ For servers, containers, CI or teams (HIPAA mode + BAA on Oya Cloud and enterpri
 - Claude Code cloud MCP: `claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`
 - `claude.ai` / Claude Desktop / OAuth clients: add custom connector `https://oyabrowser.com/mcp/pool` (`initialize` and `tools/list` answer without a key).
 - Agent skill (`SKILL.md`): `npx skills add OyadotAI/oya-browser`
-- Claude Code plugin (cloud MCP + skill, requires `OYA_API_KEY`): `claude plugin marketplace add OyadotAI/oya-browser` then `claude plugin install oya-browser@oya`
+- Claude Code plugin (cloud MCP + skill, signs in with your Oya account): `claude plugin marketplace add OyadotAI/oya-browser` then `claude plugin install oya-browser@oya`
 - TypeScript SDK: `npm install @oya-ai/browser` (Node 22.3+; supports `Oya.signup({ email })` and `oya.desktop.connect()` for optional desktop pairing)
 - Python SDK: `pip install oya-browser` (or `pip install "oya-browser[browser-use]"`)
 - CLI: `npm i -g @oya-ai/cli` (`oya login`, `oya start`, `oya goto`, `oya ask`, `oya playbooks`)
