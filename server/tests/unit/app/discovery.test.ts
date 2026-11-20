@@ -1,7 +1,7 @@
 /**
  * Unit tests for root discovery routes (/llms.txt, /.well-known/llms.txt,
  * /openapi.json, /.well-known/agent.json, /.well-known/agent-card.json) and
- * agent discovery manifests (server.json, .claude-plugin/plugin.json).
+ * agent discovery manifests (server.json, plugins/oya-browser/.claude-plugin/plugin.json).
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -101,8 +101,8 @@ describe('agent discovery manifests', () => {
     assert.equal(manifest.remotes[0].url, 'https://oyabrowser.com/mcp/pool');
   });
 
-  it('keeps .claude-plugin/plugin.json valid with MCP config and broadened coding-agent metadata', () => {
-    const plugin = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8'));
+  it('keeps plugins/oya-browser/.claude-plugin/plugin.json valid with MCP config and broadened coding-agent metadata', () => {
+    const plugin = JSON.parse(readFileSync(join(ROOT, 'plugins/oya-browser/.claude-plugin/plugin.json'), 'utf8'));
     assert.equal(plugin.mcpServers.oya.url, 'https://oyabrowser.com/mcp/pool');
     assert.match(plugin.description, /desktop app/i);
     assert.match(plugin.description, /OYA_API_KEY/);
