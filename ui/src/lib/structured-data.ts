@@ -40,6 +40,10 @@ export const ORGANIZATION_SAME_AS = [
   'https://glama.ai/mcp/servers/OyadotAI/oya-browser',
   'https://www.youtube.com/@oyaAI',
   'https://x.com/oyadotai',
+  'https://x.com/OyaAgents',
+  'https://dev.to/oya-browser',
+  'https://oyabrowser.hashnode.dev',
+  'https://www.reddit.com/user/OyaAI/',
 ] as const;
 
 /** Capabilities listed in the root SoftwareApplication schema node. */

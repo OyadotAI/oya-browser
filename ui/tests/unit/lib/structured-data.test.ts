@@ -38,12 +38,17 @@ describe('siteStructuredData', () => {
     const org = graph.find((node) => node['@type'] === 'Organization');
     const app = graph.find((node) => node['@type'] === 'SoftwareApplication');
     expect(org?.sameAs).toEqual([...ORGANIZATION_SAME_AS]);
+    expect(ORGANIZATION_SAME_AS).toHaveLength(15);
     expect(new Set(ORGANIZATION_SAME_AS).size).toBe(ORGANIZATION_SAME_AS.length);
     for (const url of [
       'https://oya.dev',
       'https://glama.ai/mcp/servers/OyadotAI/oya-browser',
       'https://www.youtube.com/@oyaAI',
       'https://x.com/oyadotai',
+      'https://x.com/OyaAgents',
+      'https://dev.to/oya-browser',
+      'https://oyabrowser.hashnode.dev',
+      'https://www.reddit.com/user/OyaAI/',
     ]) {
       expect(ORGANIZATION_SAME_AS).toContain(url);
     }

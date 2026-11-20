@@ -6,6 +6,11 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Emitted full semantic HTML inside `<content:encoded>` (`xmlns:content`) on `/feed.xml` for `/research/*` posts so RSS readers and syndication importers receive full research tables and methodology instead of one-sentence summaries.
+- Expanded `Organization.sameAs` structured data to 15 verified profiles, adding `x.com/OyaAgents`, `dev.to/oya-browser`, `oyabrowser.hashnode.dev` and `reddit.com/user/OyaAI/`.
+
 ## [1.0.271](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.271) · 2026-11-20
 
 ### Changed
