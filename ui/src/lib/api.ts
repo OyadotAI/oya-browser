@@ -218,6 +218,18 @@ export const importApiKey = (token: string, key: string, label?: string) =>
   });
 
 /**
+ * Claims the key in an agent's claim link. Its own endpoint, not the import:
+ * the server only hands over a key an agent minted and nobody owns yet, so a
+ * link someone else wrote cannot plant a key they already hold.
+ */
+export const claimAgentKey = (token: string, key: string) =>
+  account('/auth/keys/claim', 'Could not claim this key', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ key }),
+  });
+
+/**
  * Deletes a key. A key is arbitrary user input (importApiKey takes whatever is
  * pasted), so an unencoded one containing ../ sends this DELETE, with the
  * user's own bearer token, to a path they did not choose.

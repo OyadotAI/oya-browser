@@ -5,6 +5,8 @@
 
 /** The statuses the console reacts to. */
 export const Status = {
+  /** The request itself was malformed or not allowed in that shape. */
+  BAD_REQUEST: 400,
   /** The credential is missing or was not accepted. */
   UNAUTHORIZED: 401,
   /** The credential is valid but may not do this. */
