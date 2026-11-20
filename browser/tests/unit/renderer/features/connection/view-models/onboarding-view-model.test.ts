@@ -118,3 +118,18 @@ it('the AI key row opens the key form with no app selected', () => {
   assert.equal(app.setup.onboarding.technical.agents.state.selected, '');
   app.setup.dispose();
 });
+it('Oya sign-in from the connect screen opens the control panel walkthrough, not browsing', async () => {
+  let connected = false;
+  const app = build({
+    onboardingStatus: () => ({ connected, signedIn: false }),
+    startDesktopSignIn: () => {
+      connected = true;
+      return { ok: true };
+    },
+  });
+  await app.setup.onboarding.technical.signIn();
+  assert.equal(app.setup.onboarding.state.page, 'guide');
+  assert.equal(app.setup.onboarding.state.step, 0);
+  assert.equal(app.fake.called('finishOnboarding').length, 0);
+  app.setup.dispose();
+});

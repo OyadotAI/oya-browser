@@ -68,7 +68,10 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
   constructor(bridge: OnboardingBridge, ready: () => void) {
     super({ path: null, page: 'choices', busy: false, error: '', connected: false, chatgptReady: false, step: 0 });
     this.bridge = bridge;
-    this.technical = new TechnicalSetupViewModel(bridge);
+    // "Continue with Oya" is the developer route: after sign-in, walk through the control panel.
+    this.technical = new TechnicalSetupViewModel(bridge, () =>
+      this.set({ path: 'expert', page: 'guide', step: 0, connected: true, error: '' }),
+    );
     this.ready = ready;
     this.watch();
   }
