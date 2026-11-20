@@ -63,9 +63,12 @@ export function SetupScreen({ vm, agents, imports }: Props) {
             {s.error}
           </p>
         )}
-        <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
-          No AI for now, just browse
-        </Button>
+        {/* Skipping AI only makes sense before connecting; after sign-in the screens have their own way out. */}
+        {!['connected', 'guide', 'optional'].includes(flow.page) && (
+          <Button type="button" className="welcome-skip" id="btn-skip" onClick={() => vm.skip()}>
+            No AI for now, just browse
+          </Button>
+        )}
       </section>
     </main>
   );

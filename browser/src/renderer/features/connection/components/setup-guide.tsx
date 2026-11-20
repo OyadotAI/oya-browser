@@ -20,7 +20,7 @@ export function GuideSteps({
   return (
     <section className="setup-guide">
       <p className="eyebrow">
-        Control plane · {step + 1} of {SETUP_GUIDE.length}
+        Control panel · {step + 1} of {SETUP_GUIDE.length}
       </p>
       <h2 tabIndex={-1}>{item.title}</h2>
       <figure className="setup-guide-picture">
@@ -29,7 +29,7 @@ export function GuideSteps({
       </figure>
       <p>{item.detail}</p>
       <Button variant="secondary" onClick={openConsole}>
-        Open control plane
+        Open control panel
       </Button>
       <nav aria-label="Setup guide">
         <Button disabled={!step} onClick={() => move(-1)}>

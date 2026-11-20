@@ -193,7 +193,7 @@ export class OnboardingViewModel extends ViewModel<OnboardingState> {
 
   /** Opens the paired workspace without claiming a guide step was completed. */
   openConsole(): void {
-    void this.bridge.openConsole().catch(() => this.set({ error: 'Could not open the control plane. Try again.' }));
+    void this.bridge.openConsole().catch(() => this.set({ error: 'Could not open the control panel. Try again.' }));
   }
 
   /** Explicit browsing releases the main-process hold and fences pending provider work. */
