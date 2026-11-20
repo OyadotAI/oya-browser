@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.261](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.261) · 2026-11-20
+
 ### Added
 
 - A page on browser automation for regulated industries: the audit trail, access limits, human takeover and self-hosting a reviewer checks, with SOC 2 status and HIPAA scoped to healthcare on Oya Cloud and the enterprise edition. It is linked from the footer, the sitemap and llms.txt.
