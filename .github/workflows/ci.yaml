@@ -243,4 +243,4 @@ jobs:
         with:
           fetch-depth: 0
       # The CLI image needs no license, unlike gitleaks-action on an organization repo.
-      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --no-banner
+      - run: docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --redact --no-banner --gitleaks-ignore-path /repo/.gitleaksignore

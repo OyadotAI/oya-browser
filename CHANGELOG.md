@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Corrected the release secret scan's false positive on public documentation/feed metadata with one exact historical exception; all other secret detection remains enabled.
+
 ## [1.0.267](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.267) · 2026-11-20
 
 ### Added
