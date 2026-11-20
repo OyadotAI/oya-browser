@@ -235,6 +235,42 @@ function waitMs(params: CommandParams | undefined): number {
   return Number.isFinite(ms) && ms > 0 ? ms : ELEMENT_WAIT_MS;
 }
 
+/** The text a wait is for, or null when it waits for an element. Only a non-empty string counts. */
+const waitText = (params: CommandParams | undefined): string | null =>
+  typeof params?.text === 'string' && params.text ? params.text : null;
+
+/**
+ * What a wait tests on each poll. Text goes into the script as a JSON string, so it is data and
+ * can never run; it is looked for in what the main document shows, which is what a person reads.
+ */
+function waitTestJs(params: CommandParams | undefined): string {
+  const text = waitText(params);
+  if (text === null) return presentJs(params?.selector);
+  return `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(text)}))`;
+}
+
+/**
+ * What a wait that ran out says, as a script literal. A wait for text names the text and the next
+ * step, because "Timeout" alone left an agent retrying the same wait.
+ */
+function waitErrorJs(params: CommandParams | undefined): string {
+  const text = waitText(params);
+  if (text === null) return "'Timeout'";
+  const shown = JSON.stringify(text);
+  return JSON.stringify(
+    `Timed out after ${waitMs(params)} ms: ${shown} did not show. Analyze the page to see what it shows instead.`,
+  );
+}
+
+/**
+ * The script for a wait given neither text nor a selector, or null when it has one. It fails at
+ * once and says what to give: polling for nothing used the whole timeout to answer "Timeout".
+ */
+const nothingToWaitFor = (params: CommandParams | undefined): string | null =>
+  waitText(params) === null && !params?.selector
+    ? "({ ok: false, error: 'Nothing to wait for. Give text or a selector.' })"
+    : null;
+
 /** The dev panel's wait: polls a plain CSS selector until it matches or times out. */
 export const devWaitJs = (params: CommandParams): string =>
   `(async () => { const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (document.querySelector(${JSON.stringify(params.selector)})) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`;
@@ -244,9 +280,13 @@ export const ACTION_SCRIPTS: Readonly<Record<string, (params: CommandParams | un
   /** The analyzer's read of the page. */
   analyze: (params) =>
     `(typeof analyzePage === 'function') ? analyzePage(${JSON.stringify(params || {})}) : { ok: false, error: 'Analyzer not loaded' }`,
-  /** Polls for an element (an analyzer id or CSS, in the page or its iframes) until it appears or the wait runs out. */
+  /**
+   * Polls until an element appears (an analyzer id or CSS, in the page or its iframes) or, when
+   * `text` is given, until the page shows that text, and fails when the wait runs out.
+   */
   wait: (params) =>
-    `(async () => { const present = () => ${presentJs(params?.selector)}; const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`,
+    nothingToWaitFor(params) ??
+    `(async () => { const present = () => ${waitTestJs(params)}; const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: ${waitErrorJs(params)} }; })()`,
   /** The visible elements matching a selector, in the page and its iframes. */
   read_page: (params) => readElementsJs(params?.selector, params?.limit),
 };

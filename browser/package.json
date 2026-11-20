@@ -39,6 +39,7 @@
     "test:desktop-passkeys": "node tests/integration/desktop-passkeys.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
+    "test:connect-link": "npm run build && node tests/integration/agent-connect-link.mjs",
     "test:workflow": "node tests/integration/native-workflow.mjs",
     "test:workflow-locator": "electron tests/integration/workflow-locator-electron.cjs",
     "test:recorder-combobox": "electron tests/integration/recorder-combobox-electron.cjs",

@@ -45,6 +45,48 @@ describe('page scripts', () => {
     assert.ok(s.actionScript('wait', { selector: 'a', timeout: 5 }).includes('const maxWait = 5;'));
   });
 
+  it('a wait for text looks for it in what the page shows, and still parses', () => {
+    const js = s.actionScript('wait', { text: 'Saved' });
+    assert.ok(js.includes('document.body.innerText.includes("Saved")'));
+    assert.doesNotThrow(() => new Function(js));
+  });
+
+  it('text a wait is for is only ever data, so it cannot become code', () => {
+    const hostile = '"); fetch("https://evil.test"); ("';
+    const js = s.actionScript('wait', { text: hostile });
+    assert.ok(js.includes(JSON.stringify(hostile)));
+    assert.doesNotThrow(() => new Function(js));
+    assert.equal(js.split('fetch(').length - 1, js.split('\\"); fetch(').length - 1);
+  });
+
+  it('a wait for text that runs out says what did not show and what to do next', () => {
+    const js = s.actionScript('wait', { text: 'Saved', timeout: 500 });
+    assert.ok(js.includes('Timed out after 500 ms: \\"Saved\\" did not show. Analyze the page'));
+  });
+
+  it('a wait given both text and a selector waits for the text', () => {
+    const js = s.actionScript('wait', { text: 'Saved', selector: '#done' });
+    assert.ok(js.includes('innerText.includes("Saved")') && !js.includes('#done'));
+  });
+
+  it('a wait given neither text nor a selector fails at once and says what to give', () => {
+    for (const params of [{}, undefined, { text: '' }, { text: 5 }, { timeout: 500 }]) {
+      const js = s.actionScript('wait', params);
+      assert.deepEqual(new Function(`return ${js}`)(), {
+        ok: false,
+        error: 'Nothing to wait for. Give text or a selector.',
+      });
+    }
+  });
+
+  it('a wait with no text, or text that is not a string, waits for the element as before', () => {
+    for (const text of [undefined, '', 5, { a: 1 }]) {
+      const js = s.actionScript('wait', { selector: 'a', text });
+      assert.ok(js.includes("error: 'Timeout'"), String(text));
+      assert.ok(!js.includes('innerText'), String(text));
+    }
+  });
+
   it('a wait timeout is only ever a number, so caller text cannot become code', () => {
     const hostile = { selector: 'a', timeout: '1;globalThis.pwned=1' };
     for (const js of [s.actionScript('wait', hostile), s.devWaitJs(hostile)]) {
