@@ -65,7 +65,7 @@ function Connected({ vm }: Pick<Props, 'vm'>) {
         disabled={!s.connected}
         onClick={() => vm.onboarding.show(s.path === 'expert' ? 'guide' : 'optional')}
       >
-        {s.path === 'expert' ? 'Walk through the control plane' : 'Continue'}
+        {s.path === 'expert' ? 'Walk through the control panel' : 'Continue'}
       </Button>
       {!s.connected && (
         <Button variant="secondary" disabled={busy} onClick={() => void vm.reconnect()}>
