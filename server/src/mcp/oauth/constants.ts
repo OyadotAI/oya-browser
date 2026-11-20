@@ -22,8 +22,8 @@ export const CLIENT_TTL_MS = 7_776_000_000;
 export const MAX_CLIENT_NAME = 80;
 /** Most redirect URIs one client may register. */
 export const MAX_REDIRECT_URIS = 5;
-/** Registrations the whole server takes per hour, whoever asks: bounds the store whatever addresses are claimed. */
-export const REGISTRATIONS_PER_HOUR = 200;
+/** Registrations the whole server takes per hour: a backstop above the per-address limit that bounds how fast the client store can fill. */
+export const REGISTRATIONS_PER_HOUR = 2_000;
 /** The window that limit counts over. */
 export const REGISTRATION_WINDOW_MS = 3_600_000;
 /** What /authorize must carry before anything is redirected anywhere. */

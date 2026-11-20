@@ -21,9 +21,11 @@ import {
 import { provider } from './provider.ts';
 
 /**
- * One bucket for every registration, whoever claims to send it: the per-address
- * limit below is keyed on a header a bare self-host cannot trust, so this is what
- * bounds how fast the store can fill.
+ * A backstop over every registration: the SDK's per-address limit (20 an hour,
+ * keyed on clientAddress) is the real control, and this bounds how fast the
+ * store can fill if that key is wrong. Callers that reach the load balancer
+ * without Cloudflare can still name their own address, so one of them can use
+ * this up; trusting Cloudflare's header only from Cloudflare's ranges closes that.
  */
 const registrations = rateLimit({
   windowMs: REGISTRATION_WINDOW_MS,

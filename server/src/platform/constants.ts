@@ -346,6 +346,19 @@ export const CARD_MAX_CHARS = 1500;
 /** Shortest unbroken base64url run scrubbed from error reports as a possible key: an API key is 32. */
 export const SECRET_MIN_CHARS = 32;
 
+// ── Client addresses ──
+
+/** Proxies that append to X-Forwarded-For when OYA_TRUSTED_PROXY_HOPS is unset: one, the ingress, as a plain self-host runs. */
+export const DEFAULT_TRUSTED_PROXY_HOPS = 1;
+/**
+ * How many X-Forwarded-For hops, counted from the right, our own proxies
+ * appended; the caller is the leftmost of them. Production sits behind
+ * Cloudflare and ingress-nginx, which hand the pod "<client>, <node>", so it
+ * sets 2. Read here and nowhere else; a bad value falls back to the default.
+ */
+export const trustedProxyHops = () =>
+  Math.floor(positiveOr(Number(process.env.OYA_TRUSTED_PROXY_HOPS), DEFAULT_TRUSTED_PROXY_HOPS));
+
 // ── Postgres ──
 
 /** Postgres connections per process unless DATABASE_POOL_MAX says otherwise. */
