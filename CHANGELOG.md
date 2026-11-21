@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.273](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.273) · 2026-11-21
+
 ### Added
 
 - Added the official dark-theme Product Hunt launch embed badge to the landing hero on `/` and allowed `https://api.producthunt.com` in `Content-Security-Policy` `img-src`.
