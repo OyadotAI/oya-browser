@@ -1,0 +1,216 @@
+<!doctype html>
+<!--
+  App screen template: navigation that stays put, one data view, and the states every data view
+  has. Structure and limits, not a finished design. In a project with its own components, build
+  this structure with them. The four states below are shown together for reference; a real
+  screen shows one at a time.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>[View] · [Product]</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      body {
+        display: grid;
+        min-height: 100dvh;
+        font-size: var(--text-sm);
+      }
+
+      @media (min-width: 48rem) {
+        body {
+          grid-template-columns: 15rem 1fr;
+        }
+      }
+
+      .side {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        padding: var(--space-4);
+        border-right: 1px solid var(--border);
+        background: var(--surface);
+      }
+
+      .side a {
+        display: flex;
+        align-items: center;
+        min-height: 2.25rem;
+        padding-inline: var(--space-3);
+        border-radius: var(--radius-sm);
+        color: var(--text-muted);
+        text-decoration: none;
+      }
+
+      .side a:hover {
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      /* The current page is said twice: aria-current, and weight plus background. */
+      .side a[aria-current="page"] {
+        background: var(--bg);
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      main {
+        min-width: 0;
+        padding: var(--space-6);
+      }
+
+      .head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-4);
+        margin-bottom: var(--space-6);
+      }
+
+      .head h1 {
+        font-size: var(--text-lg);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: var(--space-3) var(--space-4);
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+      }
+
+      th {
+        font-weight: 500;
+        color: var(--text-muted);
+      }
+
+      td.name {
+        max-width: 0;
+        width: 50%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      tbody tr:hover {
+        background: var(--surface);
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+
+      .status::before {
+        content: "";
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      .status.ok {
+        color: var(--success);
+      }
+
+      .status.failed {
+        color: var(--error);
+      }
+
+      .state {
+        display: grid;
+        gap: var(--space-3);
+        justify-items: start;
+        margin-top: var(--space-8);
+        padding: var(--space-8);
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+      }
+
+      .state h2 {
+        font-size: var(--text-base);
+      }
+
+      /* Skeleton rows are the size of real rows, so nothing moves when data lands. */
+      .skeleton {
+        height: 1rem;
+        width: 60%;
+        border-radius: var(--radius-sm);
+        background: var(--border);
+        animation: pulse 1.2s var(--ease) infinite alternate;
+      }
+
+      @keyframes pulse {
+        to {
+          opacity: 0.4;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="side" aria-label="Main">
+      <a href="/" aria-current="page">[Current view]</a>
+      <a href="/second">[Second view]</a>
+      <a href="/settings">Settings</a>
+    </nav>
+
+    <main>
+      <div class="head">
+        <h1>[View name]</h1>
+        <button class="button primary" type="button">[Create the thing this view lists]</button>
+      </div>
+
+      <!-- Loaded. Rows are compared, so this is a table, not cards. -->
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Status</th>
+            <th scope="col" class="numeric">Amount</th>
+            <th scope="col">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name">[A name long enough to prove the column truncates instead of wrapping the row]</td>
+            <td><span class="status ok">Paid</span></td>
+            <td class="numeric">1,240.00</td>
+            <td class="muted"><time datetime="2026-01-12">12 Jan</time></td>
+          </tr>
+          <tr>
+            <td class="name">[Another name]</td>
+            <td><span class="status failed">Failed</span></td>
+            <td class="numeric">86.50</td>
+            <td class="muted"><time datetime="2026-01-09">9 Jan</time></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- Loading: shown once a wait passes one second. -->
+      <div class="state" aria-busy="true" aria-label="Loading [things]">
+        <div class="skeleton"></div>
+        <div class="skeleton"></div>
+      </div>
+
+      <!-- Empty: what belongs here, and the action that fills it. -->
+      <div class="state">
+        <h2>No [things] yet</h2>
+        <p class="muted">[One sentence on what appears here and why it is useful.]</p>
+        <button class="button primary" type="button">[Create the first one]</button>
+      </div>
+
+      <!-- Failed: what happened, in plain words, and the way forward. -->
+      <div class="state" role="alert">
+        <h2>[Things] could not be loaded</h2>
+        <p class="muted">[The reason when it is known, and whether anything was lost.]</p>
+        <button class="button" type="button">Try again</button>
+      </div>
+    </main>
+  </body>
+</html>
