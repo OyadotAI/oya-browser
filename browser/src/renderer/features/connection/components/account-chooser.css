@@ -42,7 +42,7 @@
   outline: none;
 }
 .chooser-row:focus-visible {
-  box-shadow: inset 3px 0 0 var(--logo-green);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .chooser-row:disabled {
   cursor: default;
@@ -61,11 +61,11 @@
   border-radius: 50%;
   background: radial-gradient(
     circle at 30% 25%,
-    color-mix(in srgb, var(--logo-green) 34%, transparent),
-    color-mix(in srgb, var(--logo-green) 10%, transparent) 70%
+    color-mix(in srgb, var(--accent-fill) 34%, transparent),
+    color-mix(in srgb, var(--accent-fill) 10%, transparent) 70%
   );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--logo-green) 30%, transparent);
-  color: var(--logo-green);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
   font-size: 16px;
   font-weight: 650;
 }
@@ -117,8 +117,8 @@
   overflow: hidden;
   padding: 1px 7px;
   border-radius: 0;
-  background: color-mix(in srgb, var(--logo-green) 12%, transparent);
-  color: var(--logo-green);
+  background: color-mix(in srgb, var(--accent-fill) 12%, transparent);
+  color: var(--accent);
   font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -150,14 +150,14 @@
 }
 .chooser-row:hover:not(:disabled) .chooser-go,
 .chooser-row:focus-visible .chooser-go {
-  color: var(--logo-green);
+  color: var(--accent);
   transform: translateX(4px);
 }
 .chooser-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid color-mix(in srgb, var(--logo-green) 25%, transparent);
-  border-top-color: var(--logo-green);
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 800ms linear infinite;
 }

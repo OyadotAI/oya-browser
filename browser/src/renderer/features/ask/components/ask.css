@@ -41,8 +41,8 @@
 }
 .chat-msg.user {
   align-self: flex-end;
-  background: var(--accent);
-  color: var(--surface);
+  background: var(--accent-fill);
+  color: var(--on-accent);
   border-bottom-right-radius: 3px;
 }
 .chat-msg.assistant {
@@ -115,7 +115,7 @@
   padding: 2px 6px;
   border-radius: 0;
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--accent);
   font-family: ui-monospace, monospace;
 }
 .chat-thinking {
@@ -188,10 +188,10 @@
 .chat-send {
   width: 34px;
   height: 34px;
-  background: var(--accent);
+  background: var(--accent-fill);
   border: none;
   border-radius: 0;
-  color: var(--surface);
+  color: var(--on-accent);
   font-size: 13px;
   cursor: pointer;
   display: flex;
@@ -623,9 +623,17 @@
   font-weight: 400;
   letter-spacing: -0.005em;
 }
+/* The lit word, as on the start page: ink on a lime block on paper, lime text on charcoal. */
 .chat-empty h2 em {
-  color: var(--accent);
+  padding: 0 0.14em;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   font-style: normal;
+}
+:root[data-theme='dark'] .chat-empty h2 em {
+  padding: 0;
+  background: none;
+  color: var(--accent);
 }
 .chat-empty p {
   max-width: 260px;
@@ -709,8 +717,8 @@
   color: var(--accent);
 }
 .chat-verdict.failed {
-  background: color-mix(in srgb, var(--amber) 16%, transparent);
-  color: color-mix(in srgb, var(--amber) 80%, var(--text));
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .chat-msg.error {
   padding: 10px 12px;
@@ -858,7 +866,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--oya);
+  background: var(--accent);
   animation: agent-dot 1.2s var(--glide) infinite;
 }
 .chat-dots span:nth-child(2) {
@@ -924,8 +932,9 @@
 .chat-send {
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
   transition: background-color var(--t-fast) var(--ease);
 }
 .chat-send:hover {
@@ -975,8 +984,8 @@
   position: relative;
   gap: 8px;
   padding: 18px 16px 16px;
-  border-color: color-mix(in srgb, var(--logo-green) 35%, var(--border));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--logo-green) 7%, var(--surface)), var(--surface) 60%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 7%, var(--surface)), var(--surface) 60%);
 }
 .trial-card-mark {
   display: grid;
@@ -984,8 +993,8 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  color: var(--logo-green);
-  background: color-mix(in srgb, var(--logo-green) 14%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
 }
 .trial-card-perks {
   display: grid;
@@ -998,7 +1007,7 @@
 .trial-card-perks li::before {
   content: '✓';
   margin-right: 8px;
-  color: var(--logo-green);
+  color: var(--accent);
   font-weight: 650;
 }
 /* A reply where the agent stopped to ask: a normal reply under a "Needs your answer" pill in Oya's green,

@@ -288,7 +288,9 @@ body.mode-browsing .tab-bar {
   height: 7px;
   border-radius: 50%;
   background: var(--oya);
-  box-shadow: 0 0 0 1.5px var(--chrome-bar);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-edge),
+    0 0 0 1.5px var(--chrome-bar);
 }
 /* It pulses while commands are arriving; between them it stays lit, so a long model step does not hide it. */
 :root[data-agent-active='true'] .tab-item.agent .tab-icon::after {
@@ -297,6 +299,7 @@ body.mode-browsing .tab-bar {
 @keyframes tab-agent {
   50% {
     box-shadow:
+      inset 0 0 0 1px var(--accent-edge),
       0 0 0 1.5px var(--chrome-bar),
       0 0 6px 1px color-mix(in srgb, var(--oya) 70%, transparent);
   }

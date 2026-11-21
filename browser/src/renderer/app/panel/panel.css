@@ -197,7 +197,7 @@
   user-select: none;
 }
 .dev-panel ::selection {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 32%, transparent);
 }
 .tool-heading {
   height: 48px;
@@ -318,7 +318,7 @@
   border-radius: var(--radius-sm);
 }
 .inspect-nav button.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
 }
 .dev-pane.active {
   animation: pane-enter 320ms var(--ease);

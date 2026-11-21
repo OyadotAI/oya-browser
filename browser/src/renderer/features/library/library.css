@@ -89,7 +89,7 @@
     font-size: 14px;
   }
   .collection[aria-current='true'] {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--on-accent);
     font-weight: 600;
   }

@@ -116,7 +116,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
   animation: routine-pulse 1.4s var(--ease) infinite;
 }
 @keyframes routine-pulse {
@@ -145,7 +146,7 @@
   font-weight: 600;
 }
 .routine-action:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 22%, transparent);
 }
 .routine-action:disabled {
   background: var(--muted-surface);

@@ -53,7 +53,7 @@
   opacity: 0.38;
 }
 .picture-green-fill {
-  fill: var(--accent);
+  fill: var(--accent-fill);
 }
 .picture-green-soft {
   fill: var(--accent-soft);

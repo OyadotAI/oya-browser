@@ -239,12 +239,12 @@ body.mode-browsing .toolbar {
   height: 14px;
 }
 .agent-button:hover {
-  background: color-mix(in srgb, var(--accent) 22%, var(--accent-soft));
+  background: color-mix(in srgb, var(--accent-fill) 22%, var(--accent-soft));
   color: var(--accent);
 }
 .agent-button.active,
 .agent-button.active:hover {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 .dev-btn.agent-button.recording {
@@ -252,7 +252,7 @@ body.mode-browsing .toolbar {
   color: var(--accent);
 }
 .dev-btn.agent-button.recording.active {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 .agent-dot {
@@ -337,20 +337,21 @@ body.mode-browsing .toolbar {
   height: 30px;
   padding: 0 13px 0 11px;
   border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 13%, transparent);
   color: var(--accent);
   font-weight: 600;
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .agent-button:hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 20%, transparent);
 }
 .agent-button.active,
 .agent-button.active:hover,
 .dev-btn.agent-button.recording.active {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   box-shadow:
+    inset 0 0 0 1px var(--accent-edge),
     var(--fill-edge),
     0 2px 10px color-mix(in srgb, var(--accent) 35%, transparent);
 }
@@ -412,7 +413,7 @@ body.mode-browsing .toolbar {
 }
 .agent-button.active,
 .agent-button.active:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 10%, transparent);
   color: var(--text);
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
 }

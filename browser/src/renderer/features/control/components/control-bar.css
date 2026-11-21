@@ -93,7 +93,7 @@
     color var(--t-base) var(--ease);
 }
 .control-status[data-mode='agent'] {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 9%, transparent);
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--text);
 }
@@ -176,7 +176,7 @@
 }
 /* AI Mode in effect wears Oya's accent. */
 .control-status .control-switch #control-agent[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  background: color-mix(in srgb, var(--accent-fill) 12%, var(--surface));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 /* The side in effect is not a button to press again, yet it reads at full strength. */

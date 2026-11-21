@@ -31,7 +31,7 @@
 }
 .dev-entry .dir.in {
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--accent);
 }
 .dev-entry .msg-type {
   font-weight: 500;
@@ -166,7 +166,7 @@
 }
 .net-filter.active {
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--accent);
 }
 .net-log {
   flex: 1;
@@ -454,7 +454,7 @@
   white-space: nowrap;
 }
 .action-element:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--hover);
 }
 .action-more {
   margin: 10px 0 0;

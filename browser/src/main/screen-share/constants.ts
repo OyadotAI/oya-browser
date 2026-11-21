@@ -11,7 +11,7 @@ export const PICKER = {
   SOURCES_TIMEOUT_MS: 10000,
   OWNER_CHECK_MS: 200,
   TAB_LIMIT: 80,
-  BACKGROUND: '#10120f',
+  BACKGROUND: '#1a1a1a',
   DESKTOP_ERROR:
     'Windows and screens couldn’t be listed. Cancel and try sharing again. Available Oya tabs are listed separately.',
   DESKTOP_EMPTY: 'No windows or screens are available. Available Oya tabs are listed separately.',

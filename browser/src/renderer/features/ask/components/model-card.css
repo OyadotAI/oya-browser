@@ -92,14 +92,14 @@
   font-weight: 700;
 }
 .provider-chip[aria-checked='true'] .provider-mark {
-  background: var(--accent);
+  background: var(--accent-fill);
   box-shadow: none;
   color: var(--on-accent);
 }
 .provider-chip:focus-visible,
 .model-trigger:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
 }
 .model-picker {
   position: relative;
@@ -126,7 +126,7 @@
 .model-trigger[aria-expanded='true'] {
   border-color: var(--accent);
   background: var(--surface);
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
 }
 .model-trigger-text {
   display: flex;
@@ -274,7 +274,7 @@
 .model-option mark {
   padding: 0 1px;
   border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 24%, transparent);
   color: inherit;
 }
 .model-option-check {
@@ -296,5 +296,5 @@
 }
 .tool-mark {
   border-radius: 0;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
 }

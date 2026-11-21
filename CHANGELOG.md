@@ -6,6 +6,15 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- One palette of five colours across the desktop app, the website and the console: ink, paper, the logo's lime, red and amber. Lime is the only green; the olive, forest and other greens, the blues and purples are gone. Light and dark themes use the same five.
+- Desktop: buttons, the start page's "DO?", switches and the connected dot are lime with dark content in the light theme, and success shows in lime. Profile avatars differ by fill style rather than hue. The control shield, the share picker and the page dialogs use the same palette.
+- Desktop: the connect screen shows the ChatGPT, Codex and VS Code marks.
+- Website: dark sections are charcoal rather than green-black, and every lime is the logo's. The trust, research, release-notes, legal and answer pages and the favicon follow the same palette.
+- Console and docs: the green-black dark theme becomes charcoal, light-theme buttons are lime with dark text, form outlines are easier to see, code highlighting uses the five colours, and info notes are neutral. Docs and sign-in links are underlined.
+- A test in each part fails if a colour outside the five is added, if lime is used as text on a light background, or if text drops below 4.5:1 contrast.
+
 ## [1.0.278](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.278) · 2026-11-21
 
 ### Changed

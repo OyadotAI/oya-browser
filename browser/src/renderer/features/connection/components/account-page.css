@@ -118,11 +118,14 @@
   background: var(--secondary);
 }
 .account-status[data-state='connected'] .status-dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--accent-fill);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 3px color-mix(in srgb, var(--accent-fill) 20%, transparent);
 }
 .account-status[data-state='reconnecting'] .status-dot {
   background: var(--amber);
+  box-shadow: 0 0 0 1px var(--accent-edge);
   animation: status-pulse 1.4s var(--ease) infinite;
 }
 @keyframes status-pulse {

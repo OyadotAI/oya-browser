@@ -84,7 +84,7 @@
 }
 .chat-save-confirm {
   border: 0;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
 }
 .chat-save-confirm:hover:not(:disabled) {

@@ -1,5 +1,6 @@
 /**
- * The design system's guard: every colour in the desktop shell comes from core/tokens.css.
+ * The design system's guard: the desktop shell has five colours (tooling/colours), and every
+ * colour in it is one of them or a mix of them, taken from core/tokens.css.
  * The token file's own header already said so, and about seventy raw values in twenty
  * stylesheets ignored it, because nothing checked. This reads the sources and fails, naming
  * file and line, on a raw colour, on a `var()` that falls back to one, and on a token that
@@ -10,48 +11,64 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import {
+  FIVE as SHARED_FIVE,
+  READABLE,
+  contrast,
+  cssCode,
+  declared,
+  literalColours,
+  ofFive,
+  rules,
+  violations,
+} from '../../../../../tooling/colours/index.js';
+import { SHELL_BACKGROUND } from '../../../../src/main/shell/constants.ts';
+import { DIALOG_WINDOW_OPTIONS } from '../../../../src/main/dialogs/constants.ts';
+import { PICKER } from '../../../../src/main/screen-share/constants.ts';
+
 const RENDERER = path.resolve(import.meta.dirname, '../../../../src/renderer');
 const TOKENS = 'core/tokens.css';
-
-/**
- * Every CSS named colour. The system colours (Canvas, ButtonText and the rest) are left out:
- * in a forced-colours rule they are the only right answer, and they follow the OS, not a brand.
- */
-const NAMED = (
-  'aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown ' +
-  'burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue ' +
-  'darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange ' +
-  'darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise ' +
-  'darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia ' +
-  'gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ' +
-  'ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan ' +
-  'lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue ' +
-  'lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon ' +
-  'mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue ' +
-  'mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin ' +
-  'navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen ' +
-  'paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red ' +
-  'rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue ' +
-  'slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white ' +
-  'whitesmoke yellow yellowgreen'
-).split(' ');
-
-const HEX = /#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi;
-/** A colour function with numbers in it; one that starts `from var(` only reshapes a token. */
-const FUNCTION = /(?<![\w.-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((?!\s*from\s+var\()/gi;
-/** A hex inside an image written into the stylesheet, where `#` is spelled `%23`. */
-const EMBEDDED = /(?:#|%23)(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi;
-/** Properties that take a colour. Names are checked only here: `animation: highlight` is not a colour. */
-const TAKES_COLOUR = new RegExp(
-  '^(?:--[\\w-]+|(?:[\\w-]+-)?color|background(?:-image)?|(?:border|outline|column-rule|text-decoration|' +
-    'text-emphasis|-webkit-text-stroke)(?:-[\\w-]+)?|(?:box|text)-shadow|(?:backdrop-)?filter|fill|stroke)$',
-  'i',
+/** The five colours, by the name tokens.css declares each under, once. */
+const FIVE: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(SHARED_FIVE).map(([name, hex]) => [`--${name}`, hex]),
 );
-const NAME = new RegExp(`(?<![\\w-])(?:${NAMED.join('|')})(?![\\w-(])`, 'gi');
-/** An alpha mask is drawn in black; there it is a shape, not a colour. */
-const MASK = /^(?:-webkit-)?mask(?:-image)?$/;
+/** Pages that cannot load tokens.css, so they name the five themselves: nothing but those values may appear. */
+const OWN_FIVE = [
+  'public/share-picker.html',
+  'public/native-dialog.html',
+  'control-shield/index.html',
+  'control-shield/constants.ts',
+];
+/** Tokens that are lime, amber or red as they stand: fills, never text, because on paper they cannot be read. */
+const FILL_ONLY = /var\(--(?:accent-fill|lime|oya|amber|red|mint|cyan)\)/;
+
 /** Custom properties the shell sets from TypeScript at run time, so no stylesheet defines them. */
 const RUNTIME_PROPERTIES = ['--footer-height', '--panel-reveal', '--row', '--tab-width'];
+
+/** The tokens in effect in each theme, as the cascade leaves them on the root element. */
+function themes(css: string): Record<'light' | 'dark' | 'incognito', Map<string, string>> {
+  const light = declared(css, /^:root$/);
+  const dark = new Map([...light, ...declared(css, /^:root\[data-theme='dark'\]$/)]);
+  const incognito = new Map([...dark, ...declared(css, /^:root\[data-incognito='true'\]$/)]);
+  return { light, dark, incognito };
+}
+
+/** Text colours and what each is read against, in every theme. */
+const SURFACES = ['--surface', '--bg', '--muted-surface', '--hover'];
+const PAIRS: Array<[string, string]> = [
+  ...['--text', '--secondary', '--accent', '--danger'].flatMap((text) =>
+    SURFACES.map((s): [string, string] => [text, s]),
+  ),
+  ...SURFACES.slice(0, 3).map((s): [string, string] => ['--warning', s]),
+  ['--on-accent', '--accent-fill'],
+  ['--on-accent', '--accent-hover'],
+  ['--on-danger', '--danger'],
+  ['--accent', '--accent-soft'],
+  ['--danger', '--danger-soft'],
+  ['--warning', '--warning-soft'],
+  ['--success', '--success-soft'],
+  ['--info', '--info-soft'],
+];
 
 /**
  * Files outside the stylesheets that still hold raw colours, each with its reason. A file here
@@ -60,70 +77,7 @@ const RUNTIME_PROPERTIES = ['--footer-height', '--panel-reveal', '--row', '--tab
 const EXCEPTIONS: Readonly<Record<string, string>> = {
   'features/connection/components/brand-marks.tsx': "third-party marks: Claude's and Gemini's own colours",
   'features/connection/components/way-icons.tsx': "third-party mark: Google's own gradient",
-  'control-shield/constants.ts': 'a separate document that does not load tokens.css yet',
-  'control-shield/index.html': 'a separate document that does not load tokens.css yet',
-  'public/share-picker.html': 'a separate document that does not load tokens.css yet',
-  'public/native-dialog.html': 'a separate document that does not load tokens.css yet',
 };
-
-/** `text` with every match of `pattern` turned to spaces, so offsets and line numbers hold. */
-const blank = (text: string, pattern: RegExp): string => text.replace(pattern, (m) => m.replace(/[^\n]/g, ' '));
-
-/** The 1-based line of `offset` in `text`. */
-const lineAt = (text: string, offset: number): number => text.slice(0, offset).split('\n').length;
-
-/** A stylesheet with its comments, quoted strings and url() bodies blanked. */
-function cssCode(source: string): string {
-  const uncommented = blank(source, /\/\*[\s\S]*?\*\//g);
-  return blank(blank(uncommented, /url\([^)]*\)/g), /(["'])(?:\\.|(?!\1)[^\\\n])*\1/g);
-}
-
-/** The raw colours in one declaration's value; `#000` is let through for a mask. */
-function rawColours(property: string, value: string): RegExpExecArray[] {
-  const named = TAKES_COLOUR.test(property) ? [...value.matchAll(NAME)] : [];
-  const hits = [...value.matchAll(HEX), ...value.matchAll(FUNCTION), ...named];
-  return hits.filter((hit) => !(MASK.test(property) && /^#000$/i.test(hit[0])));
-}
-
-/** The colours inside images embedded as data: URLs, which the declaration scan blanks with every other url(). */
-function embeddedColours(source: string, file: string): string[] {
-  const code = blank(source, /\/\*[\s\S]*?\*\//g);
-  return [...code.matchAll(/url\(\s*["']?data:[^)]*\)/g)].flatMap((image) =>
-    [...image[0].matchAll(EMBEDDED)].map((hit) => `${file}:${lineAt(code, image.index + hit.index)}: ${hit[0]}`),
-  );
-}
-
-/** Every raw colour in a stylesheet, as `file:line: literal`. */
-export function violations(source: string, file: string): string[] {
-  const code = cssCode(source);
-  const failures = embeddedColours(source, file);
-  for (const declaration of code.matchAll(/([\w-]+)\s*:\s*([^;{}]+)(?=[;}])/g)) {
-    const [whole, property, value] = declaration;
-    const start = declaration.index + whole.length - value.length;
-    for (const hit of rawColours(property, value))
-      failures.push(`${file}:${lineAt(code, start + hit.index)}: ${hit[0].replace(/\($/, '()')}`);
-  }
-  return failures;
-}
-
-/** A script or document with its comments and character references blanked: `// see #1234`, `&#160;`. */
-function scriptCode(source: string): string {
-  const uncommented = blank(blank(source, /\/\*[\s\S]*?\*\/|<!--[\s\S]*?-->/g), /(?<![:'"`])\/\/[^\n]*/g);
-  return blank(uncommented, /&#x?[0-9a-f]+;/gi);
-}
-
-/**
- * A hex as a script or document writes a colour: six or eight digits anywhere, three or four only
- * as a value of its own (`'#fff'`, `: #fff`), so a private field `#add` or an id `#feed-list` is not one.
- */
-const WRITTEN_HEX = /#(?:[0-9a-f]{8}|[0-9a-f]{6})(?![\w-])|(?<=['"`:]\s*)#[0-9a-f]{3,4}(?=\s*['"`;<}])/gi;
-
-/** Every hex or colour function in a script or document, as `file:line: literal`. Names are prose there. */
-export function literalColours(source: string, file: string): string[] {
-  const code = scriptCode(source);
-  const hits = [...code.matchAll(WRITTEN_HEX), ...code.matchAll(FUNCTION)];
-  return hits.map((hit) => `${file}:${lineAt(code, hit.index)}: ${hit[0]}`);
-}
 
 /** The renderer's files with one of `extensions`, relative to it, with forward slashes. */
 function files(extensions: string[]): string[] {
@@ -185,24 +139,111 @@ describe('the shell and its colours', () => {
     assert.deepEqual(failures, []);
   });
 
-  it('uses no token that is not defined', () => {
+  it('uses no token that is not defined, in a stylesheet, a component or a document', () => {
     const css = sheets.map((file) => cssCode(read(file))).join('\n');
-    const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]));
-    const used = new Set([...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((match) => match[1]));
-    const unknown = [...used].filter((name) => !defined.has(name) && !RUNTIME_PROPERTIES.includes(name));
+    const markup = files(['.tsx', '.html']).map(read).join('\n');
+    // A component sets a property as a quoted style key ('--i': 3) or through setProperty('--i', ...).
+    const scripts = files(['.ts', '.tsx']).map(read).join('\n');
+    const set = [...scripts.matchAll(/['"](--[\w-]+)['"]\s*:|setProperty\(\s*['"](--[\w-]+)/g)];
+    const declares = (text: string): string[] => [...text.matchAll(/(--[\w-]+)\s*:/g)].map((match) => match[1]);
+    // The shell's sheets may use only what the shell's sheets declare: a standalone page's own names do not count.
+    const forSheets = new Set([...declares(css), ...set.map((match) => match[1] ?? match[2])]);
+    const forMarkup = new Set([...forSheets, ...declares(markup)]);
+    // A stylesheet may not fall back (a fallback is where a raw colour hid); a document's own optional knob may.
+    const inSheets = [...css.matchAll(/var\(\s*(--[\w-]+)/g)].filter((match) => !forSheets.has(match[1]));
+    const inMarkup = [...markup.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)].filter((match) => !forMarkup.has(match[1]));
+    const used = new Set([...inSheets, ...inMarkup].map((match) => match[1]));
+    const unknown = [...used].filter((name) => !RUNTIME_PROPERTIES.includes(name));
     assert.deepEqual(unknown.sort(), []);
   });
 
   it('writes no raw colour in a component, script or document, outside the named exceptions', () => {
-    const sources = files(['.ts', '.tsx', '.js', '.html']).filter((file) => !Object.hasOwn(EXCEPTIONS, file));
+    const named = (file: string): boolean => Object.hasOwn(EXCEPTIONS, file) || OWN_FIVE.includes(file);
+    const sources = files(['.ts', '.tsx', '.js', '.html']).filter((file) => !named(file));
     assert.deepEqual(
       sources.flatMap((file) => literalColours(read(file), file)),
       [],
     );
   });
 
+  it('lets a page or canvas that cannot load the tokens name the five, and nothing else', () => {
+    // A canvas cannot mix: there a colour of the five may carry its own alpha (#cdf01e14).
+    const others = OWN_FIVE.flatMap((file) => literalColours(read(file), file)).filter(
+      (hit) => !ofFive(hit.split(': ')[1]),
+    );
+    assert.deepEqual(others, []);
+  });
+
   it('keeps no exception for a file that no longer needs one', () => {
     const stale = Object.keys(EXCEPTIONS).filter((file) => literalColours(read(file), file).length === 0);
     assert.deepEqual(stale, []);
   });
+});
+
+describe('the five colours', () => {
+  const css = cssCode(read(TOKENS));
+
+  it('are the only colours tokens.css names, each declared once under its own name', () => {
+    const literals = violations(read(TOKENS), TOKENS).map((hit) => hit.split(': ')[1].toLowerCase());
+    assert.deepEqual(literals.sort(), Object.values(FIVE).sort());
+    for (const [name, hex] of Object.entries(FIVE)) assert.equal(themes(css).light.get(name), hex, `${name} is ${hex}`);
+  });
+
+  it('leave no green but lime: the olive accent and the avatar hues are gone', () => {
+    const all = sheets.map((file) => cssCode(read(file))).join('\n');
+    assert.deepEqual(all.match(/--(?:logo-green|tone-\d)\b/g), null);
+  });
+
+  it('match the window the shell is painted into, so nothing flashes at launch', () => {
+    assert.deepEqual(SHELL_BACKGROUND, { dark: FIVE['--ink'], light: FIVE['--paper'] });
+    assert.equal(DIALOG_WINDOW_OPTIONS.backgroundColor, FIVE['--ink']);
+    assert.equal(PICKER.BACKGROUND, FIVE['--ink']);
+  });
+
+  it('keep lime, amber and red out of text: on paper they cannot be read', () => {
+    const failures = sheets.flatMap((file) =>
+      rules(read(file))
+        .filter((rule) => FILL_ONLY.test(rule.declarations.get('color') ?? ''))
+        .map((rule) => `${file}:${rule.line}: ${rule.selector} { color: ${rule.declarations.get('color')} }`),
+    );
+    assert.deepEqual(failures, []);
+  });
+
+  it('put only ink on a lime or amber fill', () => {
+    const fill = /^var\(--(?:accent-fill|accent-hover|lime|amber)\)$/;
+    const ink = /^var\(--(?:on-accent|ink)\)$/;
+    const failures = sheets.flatMap((file) =>
+      rules(read(file))
+        .filter((rule) =>
+          fill.test(rule.declarations.get('background') ?? rule.declarations.get('background-color') ?? ''),
+        )
+        .filter((rule) => rule.declarations.has('color') && !ink.test(rule.declarations.get('color') ?? ''))
+        .map((rule) => `${file}:${rule.line}: ${rule.selector} { color: ${rule.declarations.get('color')} }`),
+    );
+    assert.deepEqual(failures, []);
+  });
+
+  for (const [theme, tokens] of Object.entries(themes(css)))
+    it(`can be read in the ${theme} theme: every text colour stands out from what is behind it`, () => {
+      const pairs =
+        theme === 'incognito'
+          ? [...PAIRS, ...['--text', '--secondary', '--accent'].map((t): [string, string] => [t, '--chrome-bar'])]
+          : PAIRS;
+      // A control's outline need only stand 3:1 off what is behind it (WCAG 1.4.11).
+      const edges = SURFACES.map((surface) => ({
+        surface,
+        ratio: contrast(tokens, '--control-edge', surface, '--surface'),
+      }));
+      assert.deepEqual(
+        edges
+          .filter(({ ratio }) => ratio < 3)
+          .map(({ surface, ratio }) => `--control-edge on ${surface}: ${ratio.toFixed(2)}`),
+        [],
+      );
+      const dim = pairs
+        .map(([text, behind]) => ({ text, behind, ratio: contrast(tokens, text, behind, '--surface') }))
+        .filter(({ ratio }) => ratio < READABLE)
+        .map(({ text, behind, ratio }) => `${text} on ${behind}: ${ratio.toFixed(2)}`);
+      assert.deepEqual(dim, []);
+    });
 });

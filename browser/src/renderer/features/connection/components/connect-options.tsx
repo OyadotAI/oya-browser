@@ -11,12 +11,12 @@ import { BrandMark, type BrandLogo } from './brand-marks.tsx';
 const APPS: {
   /** The agent id main reports. */ id: string;
   /** The name people know it by. */ name: string;
-  /** Its logo, when the brand has a free one. */ logo?: BrandLogo;
+  /** Its logo. */ logo?: BrandLogo;
 }[] = [
   { id: 'claude-code', name: 'Claude Code', logo: 'claude' },
-  { id: 'codex', name: 'Codex' },
+  { id: 'codex', name: 'Codex', logo: 'openai' },
   { id: 'cursor', name: 'Cursor', logo: 'cursor' },
-  { id: 'vscode', name: 'VS Code' },
+  { id: 'vscode', name: 'VS Code', logo: 'vscode' },
 ];
 
 /** A labelled divider between groups of options. */
@@ -29,6 +29,7 @@ function Accounts({ vm }: { /** Setup owner. */ vm: SetupViewModel }) {
   return (
     <div className="connect-accounts">
       <button type="button" className="connect-account" onClick={() => void vm.onboarding.connectChatgpt()}>
+        <BrandMark logo="openai" />
         Continue with ChatGPT
         <small>Uses your ChatGPT plan</small>
       </button>

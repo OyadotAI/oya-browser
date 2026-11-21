@@ -21,7 +21,7 @@ export const DIALOG_WINDOW_OPTIONS = {
   resizable: false,
   minimizable: false,
   maximizable: false,
-  backgroundColor: '#10120f',
+  backgroundColor: '#1a1a1a',
 };
 /** A sheet's own content cannot create another dialog, webview or privileged renderer. */
 export const DIALOG_WEB_PREFERENCES = {

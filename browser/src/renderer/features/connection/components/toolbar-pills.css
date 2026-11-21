@@ -29,7 +29,7 @@
   color: var(--accent);
 }
 .update-pill.attention:hover {
-  background: color-mix(in srgb, var(--accent) 12%, var(--accent-soft));
+  background: color-mix(in srgb, var(--accent-fill) 12%, var(--accent-soft));
 }
 .update-pill:disabled {
   cursor: default;
@@ -75,8 +75,8 @@
   background: var(--secondary);
 }
 .conn-pill.ok .dot {
-  background: var(--accent);
-  box-shadow: none;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
 }
 #conn-label {
   overflow: hidden;
@@ -162,8 +162,10 @@
   height: 7px;
 }
 .conn-pill.ok .dot {
-  background: var(--logo-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--logo-green) 20%, transparent);
+  background: var(--accent-fill);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 3px color-mix(in srgb, var(--accent-fill) 20%, transparent);
 }
 
 /* ── The profile button: the account's initial, with the connection as a dot on it (Chrome's place, the toolbar's end) ── */
@@ -195,7 +197,7 @@
   outline: none;
 }
 .conn-pill.profile-button:focus-visible .profile-avatar {
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
 }
 /* The dot sits on the avatar's lower right, ringed in the toolbar's colour so it reads on any initial. */
 .conn-pill.profile-button .dot {
@@ -209,10 +211,16 @@
   box-shadow: 0 0 0 2px var(--chrome-bar, var(--bg));
 }
 .conn-pill.profile-button.ok .dot {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 2px var(--chrome-bar, var(--bg));
 }
 .conn-pill.profile-button.trying .dot {
   background: var(--amber);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 2px var(--chrome-bar, var(--bg));
   animation: profile-dot 1.4s var(--ease) infinite;
 }
 @keyframes profile-dot {

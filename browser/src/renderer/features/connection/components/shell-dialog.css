@@ -138,7 +138,7 @@
 }
 .command:hover,
 .command:focus-visible {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--hover);
   box-shadow: none;
 }
 .shell-dialog footer {

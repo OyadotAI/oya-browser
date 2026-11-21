@@ -129,23 +129,26 @@
   height: 52px;
   font-size: 22px;
 }
+/*
+ * Four more looks, so profiles side by side are not all alike. They differ by how the circle is
+ * filled, not by hue: there are only five colours, and red beside a name would read as an error.
+ */
 .profiles-avatar[data-tone='1'] {
-  background: color-mix(in srgb, var(--tone-1) 18%, transparent);
-  color: var(--tone-1);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
+  color: var(--on-accent);
 }
 .profiles-avatar[data-tone='2'] {
-  background: color-mix(in srgb, var(--tone-2) 18%, transparent);
-  color: var(--tone-2);
+  background: var(--amber);
+  box-shadow: 0 0 0 1px var(--accent-edge);
+  color: var(--ink);
 }
 .profiles-avatar[data-tone='3'] {
-  background: color-mix(in srgb, var(--tone-3) 18%, transparent);
-  color: var(--tone-3);
+  background: var(--text);
+  color: var(--surface);
 }
 .profiles-avatar[data-tone='4'] {
-  background: color-mix(in srgb, var(--tone-4) 18%, transparent);
-  color: var(--tone-4);
-}
-.profiles-avatar[data-tone='5'] {
-  background: color-mix(in srgb, var(--tone-5) 18%, transparent);
-  color: var(--tone-5);
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--text);
+  color: var(--text);
 }

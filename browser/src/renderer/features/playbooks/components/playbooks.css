@@ -97,17 +97,21 @@
   border-radius: 50%;
 }
 .pb-dot.succeeded {
-  background: var(--success);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
 }
+/* A failed run is a square, so it is told from a finished one by shape as well as colour. */
 .pb-dot.failed {
   background: var(--danger);
+  border-radius: 1px;
 }
+/* Still going, or waiting on a person: a ring, where a finished run is a filled dot. Shape tells them apart, not hue. */
 .pb-dot.running,
 .pb-dot.attention {
-  background: var(--accent);
+  border: 2px solid var(--accent);
 }
 .pb-dot.never {
-  border: 1px solid var(--secondary);
+  border: 1px dashed var(--secondary);
 }
 .pb-details,
 .pb-run {

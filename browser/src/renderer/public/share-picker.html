@@ -9,11 +9,26 @@
     />
     <title>Oya · Choose what to share</title>
     <style>
+      /* Oya's five colours (core/tokens.css): this page cannot load that sheet, so it names the ones it uses. */
+      :root {
+        --ink: #1a1a1a;
+        --paper: #f7f5f0;
+        --lime: #cdf01e;
+        --surface: color-mix(in srgb, var(--paper) 5%, var(--ink));
+        --raised: color-mix(in srgb, var(--paper) 8%, var(--ink));
+        --hover: color-mix(in srgb, var(--paper) 11%, var(--ink));
+        --line: color-mix(in srgb, var(--paper) 15%, var(--ink));
+        --line-strong: color-mix(in srgb, var(--paper) 50%, var(--ink));
+        --secondary: color-mix(in srgb, var(--paper) 62%, var(--ink));
+        --quiet: color-mix(in srgb, var(--paper) 45%, var(--ink));
+        --soft: color-mix(in srgb, var(--paper) 80%, var(--ink));
+        --selected: color-mix(in srgb, var(--lime) 14%, var(--ink));
+      }
       :root {
         color-scheme: dark;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        color: #eeefe9;
-        background: #10120f;
+        color: var(--paper);
+        background: var(--ink);
       }
       * {
         box-sizing: border-box;
@@ -34,7 +49,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #a7af9c;
+        color: var(--secondary);
         font-size: 11px;
         font-weight: 600;
         letter-spacing: 0.09em;
@@ -43,7 +58,7 @@
       .mark {
         width: 12px;
         height: 12px;
-        border: 3px solid #32ed26;
+        border: 3px solid var(--lime);
         border-radius: 50%;
       }
       h1 {
@@ -55,16 +70,16 @@
       .recipient {
         margin: 0;
         font-size: 13px;
-        color: #a7af9c;
+        color: var(--secondary);
       }
       #origin {
-        color: #eeefe9;
+        color: var(--paper);
         font-weight: 500;
       }
       nav {
         display: flex;
         margin: 0 28px;
-        border-bottom: 1px solid #30362b;
+        border-bottom: 1px solid var(--line);
         gap: 24px;
       }
       nav button {
@@ -73,19 +88,19 @@
         border-bottom: 2px solid transparent;
         border-radius: 0;
         background: transparent;
-        color: #a7af9c;
+        color: var(--secondary);
         font-size: 13px;
         font-weight: 600;
       }
       nav button[aria-selected='true'] {
-        color: #eeefe9;
-        border-bottom-color: #32ed26;
+        color: var(--paper);
+        border-bottom-color: var(--lime);
       }
       .count {
         font-size: 10px;
         font-weight: 500;
         margin-left: 6px;
-        color: #909985;
+        color: var(--secondary);
       }
       .catalog {
         position: relative;
@@ -105,21 +120,21 @@
         flex-direction: column;
         min-width: 0;
         cursor: pointer;
-        border: 1px solid #3b4234;
+        border: 1px solid var(--line);
         border-radius: 9px;
-        background: #191d16;
+        background: var(--surface);
         padding: 5px 5px 11px;
       }
       .source:hover {
-        border-color: #8c987e;
+        border-color: var(--line-strong);
       }
       .source:has(input:checked) {
-        border-color: #32ed26;
-        box-shadow: 0 0 0 1px #32ed26;
-        background: #202b1a;
+        border-color: var(--lime);
+        box-shadow: 0 0 0 1px var(--lime);
+        background: var(--selected);
       }
       .source:has(input:focus-visible) {
-        outline: 2px solid #b4efa5;
+        outline: 2px solid var(--lime);
         outline-offset: 4px;
       }
       .source input {
@@ -138,8 +153,8 @@
         width: 21px;
         height: 21px;
         border-radius: 50%;
-        background: #32ed26;
-        color: #10120f;
+        background: var(--lime);
+        color: var(--ink);
         font-size: 13px;
         font-weight: 700;
       }
@@ -150,7 +165,7 @@
         aspect-ratio: 16 / 9;
         width: 100%;
         overflow: hidden;
-        background: #0b0e09;
+        background: var(--ink);
         border-radius: 5px;
       }
       .preview img {
@@ -160,7 +175,7 @@
       }
       .placeholder {
         font-size: 11px;
-        color: #849078;
+        color: var(--secondary);
       }
       .name,
       .detail {
@@ -178,13 +193,13 @@
       .detail {
         margin-top: 4px;
         font-size: 10px;
-        color: #a7af9c;
+        color: var(--secondary);
       }
       #empty {
         max-width: 400px;
         margin: 56px auto;
         text-align: center;
-        color: #a7af9c;
+        color: var(--secondary);
         line-height: 1.7;
         font-size: 14px;
       }
@@ -193,7 +208,7 @@
         align-items: center;
         gap: 10px;
         padding: 18px 28px 22px;
-        border-top: 1px solid #30362b;
+        border-top: 1px solid var(--line);
       }
       .summary {
         flex: 1;
@@ -202,7 +217,7 @@
       }
       #selection {
         margin: 0 0 5px;
-        color: #cbd2c3;
+        color: var(--soft);
         font-size: 12px;
         white-space: nowrap;
         overflow: hidden;
@@ -211,7 +226,7 @@
       .note {
         margin: 0;
         font-size: 11px;
-        color: #849078;
+        color: var(--secondary);
       }
       button {
         font: inherit;
@@ -220,26 +235,26 @@
       }
       footer button,
       #settings {
-        border: 1px solid #46503b;
+        border: 1px solid var(--line);
         background: transparent;
-        color: #eeefe9;
+        color: var(--paper);
         padding: 10px 20px;
         font-size: 13px;
         font-weight: 600;
       }
       #share {
-        background: #32ed26;
-        border-color: #32ed26;
-        color: #101c0c;
+        background: var(--lime);
+        border-color: var(--lime);
+        color: var(--ink);
       }
       #share:disabled {
         cursor: default;
-        background: #293023;
-        color: #78836c;
-        border-color: #343d2d;
+        background: var(--hover);
+        color: var(--quiet);
+        border-color: var(--line);
       }
       button:focus-visible {
-        outline: 2px solid #b4efa5;
+        outline: 2px solid var(--lime);
         outline-offset: 4px;
       }
       [hidden] {

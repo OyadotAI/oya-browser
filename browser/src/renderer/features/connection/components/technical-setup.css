@@ -33,7 +33,8 @@
   background: var(--danger);
 }
 .technical-light[data-ready='true'] {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
 }
 .technical-agent-actions {
   display: flex;

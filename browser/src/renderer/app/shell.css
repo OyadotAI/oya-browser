@@ -187,10 +187,13 @@ button:active:not(:disabled) {
   transition: transform 180ms var(--spring, var(--ease));
 }
 .switch[aria-checked='true'] {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
+/* On lime the thumb is ink: a paper thumb would be lost in it. */
 .switch[aria-checked='true']::after {
   transform: translateX(14px);
+  background: var(--on-accent);
 }
 /* ════════════════════════════════════════════════════════════════════════
    Finish: one material, one geometry and one motion across the browser.
@@ -208,16 +211,23 @@ h2,
 h3 {
   letter-spacing: -0.022em;
 }
-/* Focus: a soft ring of the accent, never a hard outline. */
+/*
+ * Focus: a thin line that can be read in either theme, with a soft ring of lime round it. The ring
+ * alone would not do: lime on paper is too faint to find. A heading given focus only so a screen
+ * reader starts there (tabindex="-1") is not a control, and gets no ring.
+ */
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 summary:focus-visible,
-[tabindex]:focus-visible,
+[tabindex]:not([tabindex='-1']):focus-visible,
 .dev-tab:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
+}
+[tabindex='-1']:focus-visible {
+  outline: none;
 }
 /* Press: a quick spring squeeze instead of a nudge down. */
 button {

@@ -20,7 +20,7 @@
   stroke-width: 80;
 }
 .oya-mark .mark-back {
-  stroke: var(--logo-green);
+  stroke: var(--lime);
   transform-origin: 236px 236px;
 }
 .oya-mark .mark-front {

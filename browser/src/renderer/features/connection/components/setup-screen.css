@@ -185,7 +185,7 @@ body.mode-browsing .setup-screen {
   width: 100%;
   border: 0;
   border-radius: var(--radius);
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font: inherit;
   font-weight: 600;
@@ -371,7 +371,7 @@ body.mode-browsing .setup-screen {
 }
 .stepper-step[data-state='done']:not(:last-child)::before,
 .stepper-step[data-state='skipped']:not(:last-child)::before {
-  background: color-mix(in srgb, var(--logo-green) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .stepper-marker {
   display: grid;
@@ -390,14 +390,14 @@ body.mode-browsing .setup-screen {
     box-shadow 240ms ease;
 }
 .stepper-step[data-state='active'] .stepper-marker {
-  color: var(--logo-green);
+  color: var(--accent);
   box-shadow:
-    inset 0 0 0 1.5px var(--logo-green),
-    0 0 0 4px color-mix(in srgb, var(--logo-green) 12%, transparent);
+    inset 0 0 0 1.5px var(--accent),
+    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .stepper-step[data-state='done'] .stepper-marker {
-  color: var(--surface);
-  background: var(--logo-green);
+  color: var(--on-accent);
+  background: var(--accent-fill);
   box-shadow: none;
 }
 .stepper-step[data-state='ahead'],
@@ -468,13 +468,15 @@ body.mode-browsing .setup-screen {
   transition: transform 200ms var(--spring);
 }
 .stepper-switch input:checked + .stepper-switch-track {
-  background: var(--logo-green);
+  background: var(--accent-fill);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 .stepper-switch input:checked + .stepper-switch-track::after {
   transform: translateX(12px);
+  background: var(--on-accent);
 }
 .stepper-switch input:focus-visible + .stepper-switch-track {
-  outline: 2px solid var(--logo-green);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 /* The quiet ways out, side by side under everything. */
