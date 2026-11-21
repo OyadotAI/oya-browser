@@ -65,8 +65,11 @@ const metaHosts = () => (process.env.META_PIXEL_ID ? META_HOSTS : []);
 /** RB2B's hosts when the operator set its account, otherwise none. */
 const rb2bHosts = () => (process.env.RB2B_ID ? RB2B_HOSTS : []);
 
-/** Images: data: for the live view's JPEG frames, blob: for anything captured client-side, and RB2B's and Meta's pixels. */
-const imageSources = () => ["img-src 'self' data: blob:", ...rb2bHosts(), ...metaHosts()].join(' ');
+/** Product Hunt's live launch badge image host; kept site-wide in img-src so App Router soft navs to / render it. */
+const PRODUCT_HUNT_IMG = 'https://api.producthunt.com';
+
+/** Images: data: for live JPEG frames, blob: for client captures, the live Product Hunt badge, and optional analytics pixels. */
+const imageSources = () => ["img-src 'self' data: blob:", PRODUCT_HUNT_IMG, ...rb2bHosts(), ...metaHosts()].join(' ');
 
 /**
  * Where the page may send requests: itself, the API's origin when elsewhere,

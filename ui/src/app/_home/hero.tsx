@@ -1,7 +1,8 @@
 /** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
 import { Fragment } from 'react';
-import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, foundersCall } from './content';
+import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, PRODUCT_HUNT_BADGE, foundersCall } from './content';
+import { PRODUCT_HUNT_BADGE_HEIGHT, PRODUCT_HUNT_BADGE_WIDTH } from './constants';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
 import { RecordedDemo } from './recorded-demo';
@@ -50,6 +51,30 @@ function TrustBadge() {
   );
 }
 
+/** Official Product Hunt launch badge rendered live so launch-day vote counts stay current. */
+function ProductHuntBadge() {
+  return (
+    <a
+      className={styles.productHunt}
+      href={PRODUCT_HUNT_BADGE.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-track="cta_clicked"
+      data-track-label="hero_product_hunt"
+    >
+      {/* Live remote SVG from Product Hunt cannot use next/image without disabling SVG safety or caching stale counts. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={PRODUCT_HUNT_BADGE.image}
+        alt={PRODUCT_HUNT_BADGE.alt}
+        width={PRODUCT_HUNT_BADGE_WIDTH}
+        height={PRODUCT_HUNT_BADGE_HEIGHT}
+        decoding="async"
+      />
+    </a>
+  );
+}
+
 /** An editorial story and luminous product stage share one opening composition. */
 export function Hero() {
   return (
@@ -78,6 +103,7 @@ export function Hero() {
               Use synthetic data while developing on desktop. For protected health information (PHI), use Oya Cloud or
               the enterprise edition under a Business Associate Agreement (BAA).
             </p>
+            <ProductHuntBadge />
           </Reveal>
         </div>
         <Reveal preset="artwork" order={1} className={styles.media}>

@@ -140,6 +140,30 @@
   background: color-mix(in srgb, var(--forest) 90%, var(--lime));
   color: var(--ivory);
 }
+.productHunt {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 10px;
+  color: var(--ivory);
+  font-size: 13px;
+  line-height: 1.4;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+.productHunt img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.productHunt:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+.productHunt:focus-visible {
+  border-radius: 10px;
+}
 .media {
   position: relative;
   isolation: isolate;
