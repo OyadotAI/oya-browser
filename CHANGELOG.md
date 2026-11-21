@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.277](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.277) · 2026-11-21
+
 ### Fixed
 
 - Desktop: pairing the app with a different account now switches the account at once in the toolbar avatar, the profile menu and Settings. Before, the previous account stayed on screen until Settings was opened, and its cached details and claim page were kept on disk.
