@@ -280,6 +280,10 @@
   }
 }
 @media (max-width: 767px) {
+  /* On a phone the tab titles would match the sub-section heading above them; they stay a step below it. */
+  .capabilityTabs button > span:first-child {
+    font-size: 22px;
+  }
   .overview {
     margin-top: 0 !important;
     border-radius: 14px;

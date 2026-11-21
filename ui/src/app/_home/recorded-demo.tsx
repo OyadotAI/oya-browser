@@ -1,6 +1,7 @@
 /** A real, silent product recording introduces the task before the separate interactive simulation. */
 'use client';
 import { POSTER_HEIGHT, POSTER_WIDTH } from './constants';
+import { HERO_POSTER } from './content';
 import { useRecordedDemo, VIDEO_MESSAGES } from './use-recorded-demo';
 import { ArrowUpRight } from 'lucide-react';
 import styles from './recorded-demo.module.css';
@@ -14,7 +15,7 @@ function Recording({ attach, failed, loaded }: Pick<Player, 'attach' | 'failed' 
     <video
       ref={attach}
       src="/prior-auth.mp4"
-      poster="/prior-auth-poster.jpg"
+      poster={HERO_POSTER}
       width={POSTER_WIDTH}
       height={POSTER_HEIGHT}
       controls

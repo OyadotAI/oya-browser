@@ -1,7 +1,8 @@
 /** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
 import { Fragment } from 'react';
-import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, foundersCall } from './content';
+import { preload } from 'react-dom';
+import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, HERO_POSTER, foundersCall } from './content';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
 import { RecordedDemo } from './recorded-demo';
@@ -55,6 +56,8 @@ function TrustBadge() {
 
 /** An editorial story and luminous product stage share one opening composition. */
 export function Hero() {
+  // On a phone the recording's poster is the largest thing in the first screen; without the hint it queues behind scripts.
+  preload(HERO_POSTER, { as: 'image', fetchPriority: 'high' });
   return (
     <section className={`hero ${styles.hero}`} id="hero" aria-labelledby="hero-h">
       <div className={`wrap ${styles.composition}`}>

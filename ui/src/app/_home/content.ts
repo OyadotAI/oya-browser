@@ -15,6 +15,9 @@ export const discord = 'https://discord.gg/wqSeXJPygn';
 /** A call with the founders, booked on Calendly. */
 export const foundersCall = 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call';
 
+/** The hero recording's poster. One name, because the hero preloads the exact file the video shows first. */
+export const HERO_POSTER = '/prior-auth-poster.webp';
+
 /** Official Product Hunt launch embed badge for the dark footer surface. */
 export const PRODUCT_HUNT_BADGE = {
   /** Launch page link carrying Product Hunt's embed attribution parameters. */

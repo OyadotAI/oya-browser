@@ -392,6 +392,10 @@
     --space-grid: 32px;
     --type-section: 36px;
   }
+  /* Twelve columns leave eleven gutters: at the full grid gap they alone are wider than a 360px phone. */
+  .page :global(.grid) {
+    column-gap: 16px;
+  }
   .page :global(.wrap) {
     width: calc(100% - 32px);
   }

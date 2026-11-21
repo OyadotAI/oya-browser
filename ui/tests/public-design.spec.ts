@@ -24,6 +24,19 @@ test('landing is readable at desktop and mobile widths without changing the app 
     await expect(
       page.locator('section[aria-labelledby="hero-h"]').getByRole('link', { name: 'Start building' }),
     ).toBeInViewport();
+    // Names what pushes the page sideways, so a failure points at an element instead of a boolean.
+    expect(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('body *')]
+          .filter((el) => el.getBoundingClientRect().right > innerWidth + 1)
+          .filter((el) => {
+            for (let up = el.parentElement; up; up = up.parentElement)
+              if (getComputedStyle(up).overflowX !== 'visible') return false;
+            return true;
+          })
+          .map((el) => `${el.tagName.toLowerCase()}.${el.className} ${Math.round(el.getBoundingClientRect().right)}`),
+      ),
+    ).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     // The hero hides overflow, so the page-width check above cannot see text clipped inside it.
     expect(

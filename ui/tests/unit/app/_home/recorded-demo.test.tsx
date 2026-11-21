@@ -11,7 +11,7 @@ it('autoplays the real recording muted with native controls and a walkthrough in
   const { container } = render(<RecordedDemo />);
   const video = container.querySelector('video')!;
   expect(video.getAttribute('src')).toBe('/prior-auth.mp4');
-  expect(video.getAttribute('poster')).toBe('/prior-auth-poster.jpg');
+  expect(video.getAttribute('poster')).toBe('/prior-auth-poster.webp');
   expect(video.getAttribute('preload')).toBe('metadata');
   expect(video.controls).toBe(true);
   expect(video.hasAttribute('playsinline')).toBe(true);

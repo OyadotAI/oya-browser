@@ -1,5 +1,6 @@
 /** Optional connection examples share one surface; code scrolls locally while prose wraps. */
-.lead {
+/* Outranks the page's paragraph margin reset, which otherwise leaves the lead touching its heading. */
+:global(.section) .lead {
   max-width: 640px;
   margin-top: 24px;
   color: var(--muted);
