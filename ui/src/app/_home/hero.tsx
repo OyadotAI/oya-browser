@@ -1,8 +1,7 @@
 /** The landing story starts with a familiar portal task and explains reuse before deployment terminology. */
 import Link from 'next/link';
 import { Fragment } from 'react';
-import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, PRODUCT_HUNT_BADGE, foundersCall } from './content';
-import { PRODUCT_HUNT_BADGE_HEIGHT, PRODUCT_HUNT_BADGE_WIDTH } from './constants';
+import { COMPLIANCE_CLAIMS, COMPLIANCE_LINE, foundersCall } from './content';
 import { ShieldCheck } from 'lucide-react';
 import { Arrow } from './arrow';
 import { RecordedDemo } from './recorded-demo';
@@ -34,7 +33,7 @@ export function Actions({ place }: { /** Where the buttons sit, for analytics. *
   );
 }
 
-/** The linked badge keeps each claim intact when narrow screens wrap the trust line. */
+/** The linked badge keeps each claim and its trailing dot intact, so a wrapped line never starts with a separator. */
 function TrustBadge() {
   return (
     <a className={styles.trustLine} href="/trust" aria-label={COMPLIANCE_LINE}>
@@ -42,35 +41,14 @@ function TrustBadge() {
       <span>
         {COMPLIANCE_CLAIMS.map((claim, index) => (
           <Fragment key={claim}>
-            {index > 0 && ' · '}
-            <span className={styles.trustClaim}>{claim}</span>
+            {index > 0 && ' '}
+            <span className={styles.trustClaim}>
+              {claim}
+              {index < COMPLIANCE_CLAIMS.length - 1 && ' ·'}
+            </span>
           </Fragment>
         ))}
       </span>
-    </a>
-  );
-}
-
-/** Official Product Hunt launch badge rendered live so launch-day vote counts stay current. */
-function ProductHuntBadge() {
-  return (
-    <a
-      className={styles.productHunt}
-      href={PRODUCT_HUNT_BADGE.href}
-      target="_blank"
-      rel="noopener noreferrer"
-      data-track="cta_clicked"
-      data-track-label="hero_product_hunt"
-    >
-      {/* Live remote SVG from Product Hunt cannot use next/image without disabling SVG safety or caching stale counts. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={PRODUCT_HUNT_BADGE.image}
-        alt={PRODUCT_HUNT_BADGE.alt}
-        width={PRODUCT_HUNT_BADGE_WIDTH}
-        height={PRODUCT_HUNT_BADGE_HEIGHT}
-        decoding="async"
-      />
     </a>
   );
 }
@@ -84,26 +62,17 @@ export function Hero() {
           <Reveal preset="intro">
             <p className={styles.eyebrow}>For healthtech and RCM technology teams</p>
             <h1 id="hero-h" className={styles.title}>
-              <span className={styles.intro}>
-                Let Oya Browser <span className={styles.headlineLine}>generate the playbook.</span>
-              </span>{' '}
-              <span className={styles.accent}>
-                Reuse it on <span className={styles.headlineLine}>the next run.</span>
-              </span>
+              <span>Oya completes one payer portal case.</span>{' '}
+              <span className={styles.accent}>You keep the steps as code.</span>
             </h1>
           </Reveal>
           <Reveal preset="intro" order={1} className={styles.copy}>
             <p className={styles.lead}>
-              Start with a prior authorization, eligibility check or claim-status lookup. Let Oya complete one case and
-              turn its successful steps into a playbook: readable code you can replay with new inputs.
+              Start with a prior authorization, eligibility check or claim-status lookup, and Oya saves the successful
+              steps as a playbook you can replay with new inputs.
             </p>
             <Actions place="hero" />
             <TrustBadge />
-            <p className={styles.scope}>
-              Use synthetic data while developing on desktop. For protected health information (PHI), use Oya Cloud or
-              the enterprise edition under a Business Associate Agreement (BAA).
-            </p>
-            <ProductHuntBadge />
           </Reveal>
         </div>
         <Reveal preset="artwork" order={1} className={styles.media}>

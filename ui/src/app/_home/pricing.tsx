@@ -65,10 +65,8 @@ export function Pricing() {
   return (
     <section className={`section ${styles.section}`} id="pricing" aria-labelledby="pricing-h">
       <div className="wrap">
-        <h2 id="pricing-h">Start with one workflow. Choose capacity as it grows.</h2>
-        <p className={styles.lead}>
-          The desktop app is free. Choose a cloud plan when you’re ready to run workflows there.
-        </p>
+        <h2 id="pricing-h">Start with the free desktop app.</h2>
+        <p className={styles.lead}>Choose a cloud plan when you’re ready to run workflows there.</p>
         <PricingPlans planHeadingAs="h3" />
       </div>
     </section>

@@ -12,10 +12,8 @@ export function Statement() {
     <section className="section" id="results" aria-labelledby="results-h">
       <div className="wrap comparison-layout">
         <div>
-          <h2 id="results-h">Compare the result with your current process.</h2>
-          <p className="deployment-lead">
-            Before expanding the workflow, compare time per case with the work your team does today.
-          </p>
+          <h2 id="results-h">A prior authorization in under 2 minutes, not 22 to 26.</h2>
+          <p className="deployment-lead">Customer-reported time per case, by hand and with Oya.</p>
         </div>
         <div>
           <div role="group" aria-labelledby="prior-auth-time-h">

@@ -5,7 +5,7 @@ test('landing is readable at desktop and mobile widths without changing the app 
   await page.addInitScript(() => localStorage.setItem('oya_theme', 'dark'));
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'Let Oya Browser generate the playbook. Reuse it on the next run.',
+    'Oya completes one payer portal case. You keep the steps as code.',
   );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.locator('main').evaluate((el) => getComputedStyle(el.parentElement!).backgroundColor)).toBe(
@@ -17,7 +17,7 @@ test('landing is readable at desktop and mobile widths without changing the app 
   await expect(cta).toHaveAttribute('href', /calendly\.com/);
   await expect(page.getByRole('figure', { name: /Example replay:/ })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('landing-desktop.png'), fullPage: true });
-  for (const width of [390, 320]) {
+  for (const width of [390, 360, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await page.evaluate(() => window.scrollTo(0, 0));
     await expect(cta).toBeInViewport();
@@ -25,6 +25,15 @@ test('landing is readable at desktop and mobile widths without changing the app 
       page.locator('section[aria-labelledby="hero-h"]').getByRole('link', { name: 'Start building' }),
     ).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    // The hero hides overflow, so the page-width check above cannot see text clipped inside it.
+    expect(
+      await page.evaluate(
+        () =>
+          [...document.querySelectorAll('#hero .wrap *')].filter(
+            (el) => el.getBoundingClientRect().right > innerWidth + 1,
+          ).length,
+      ),
+    ).toBe(0);
     await page.screenshot({ path: testInfo.outputPath(`landing-mobile-${width}.png`), fullPage: true });
   }
   const textOf = (selector: string) =>

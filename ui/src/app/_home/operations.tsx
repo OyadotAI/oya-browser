@@ -13,15 +13,12 @@ export function Operations() {
       <section className="section" aria-labelledby="architecture-h">
         <div className="wrap">
           <div className={controlPlane.sectionHeading}>
-            <h2 id="architecture-h">Scale automatically.</h2>
+            <h2 id="architecture-h">Run it under your controls, in our cloud or yours.</h2>
             <p>
               <mark className={controlPlane.highlight}>
                 Go from 1 to thousands of browsers in less than 30 seconds.
-              </mark>
-            </p>
-            <p>
-              Capacity depends on your plan and deployment. Manage connections, access rules and run history in Oya’s
-              control plane.
+              </mark>{' '}
+              Capacity depends on your plan and deployment.
             </p>
           </div>
           <Reveal>

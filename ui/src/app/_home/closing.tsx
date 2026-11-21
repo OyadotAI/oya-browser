@@ -8,9 +8,9 @@ import { Download } from 'lucide-react';
 import { ANSWER_PAGES } from '../_answers/content';
 import { OyaLogo } from '@/components/oya-logo';
 import { browserDownloads } from '@/lib/browser-downloads';
-import { discord, foundersCall, repository } from './content';
+import { PRODUCT_HUNT_BADGE, discord, foundersCall, repository } from './content';
 import { Arrow } from './arrow';
-import { CLOSING_MARK_SIZE } from './constants';
+import { CLOSING_MARK_SIZE, PRODUCT_HUNT_BADGE_HEIGHT, PRODUCT_HUNT_BADGE_WIDTH } from './constants';
 import styles from './closing.module.css';
 
 /** The directory's columns: a heading and its links. */
@@ -83,8 +83,33 @@ function AnswerLinks() {
   );
 }
 
+/** Official Product Hunt launch badge, rendered live so vote counts stay current and lazily so it never costs first paint. */
+function ProductHuntBadge() {
+  return (
+    <a
+      className={styles.productHunt}
+      href={PRODUCT_HUNT_BADGE.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-track="cta_clicked"
+      data-track-label="footer_product_hunt"
+    >
+      {/* Live remote SVG from Product Hunt cannot use next/image without disabling SVG safety or caching stale counts. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={PRODUCT_HUNT_BADGE.image}
+        alt={PRODUCT_HUNT_BADGE.alt}
+        width={PRODUCT_HUNT_BADGE_WIDTH}
+        height={PRODUCT_HUNT_BADGE_HEIGHT}
+        loading="lazy"
+        decoding="async"
+      />
+    </a>
+  );
+}
+
 /** The directory under the close: the mark and lede, the link columns, the downloads and the legal row. */
-function Directory() {
+function Directory({ launchBadge }: { /** Whether the launch badge sits under the lede. */ launchBadge: boolean }) {
   return (
     <div className="closing__links">
       <div className="grid">
@@ -96,6 +121,7 @@ function Directory() {
             Browser automation for healthtech and RCM companies. Built by engineers from Google; AWS Partner, AWS
             Startups and Google for Startups.
           </p>
+          {launchBadge && <ProductHuntBadge />}
         </div>
         {COLUMNS.map(([head, links]) => (
           <div key={head} className="span-2 footer__col">
@@ -121,11 +147,16 @@ function Directory() {
   );
 }
 
-/** The closing footer; pages that end with their own invitation leave the panel out so it is never said twice. */
+/**
+ * The closing footer; pages that end with their own invitation leave the panel out so it is never said twice.
+ * Only the home page asks for the launch badge, so trust and legal pages make no third-party image request.
+ */
 export function Closing({
   invitation = true,
+  launchBadge = false,
 }: {
   /** Whether to show the founders invitation above the links. */ invitation?: boolean;
+  /** Whether to show the Product Hunt launch badge in the directory. */ launchBadge?: boolean;
 }) {
   return (
     <footer
@@ -142,10 +173,7 @@ export function Closing({
             </span>
             <div className="section-head">
               <h2 id="close-h">Scope your first workflow with the founders.</h2>
-              <p className="t-lead">
-                Bring one portal task, an SOP or a screen recording. We’ll help you scope the first workflow and what it
-                takes to run it again.
-              </p>
+              <p className="t-lead">Bring one portal task, an SOP or a screen recording.</p>
             </div>
             <a
               className="btn btn--primary"
@@ -160,7 +188,7 @@ export function Closing({
         </div>
       )}
       <div className="wrap">
-        <Directory />
+        <Directory launchBadge={launchBadge} />
       </div>
     </footer>
   );

@@ -66,6 +66,25 @@
   font-size: 14px;
   line-height: 1.8;
 }
+.productHunt {
+  display: inline-flex;
+  max-width: 100%;
+  margin-top: 24px;
+  border-radius: 10px;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+.productHunt img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.productHunt:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
 .footer :global(.footer__col h3) {
   margin-bottom: 20px;
   color: var(--ivory);

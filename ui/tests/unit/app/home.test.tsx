@@ -76,12 +76,12 @@ describe('landing page', () => {
   it('introduces a first case and saved steps to healthtech teams and preserves the existing actions', async () => {
     await page();
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
-      'Let Oya Browser generate the playbook. Reuse it on the next run.',
+      'Oya completes one payer portal case. You keep the steps as code.',
     );
     expect(screen.getByText('For healthtech and RCM technology teams')).toBeTruthy();
     expect(
       screen.getByText(
-        'Start with a prior authorization, eligibility check or claim-status lookup. Let Oya complete one case and turn its successful steps into a playbook: readable code you can replay with new inputs.',
+        'Start with a prior authorization, eligibility check or claim-status lookup, and Oya saves the successful steps as a playbook you can replay with new inputs.',
       ),
     ).toBeTruthy();
     const demos = screen.getAllByRole('link', { name: /Book a demo/ });
@@ -90,33 +90,32 @@ describe('landing page', () => {
     expect(screen.getByRole('link', { name: 'Start building' }).getAttribute('href')).toBe('/dashboard');
   });
 
-  it('places the linked compliance badge between the actions and its PHI qualification', async () => {
+  it('places the linked compliance badge after the actions and keeps small print out of the hero', async () => {
     await page();
     const hero = screen.getByRole('heading', { level: 1 }).closest('section')!;
     const badge = within(hero).getByRole('link', { name: COMPLIANCE_CLAIMS.join(' · ') });
     const action = within(hero).getByRole('link', { name: 'Start building' });
-    const qualification = within(hero).getByText(/Use synthetic data while developing on desktop/);
+    expect(within(hero).queryByText(/Use synthetic data while developing on desktop/)).toBeNull();
     expect(badge.getAttribute('href')).toBe('/trust');
     expect(badge.textContent).toBe(COMPLIANCE_CLAIMS.join(' · '));
     expect(action.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(badge.compareDocumentPosition(qualification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('renders the official dark Product Hunt launch badge after the PHI scope line', async () => {
+  it('renders the official dark Product Hunt launch badge lazily in the footer, not in the hero', async () => {
     await page();
     const hero = screen.getByRole('heading', { level: 1 }).closest('section')!;
-    const qualification = within(hero).getByText(/Use synthetic data while developing on desktop/);
-    const link = within(hero).getByRole('link', { name: PRODUCT_HUNT_BADGE.alt });
+    expect(within(hero).queryByRole('link', { name: PRODUCT_HUNT_BADGE.alt })).toBeNull();
+    const link = within(screen.getByRole('contentinfo')).getByRole('link', { name: PRODUCT_HUNT_BADGE.alt });
     const img = within(link).getByRole('img', { name: PRODUCT_HUNT_BADGE.alt });
     expect(link.getAttribute('href')).toBe(PRODUCT_HUNT_BADGE.href);
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
     expect(link.getAttribute('data-track')).toBe('cta_clicked');
-    expect(link.getAttribute('data-track-label')).toBe('hero_product_hunt');
+    expect(link.getAttribute('data-track-label')).toBe('footer_product_hunt');
     expect(img.getAttribute('src')).toBe(PRODUCT_HUNT_BADGE.image);
     expect(img.getAttribute('width')).toBe(String(PRODUCT_HUNT_BADGE_WIDTH));
     expect(img.getAttribute('height')).toBe(String(PRODUCT_HUNT_BADGE_HEIGHT));
-    expect(qualification.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(img.getAttribute('loading')).toBe('lazy');
   });
 
   it('replaces the abstract artwork with exactly one playable hero recording and preserves headline and actions', async () => {
@@ -133,7 +132,7 @@ describe('landing page', () => {
 
   it('starts on prior authorization and exposes three existing workflows through accessible tabs', async () => {
     await page();
-    expect(screen.getByRole('heading', { name: 'Then keep the steps for the next case.' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Watch one case become a playbook.' })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: 'Workflows' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(DEMO_LABELS);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
@@ -214,11 +213,11 @@ describe('landing page', () => {
       'hero',
       'recorded-demo',
       'workflows',
+      'results',
       'stack',
       'control-plane',
       'capabilities',
       'deployment',
-      'results',
       'pricing',
       'faq',
       'contact',
@@ -228,25 +227,30 @@ describe('landing page', () => {
       .filter((id) => journey.includes(id));
     expect(order).toEqual(journey);
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
-      'Then keep the steps for the next case.',
+      'Watch one case become a playbook.',
+      'A prior authorization in under 2 minutes, not 22 to 26.',
       'When the portal changes, Oya autoheals the code.',
-      'Find denial letters and prior-authorization documents.',
       'Call the saved playbook from your own tools.',
-      'Scale automatically.',
-      'Decide how each run should work.',
-      'Choose where the work runs.',
-      'Compare the result with your current process.',
-      'Start with one workflow. Choose capacity as it grows.',
-      'Resolve the remaining questions before you start.',
+      'Run it under your controls, in our cloud or yours.',
+      'Start with the free desktop app.',
+      'Questions before you start.',
       'Scope your first workflow with the founders.',
     ]);
-    const architecture = screen.getByRole('region', { name: 'Scale automatically.' });
+    const architecture = screen.getByRole('region', { name: 'Run it under your controls, in our cloud or yours.' });
     expect(
       within(architecture)
         .getAllByRole('heading', { level: 3 })
         .map((heading) => heading.textContent),
     ).toEqual(['Agents & apps', 'Oya control plane', 'Browser fleet', 'Healthcare portals']);
     expect(screen.getByText('Interactive simulation · Synthetic data')).toBeTruthy();
+  });
+
+  it('nests run controls and deployment under the one operations heading', async () => {
+    await page();
+    for (const name of ['Decide how each run should work.', 'Choose where the work runs.'])
+      expect(screen.getByRole('heading', { name, level: 3 })).toBeTruthy();
+    for (const name of ['Oya Cloud', 'Execution choice'])
+      expect(screen.getByRole('heading', { name, level: 4 })).toBeTruthy();
   });
 
   it('shows only the selected task’s synthetic audit actions and references', async () => {

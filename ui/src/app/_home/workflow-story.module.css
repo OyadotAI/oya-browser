@@ -1,4 +1,4 @@
-/** Visual repair branches and document sheets make the story legible before a reader opens technical depth. */
+/** Visual repair branches make the story legible before a reader opens technical depth. */
 .story {
   padding-block: 24px 48px;
   background: var(--ivory);
@@ -76,56 +76,6 @@
   color: var(--night-muted);
   font-size: 12px;
 }
-.documents {
-  padding: 28px 20px 20px;
-  overflow: hidden;
-  border-radius: 20px;
-  background: var(--forest);
-  color: var(--ivory);
-}
-.sheets {
-  display: grid;
-  gap: 12px;
-}
-.sheet {
-  padding: 18px;
-  border-radius: 8px;
-  background: var(--ivory);
-  color: var(--night);
-}
-.sheet:nth-child(2) {
-  border-top: 4px solid var(--lime);
-}
-.sheet > div {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.sheet strong {
-  font-size: 15px;
-  line-height: 1.5;
-  font-weight: 500;
-}
-.documentLines {
-  display: none;
-}
-.documents figcaption {
-  margin-top: 24px;
-  color: var(--night-muted);
-  font-size: 13px;
-}
-.sources {
-  display: grid;
-  gap: 12px;
-  margin-top: 20px;
-}
-.sources a {
-  padding-block: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  text-decoration: underline;
-  text-underline-offset: 4px;
-}
 @media (min-width: 768px) {
   .story {
     padding-block: 32px 64px;
@@ -162,43 +112,6 @@
   }
   .repair figcaption {
     grid-column: 1 / -1;
-  }
-  .documents {
-    padding: 40px 28px 24px;
-  }
-  .sheets {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    align-items: start;
-    gap: 0;
-    padding-block: 8px 16px;
-  }
-  .sheet {
-    min-height: 200px;
-    padding: 20px 16px;
-    box-shadow: 0 12px 24px #081b1526;
-  }
-  .sheet:nth-child(1) {
-    transform: rotate(-7deg) translateX(10px);
-  }
-  .sheet:nth-child(2) {
-    position: relative;
-    z-index: 1;
-    transform: translateY(-8px);
-  }
-  .sheet:nth-child(3) {
-    transform: rotate(7deg) translateX(-10px);
-  }
-  .sheet > div {
-    display: grid;
-    gap: 16px;
-  }
-  .sheet strong {
-    font-size: 14px;
-  }
-  .documentLines {
-    display: block;
-    height: 28px;
-    border-block: 1px solid var(--line-strong);
   }
 }
 

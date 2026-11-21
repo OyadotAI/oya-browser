@@ -6,6 +6,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import PricingPage, { metadata } from '@/app/pricing/page';
 import { PRICING_FAQ, PUBLIC_PLANS } from '@/app/_home/pricing-content';
+import { PRODUCT_HUNT_BADGE } from '@/app/_home/content';
 import { SITE_URL } from '@/lib/site';
 
 afterEach(cleanup);
@@ -32,6 +33,11 @@ describe('/pricing page', () => {
       expect(screen.getByText(a)).toBeTruthy();
     }
     expect(container.querySelector('#faq [hidden]')).toBeNull();
+  });
+
+  it('leaves the launch badge to the home page so other pages make no third-party image request', () => {
+    render(<PricingPage />);
+    expect(screen.queryByRole('link', { name: PRODUCT_HUNT_BADGE.alt })).toBeNull();
   });
 
   it('emits BreadcrumbList and FAQPage structured data matching the visible questions verbatim', () => {

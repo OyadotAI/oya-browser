@@ -15,11 +15,11 @@ export const discord = 'https://discord.gg/wqSeXJPygn';
 /** A call with the founders, booked on Calendly. */
 export const foundersCall = 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call';
 
-/** Official Product Hunt launch embed badge for the dark hero surface. */
+/** Official Product Hunt launch embed badge for the dark footer surface. */
 export const PRODUCT_HUNT_BADGE = {
   /** Launch page link carrying Product Hunt's embed attribution parameters. */
   href: 'https://www.producthunt.com/products/oya-browser?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-oya-browser',
-  /** Live Product Hunt badge SVG styled for the hero's dark surface. */
+  /** Live Product Hunt badge SVG styled for the footer's dark surface. */
   image: 'https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1324814&theme=dark',
   /** Accessible description matching the official Product Hunt embed snippet. */
   alt: 'Oya Browser - Browser for AI agents with zero-LLM Playwright replay | Product Hunt',

@@ -34,16 +34,16 @@ export default async function Home() {
             <ProductDemo />
           </div>
         </div>
+        <Statement />
         <WorkflowStory />
         <BringYourStack />
         <Operations />
         <div className={landing.trustSection}>
-          <Statement />
           <Pricing />
           <Faq />
         </div>
       </main>
-      <Closing />
+      <Closing launchBadge />
     </div>
   );
 }

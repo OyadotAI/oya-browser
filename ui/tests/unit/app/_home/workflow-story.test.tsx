@@ -6,7 +6,7 @@ import { MAINTENANCE_BODY, PORTAL_CONTEXT, PORTAL_SOURCES } from '@/app/_home/wo
 import { CLAIM_STATUS, DENIALS, PAYER_PORTALS } from '@/app/_answers/content';
 afterEach(cleanup);
 
-it('distinguishes server repair from reviewed desktop drafts and links to the explanation', () => {
+it('keeps the full repair qualification in the disclosure and links to the explanation', () => {
   render(<WorkflowStory />);
   expect(screen.getByText(MAINTENANCE_BODY)).toBeTruthy();
   expect(screen.getByRole('link', { name: /How playbook repair works/ }).getAttribute('href')).toBe(
@@ -14,11 +14,12 @@ it('distinguishes server repair from reviewed desktop drafts and links to the ex
   );
 });
 
-it('uses the same qualified portal context and dated primary sources on relevant guides', () => {
+it('keeps the portal-document use case off the home story', () => {
   render(<WorkflowStory />);
-  expect(screen.getByText(PORTAL_CONTEXT.body)).toBeTruthy();
-  for (const { label, url } of PORTAL_SOURCES.links)
-    expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe(url);
+  expect(screen.queryByText(PORTAL_CONTEXT.body)).toBeNull();
+});
+
+it('uses the same qualified portal context and dated primary sources on relevant guides', () => {
   for (const content of [CLAIM_STATUS, DENIALS, PAYER_PORTALS]) {
     expect(content.sections.some((section) => section.body === PORTAL_CONTEXT.body)).toBe(true);
     expect(content.sources).toEqual(PORTAL_SOURCES);

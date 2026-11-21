@@ -251,7 +251,7 @@
   margin-top: 4px;
   color: var(--primary);
 }
-.capabilityPanel h3 {
+.capabilityPanel h4 {
   margin-bottom: 7px;
   font-size: 17px;
 }
@@ -365,7 +365,7 @@
 .capabilityPanel {
   min-height: 400px;
 }
-.capabilityOutline h3 {
+.capabilityOutline h4 {
   font-size: 21px;
 }
 .capabilityPanel .scopeNote {

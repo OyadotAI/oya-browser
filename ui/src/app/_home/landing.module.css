@@ -40,7 +40,7 @@
 .page *::after {
   box-sizing: border-box;
 }
-.page :is(h1, h2, h3, p, figure, ul, ol, dl, dd) {
+.page :is(h1, h2, h3, h4, p, figure, ul, ol, dl, dd) {
   margin: 0;
 }
 .page :is(ul, ol) {
@@ -101,7 +101,7 @@
   letter-spacing: -0.055em;
   text-wrap: balance;
 }
-.page h3 {
+.page :is(h3, h4) {
   font-size: 19px;
   font-weight: 500;
   line-height: 1.4;
@@ -227,8 +227,14 @@
   padding-top: 48px;
   border-top: 1px solid var(--line);
 }
-.trustSection :global(#faq) {
+.trustSection :global(#faq),
+.page :global(#results) {
   padding-top: 0;
+}
+.operations > section + section h3 {
+  font-size: clamp(28px, 3vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
 }
 .page :global(.comparison-layout) {
   display: grid;
@@ -237,7 +243,7 @@
   gap: 80px;
 }
 .page :global(.comparison-layout h2) {
-  max-width: 350px;
+  max-width: 520px;
 }
 .page :global(.comparison) {
   display: grid;
@@ -438,7 +444,7 @@
   }
 }
 
-.page :global(.deployment-columns h3) {
+.page :global(.deployment-columns h4) {
   margin-top: 20px;
   font-size: 26px;
 }

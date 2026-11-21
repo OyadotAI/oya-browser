@@ -15,7 +15,7 @@ export function EnterpriseCapabilities() {
     <section className="section" id="capabilities" aria-labelledby="capabilities-h">
       <div className="wrap" id="audit">
         <Reveal className={styles.sectionHeading}>
-          <h2 id="capabilities-h">Decide how each run should work.</h2>
+          <h3 id="capabilities-h">Decide how each run should work.</h3>
         </Reveal>
         <div className={styles.explorer}>
           <div
@@ -76,7 +76,7 @@ function CapabilityPanel({
           <li key={title}>
             <Check size={17} aria-hidden="true" />
             <div>
-              <h3>{title}</h3>
+              <h4>{title}</h4>
             </div>
           </li>
         ))}

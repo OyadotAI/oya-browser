@@ -62,25 +62,18 @@
 }
 .title {
   font-family: var(--font-text), sans-serif;
+  font-size: clamp(44px, 4.2vw, 56px);
+  font-weight: 500;
+  line-height: 1.06;
   letter-spacing: -0.055em;
+  text-wrap: balance;
 }
-.intro {
+.title > span {
   display: block;
-  margin-bottom: 14px;
-  font-size: clamp(30px, 2.8vw, 40px);
-  font-weight: 400;
-  line-height: 1.12;
 }
 .accent {
-  display: block;
+  margin-top: 0.12em;
   color: var(--lime);
-  font-size: clamp(48px, 5vw, 72px);
-  font-weight: 500;
-  line-height: 1.02;
-  letter-spacing: -0.06em;
-}
-.headlineLine {
-  display: block;
 }
 .copy {
   display: grid;
@@ -102,12 +95,6 @@
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--ivory) 45%, transparent),
     0 8px 32px color-mix(in srgb, var(--lime) 14%, transparent);
-}
-.scope {
-  max-width: 46ch;
-  color: var(--night-muted);
-  font-size: 13px;
-  line-height: 1.65;
 }
 .trustLine {
   display: inline-flex;
@@ -139,30 +126,6 @@
   border-color: var(--lime);
   background: color-mix(in srgb, var(--forest) 90%, var(--lime));
   color: var(--ivory);
-}
-.productHunt {
-  display: inline-flex;
-  max-width: 100%;
-  border-radius: 10px;
-  color: var(--ivory);
-  font-size: 13px;
-  line-height: 1.4;
-  transition:
-    opacity 150ms ease,
-    transform 150ms ease;
-}
-.productHunt img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  border-radius: 10px;
-}
-.productHunt:hover {
-  opacity: 0.92;
-  transform: translateY(-1px);
-}
-.productHunt:focus-visible {
-  border-radius: 10px;
 }
 .media {
   position: relative;
@@ -196,9 +159,6 @@
   .content {
     max-width: 720px;
   }
-  .headlineLine {
-    display: inline;
-  }
 }
 @media (max-width: 767px) {
   .hero {
@@ -209,11 +169,8 @@
     font-size: 11px;
     letter-spacing: 0.025em;
   }
-  .intro {
-    font-size: 32px;
-  }
-  .accent {
-    font-size: 48px;
+  .title {
+    font-size: clamp(36px, 10vw, 44px);
   }
   .lead {
     font-size: 16px;

@@ -12,11 +12,7 @@ export function ProductDemo() {
   return (
     <section className={styles.demo} id="workflows" aria-labelledby="demo-h">
       <div className={styles.demoHeading} id="playbooks">
-        <h2 id="demo-h">Then keep the steps for the next case.</h2>
-        <p>
-          Explore how a task becomes readable code, runs with new inputs, and hands control back to a person when
-          needed.
-        </p>
+        <h2 id="demo-h">Watch one case become a playbook.</h2>
         <p>Interactive simulation · Synthetic data</p>
       </div>
       <div className={styles.taskTabs} role="tablist" aria-label="Workflows">

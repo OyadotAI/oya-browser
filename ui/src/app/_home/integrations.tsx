@@ -33,7 +33,7 @@ export function Integrations() {
     <section className="section deployment" id="deployment" aria-labelledby="deployment-h">
       <div className="wrap" id="integrations">
         <Reveal>
-          <h2 id="deployment-h">Choose where the work runs.</h2>
+          <h3 id="deployment-h">Choose where the work runs.</h3>
         </Reveal>
         <p className="deployment-lead">
           Use Oya Cloud or your own infrastructure. For work involving PHI, use the covered Oya Cloud or enterprise
@@ -44,7 +44,7 @@ export function Integrations() {
           {DEPLOYMENTS.map(({ title, short, icon: Icon }, index) => (
             <Reveal key={title} order={index}>
               <Icon size={36} aria-hidden="true" />
-              <h3>{title}</h3>
+              <h4>{title}</h4>
               <p>{short}</p>
             </Reveal>
           ))}
