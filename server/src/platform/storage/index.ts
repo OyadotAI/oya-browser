@@ -4,7 +4,7 @@
  * their repositories against the Connection contract and never touch a
  * database client or the filesystem for their data themselves.
  */
-export { getConnection, closeConnection, createConnection } from './factory.ts';
+export { getConnection, getKeelConnection, closeConnection, createConnection } from './factory.ts';
 export { storageConfig, STORAGE_KINDS, type StorageConfig } from './config.ts';
 export { pgRemote, closePgPool } from './postgres.ts';
 export { USAGE_FIELDS } from './schema.ts';

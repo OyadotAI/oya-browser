@@ -2,7 +2,7 @@
  * Keel usage kept apart from Oya Browser installs. One row per install and
  * reported day makes repeated or concurrent deliveries idempotent.
  */
-import { getConnection } from '../../platform/storage/index.ts';
+import { getKeelConnection } from '../../platform/storage/index.ts';
 import type { KeelPing } from './keel-ping.ts';
 import { recordKeelPresence, initializeKeelInstalls } from './keel-presence.ts';
 import type { KeelDay, KeelReport } from './keel-batch.ts';
@@ -15,7 +15,7 @@ export async function recordKeelPing(ping: KeelPing) {
 
 /** Each new measurement becomes immutable independently, preserving any earlier legacy count. */
 async function storeDay(identity: KeelReport['identity'], report: KeelDay, now: string) {
-  const db = getConnection();
+  const db = getKeelConnection();
   const key = { install_id: identity.install_id, day: report.day };
   await db.upsert('keel_usage', [{ ...identity, ...report, received_at: now }]);
   for (const field of ['runtime_ms', 'project_ids'])

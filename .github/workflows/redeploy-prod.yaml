@@ -70,6 +70,7 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         # Every table lives in Postgres (the Supabase project's own); Supabase itself is sign-in only.
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
         # Turnstile captcha on sign-in and sign-up. Optional: off when unset.
         TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
@@ -94,6 +95,7 @@ jobs:
           --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
           --from-literal=OYA_STORAGE=postgres \
           --from-literal=DATABASE_URL="${DATABASE_URL}" \
+          --from-literal=KEEL_DATABASE_URL="${KEEL_DATABASE_URL}" \
           --from-literal=TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY}" \
           --from-literal=TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
           --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \

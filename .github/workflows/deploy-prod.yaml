@@ -439,6 +439,10 @@ jobs:
         echo "snapshot=$NAME" >> "$GITHUB_OUTPUT"
 
   deploy:
+    # One deploy per namespace at a time: overlapping runs would delete each other's migration Job.
+    concurrency:
+      group: deploy-oya-browser
+      cancel-in-progress: false
     name: Deploy to GKE (prod)
     needs: [build-image, build-browser, register-snapshot]
     # Desktop failures are ancestors of build-image. Override GitHub's implicit
@@ -490,6 +494,7 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         # Every table lives in Postgres (the Supabase project's own); Supabase itself is sign-in only.
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
         # Turnstile captcha on sign-in and sign-up. Optional: off when unset.
         TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
@@ -556,6 +561,7 @@ jobs:
           --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
           --from-literal=OYA_STORAGE=postgres \
           --from-literal=DATABASE_URL="${DATABASE_URL}" \
+          --from-literal=KEEL_DATABASE_URL="${KEEL_DATABASE_URL}" \
           --from-literal=TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY}" \
           --from-literal=TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
           --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
@@ -612,10 +618,11 @@ jobs:
     - name: Apply billing, Keel telemetry and persona group migrations
       env:
         PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
-        PGCONNECT_TIMEOUT: '10'
+        KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
       run: |
-        : "${PGDATABASE:?Missing database connection for billing migration}"
-        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql --file=server/migrations/027_aws_marketplace.sql --file=server/migrations/028_playbook_runs.sql
+        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql
+        # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
+        if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/prod
@@ -956,7 +963,7 @@ jobs:
     # Only explicit manual dispatch opts into this path; ordinary tag releases keep their existing jobs.
     if: github.event_name == 'workflow_dispatch' && inputs.server_only
     concurrency:
-      group: server-production-hotfix
+      group: deploy-oya-browser
       cancel-in-progress: false
     environment:
       name: production
@@ -1037,12 +1044,13 @@ jobs:
       - name: Apply Keel telemetry and persona group migrations before rollout
         env:
           PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
-          PGCONNECT_TIMEOUT: '10'
+          KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${PGDATABASE:?Missing database connection for the rollout migrations}"
-          psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql --file=server/migrations/026_keel_activity.sql --file=server/migrations/027_aws_marketplace.sql --file=server/migrations/028_playbook_runs.sql
+          scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql
+          # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
+          if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 
       - name: Roll out only the server container by immutable digest
         env:
