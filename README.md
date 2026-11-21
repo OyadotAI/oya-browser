@@ -12,6 +12,10 @@
   <a href="https://mcptry.com/servers/io.github.OyadotAI/oya-browser"><img src="https://mcptry.com/badge/io.github.OyadotAI/oya-browser" alt="mcptry: live status and score"></a>
 </p>
 
+<p align="center">
+  <a href="https://www.producthunt.com/products/oya-browser?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-oya-browser" target="_blank" rel="noopener noreferrer"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1324814&amp;theme=light" alt="Oya Browser - Browser for AI agents with zero-LLM Playwright replay | Product Hunt" width="250" height="54"></a>
+</p>
+
 # Oya Browser
 
 Oya Browser is a HIPAA-compliant browser for healthcare and regulated work: an AI browser on your
