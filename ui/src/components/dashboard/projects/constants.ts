@@ -36,6 +36,11 @@ const MS_PER_MINUTE = 60_000;
 const RENEW_MINUTES = 45;
 /** How often the open project's credential is renewed. */
 export const RENEW_INTERVAL_MS = RENEW_MINUTES * MS_PER_MINUTE;
+/**
+ * The least time between renewals set off by a refused credential. Without it a request that keeps
+ * being refused renews on every refusal: on 2026-11-21 one tab minted ~40 credentials a second.
+ */
+export const GONE_RENEW_MIN_MS = 10_000;
 
 /** Hex characters of the key's SHA-256 in a project id, as the server derives it. */
 export const PROJECT_ID_HEX_CHARS = 24;

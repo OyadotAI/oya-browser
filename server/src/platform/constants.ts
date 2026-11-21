@@ -131,6 +131,12 @@ export const DEFAULT_AGENT_SIGNUPS_PER_DAY = 3;
 export const DEFAULT_INSTALL_PINGS_PER_HOUR = 4;
 /** Password sign-in attempts one email may make in an hour, so a password cannot be guessed online. */
 export const DEFAULT_LOGINS_PER_HOUR = 10;
+/**
+ * Console credentials one person may mint per project per minute. The console renews every 45
+ * minutes, so this only ever stops a tab caught in a renewal loop, which on 2026-11-21 minted ~40 a
+ * second and starved the project's other writes (a delete answered 503).
+ */
+export const DEFAULT_CONSOLE_ACCESS_PER_MIN = 10;
 /** Minutes in an hour. */
 export const MINUTES_PER_HOUR = 60;
 /** Minutes in a day, for limits counted per day on a per-minute bucket. */

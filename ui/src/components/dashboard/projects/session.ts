@@ -8,6 +8,7 @@ import { createApiKey } from '@/lib/api';
 import {
   CREDENTIAL_GONE_EVENT,
   FIRST_PROJECT_NAME,
+  GONE_RENEW_MIN_MS,
   PROJECT_CREDENTIAL,
   PROJECT_ID,
   RENEW_INTERVAL_MS,
@@ -141,10 +142,20 @@ export function startup(s: Session) {
     .catch((e) => s.toast(message(e, 'Could not load projects'), 'error'));
 }
 
-/** Renews on an interval, and at once when the server refuses the credential (project deleted, access removed). Returns the cleanup. */
+/** `fn`, ignoring calls within `ms` of the last one it ran: a refusal that keeps coming back must not mint a credential each time. */
+function atMostEvery(ms: number, fn: () => void) {
+  let last = -Infinity;
+  return () => {
+    if (Date.now() - last < ms) return;
+    last = Date.now();
+    fn();
+  };
+}
+
+/** Renews on an interval, and at once (at most every GONE_RENEW_MIN_MS) when the server refuses the credential. Returns the cleanup. */
 export function watchRenewal(s: Session, id: string) {
   const timer = setInterval(() => void renew(s, id), RENEW_INTERVAL_MS);
-  const gone = () => void renew(s, id);
+  const gone = atMostEvery(GONE_RENEW_MIN_MS, () => void renew(s, id));
   window.addEventListener(CREDENTIAL_GONE_EVENT, gone);
   return () => {
     clearInterval(timer);

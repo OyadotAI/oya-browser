@@ -20,6 +20,7 @@ import {
   DEFAULT_AGENT_SIGNUPS_PER_DAY,
   DEFAULT_INSTALL_PINGS_PER_HOUR,
   DEFAULT_LOGINS_PER_HOUR,
+  DEFAULT_CONSOLE_ACCESS_PER_MIN,
   MINUTES_PER_DAY,
   MINUTES_PER_HOUR,
   DEFAULT_CHAT_BURST,
@@ -79,6 +80,11 @@ export const LIMITS = {
   login: {
     perMinute: num('OYA_LIMIT_LOGINS_PER_HOUR', DEFAULT_LOGINS_PER_HOUR) / MINUTES_PER_HOUR,
     burst: num('OYA_LIMIT_LOGINS_PER_HOUR', DEFAULT_LOGINS_PER_HOUR),
+  },
+  // Keyed by user and project: a console tab stuck renewing must not flood the control store with credentials.
+  consoleAccess: {
+    perMinute: num('OYA_LIMIT_CONSOLE_ACCESS_PER_MIN', DEFAULT_CONSOLE_ACCESS_PER_MIN),
+    burst: num('OYA_LIMIT_CONSOLE_ACCESS_PER_MIN', DEFAULT_CONSOLE_ACCESS_PER_MIN),
   },
   // Keyed by caller address, not key: new agent keys per address, a day's worth at most.
   agentSignup: {

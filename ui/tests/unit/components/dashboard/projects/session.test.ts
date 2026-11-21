@@ -15,7 +15,12 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { createApiKey, listApiKeys } from '@/lib/api';
-import { RENEW_INTERVAL_MS, PROJECT_CREDENTIAL, PROJECT_ID } from '@/components/dashboard/projects/constants';
+import {
+  GONE_RENEW_MIN_MS,
+  RENEW_INTERVAL_MS,
+  PROJECT_CREDENTIAL,
+  PROJECT_ID,
+} from '@/components/dashboard/projects/constants';
 import { call, projectIdFor } from '@/components/dashboard/projects/project-api';
 import {
   loadProjects,
@@ -197,6 +202,18 @@ describe('project session', () => {
     stop();
     await vi.advanceTimersByTimeAsync(RENEW_INTERVAL_MS);
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('renews at most once per GONE_RENEW_MIN_MS however often the credential is refused', async () => {
+    vi.useFakeTimers();
+    const { spy } = stubFetch({ [access('a')]: [200, { token: 'c' }] });
+    const stop = watchRenewal(fakeSession(), 'a');
+    for (let i = 0; i < 50; i++) window.dispatchEvent(new CustomEvent('oya:credential-gone'));
+    expect(spy).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(GONE_RENEW_MIN_MS);
+    window.dispatchEvent(new CustomEvent('oya:credential-gone'));
+    expect(spy).toHaveBeenCalledTimes(2);
+    stop();
   });
 
   it('a failed key listing still loads the projects', async () => {
