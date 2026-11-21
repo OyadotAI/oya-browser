@@ -25,38 +25,6 @@ body {
 body.mode-setup {
   height: 100vh;
 }
-/* ── Fingerprint debug bar ── */
-.fp-bar {
-  display: none;
-  height: 20px;
-  padding: 0 12px 0 80px;
-  background: #18181b;
-  color: var(--secondary);
-  font-family: ui-monospace, 'SF Mono', monospace;
-  font-size: 12px;
-  align-items: center;
-  gap: 12px;
-  overflow: hidden;
-  white-space: nowrap;
-  border-bottom: 1px solid #27272a;
-}
-body.mode-browsing .fp-bar {
-  display: flex;
-}
-.fp-bar .fp-label {
-  color: #a78bfa;
-  font-weight: 600;
-}
-.fp-bar .fp-val {
-  color: var(--secondary);
-}
-.fp-bar .fp-sep {
-  color: var(--text);
-}
-.fp-bar .fp-none {
-  color: var(--secondary);
-  font-style: italic;
-}
 /* ── Browsing mode, toolbar + tab bar + fp bar ── */
 body.mode-browsing {
   height: 102px;

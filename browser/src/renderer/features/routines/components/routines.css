@@ -267,8 +267,8 @@
   color: var(--accent);
 }
 .run-status.done {
-  background: color-mix(in srgb, #2f9e5b 14%, transparent);
-  color: #2f9e5b;
+  background: var(--success-soft);
+  color: var(--success);
 }
 .run-status.failed {
   background: var(--danger-soft);
@@ -276,8 +276,8 @@
 }
 .run-status.stopped,
 .run-status.interrupted {
-  background: color-mix(in srgb, #c48a1c 16%, transparent);
-  color: #b27a12;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .routine-runs {
   display: flex;

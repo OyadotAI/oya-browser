@@ -9,7 +9,6 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
   z-index: 200;
   display: none;
   align-items: center;
@@ -23,7 +22,7 @@
 .reconnect-overlay {
   position: fixed;
   inset: 0;
-  background: #10191155;
+  background: var(--scrim);
   z-index: 200;
   display: flex;
   align-items: safe center;

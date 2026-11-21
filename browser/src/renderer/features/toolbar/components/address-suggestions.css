@@ -18,8 +18,8 @@
   /* Close to the bar, not the modal shadow: a dropdown that casts a wide halo looks like it floats off the page. */
   box-shadow:
     0 0 0 0.5px var(--hairline),
-    0 2px 6px color-mix(in srgb, #000 8%, transparent),
-    0 12px 28px -8px color-mix(in srgb, #000 22%, transparent);
+    0 2px 6px color-mix(in srgb, var(--shadow-ink) 8%, transparent),
+    0 12px 28px -8px color-mix(in srgb, var(--shadow-ink) 22%, transparent);
   padding: 4px;
 }
 .address-option {

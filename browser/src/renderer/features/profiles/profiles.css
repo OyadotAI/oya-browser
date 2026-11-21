@@ -130,22 +130,22 @@
   font-size: 22px;
 }
 .profiles-avatar[data-tone='1'] {
-  background: color-mix(in srgb, #4f8cff 18%, transparent);
-  color: #4f8cff;
+  background: color-mix(in srgb, var(--tone-1) 18%, transparent);
+  color: var(--tone-1);
 }
 .profiles-avatar[data-tone='2'] {
-  background: color-mix(in srgb, #b26bff 18%, transparent);
-  color: #b26bff;
+  background: color-mix(in srgb, var(--tone-2) 18%, transparent);
+  color: var(--tone-2);
 }
 .profiles-avatar[data-tone='3'] {
-  background: color-mix(in srgb, #ff8a3d 18%, transparent);
-  color: #ff8a3d;
+  background: color-mix(in srgb, var(--tone-3) 18%, transparent);
+  color: var(--tone-3);
 }
 .profiles-avatar[data-tone='4'] {
-  background: color-mix(in srgb, #ff5c8a 18%, transparent);
-  color: #ff5c8a;
+  background: color-mix(in srgb, var(--tone-4) 18%, transparent);
+  color: var(--tone-4);
 }
 .profiles-avatar[data-tone='5'] {
-  background: color-mix(in srgb, #2ec4b6 18%, transparent);
-  color: #2ec4b6;
+  background: color-mix(in srgb, var(--tone-5) 18%, transparent);
+  color: var(--tone-5);
 }

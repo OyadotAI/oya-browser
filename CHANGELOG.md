@@ -6,6 +6,16 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Desktop: pairing the app with a different account now switches the account at once in the toolbar avatar, the profile menu and Settings. Before, the previous account stayed on screen until Settings was opened, and its cached details and claim page were kept on disk.
+- Desktop: the app names the account it remembers from launch, even when the server cannot be reached; it used to say "Signed in with an API key" until it connected.
+- Desktop: an answer about the previous account that arrives after a switch is discarded and can no longer overwrite the new one.
+
+### Changed
+
+- Desktop: every colour in the shell's stylesheets now comes from the design tokens, with new tokens for success, warning, information, the dialog scrim and the profile avatar tones. Status badges, avatars and Studio error text are easier to read in the light theme. A check in the test suite fails on any colour written outside the tokens.
+
 ## [1.0.276](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.276) · 2026-11-21
 
 ### Changed

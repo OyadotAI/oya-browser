@@ -24,12 +24,12 @@
 }
 /* Outdated: the one state allowed to draw the eye. */
 .update-pill.attention {
-  background: #e7f6e7;
-  border-color: #a8d5a8;
-  color: #246d21;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
 }
 .update-pill.attention:hover {
-  background: #d8efd8;
+  background: color-mix(in srgb, var(--accent) 12%, var(--accent-soft));
 }
 .update-pill:disabled {
   cursor: default;
@@ -60,23 +60,6 @@
   border-radius: 50%;
   background: var(--danger);
   flex-shrink: 0;
-}
-.conn-pill.ok .dot {
-  background: #22c55e;
-  box-shadow: 0 0 6px #22c55e80;
-}
-.conn-pill.trying .dot {
-  background: #f59e0b;
-  animation: pulse 1s infinite;
-}
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
 }
 .conn-pill {
   height: 32px;

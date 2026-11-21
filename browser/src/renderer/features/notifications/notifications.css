@@ -24,7 +24,7 @@
   position: fixed;
   inset: 0;
   z-index: 210;
-  background: #10191133;
+  background: color-mix(in srgb, var(--scrim) 60%, transparent);
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;

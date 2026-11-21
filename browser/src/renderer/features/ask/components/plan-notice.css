@@ -6,7 +6,7 @@
   border-radius: 0;
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 3px 16px #00000006;
+  box-shadow: 0 3px 16px color-mix(in srgb, var(--shadow-ink) 2.4%, transparent);
 }
 .plan-notice-top {
   display: flex;
@@ -23,8 +23,8 @@
   width: 30px;
   height: 30px;
   border-radius: 0;
-  background: color-mix(in srgb, #80a950 14%, var(--surface));
-  color: #658d37;
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .plan-notice-mark .icon {
   width: 16px;
@@ -58,20 +58,20 @@
   width: 100%;
   margin: 20px 0 14px;
   padding: 12px 14px;
-  border: 1px solid #71984a;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 0;
-  background: #d4ecb9;
-  color: #263c12;
+  background: var(--accent-soft);
+  color: var(--accent);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 .plan-notice-action:hover {
-  background: #c7e8a4;
+  background: color-mix(in srgb, var(--accent) 12%, var(--accent-soft));
 }
 .plan-notice-action:focus-visible {
-  outline: 2px solid #80a950;
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 .plan-notice .plan-notice-footnote {

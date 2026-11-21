@@ -336,7 +336,7 @@ body.mode-browsing .tab-bar {
   border-radius: var(--tab-radius);
   background: var(--chrome-bar);
   box-shadow:
-    0 6px 16px #0000002e,
+    0 6px 16px color-mix(in srgb, var(--shadow-ink) 18%, transparent),
     0 0 0 0.5px var(--hairline);
   transition: box-shadow var(--tab-motion) var(--tab-ease);
 }
@@ -437,7 +437,7 @@ body.mode-browsing .tab-bar {
   color: var(--text);
   font-weight: 500;
   box-shadow:
-    0 6px 16px #0000002e,
+    0 6px 16px color-mix(in srgb, var(--shadow-ink) 18%, transparent),
     0 0 0 0.5px var(--hairline);
   pointer-events: none;
   transition: none;

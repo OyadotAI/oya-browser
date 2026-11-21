@@ -77,9 +77,9 @@
   color: var(--on-accent);
   border: 0;
   box-shadow:
-    inset 0 1px 0 #ffffff33,
+    var(--fill-edge),
     0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent),
-    0 0 0 0.5px color-mix(in srgb, var(--accent) 70%, #000);
+    0 0 0 0.5px color-mix(in srgb, var(--accent) 70%, var(--shadow-ink));
 }
 .primary-button:hover:not(:disabled),
 .btn-connect:hover:not(:disabled),

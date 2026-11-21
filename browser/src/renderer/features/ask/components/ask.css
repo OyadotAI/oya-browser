@@ -49,18 +49,14 @@
   align-self: flex-start;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  color: #27272a;
   border-bottom-left-radius: 3px;
 }
 .chat-msg.error {
   color: var(--danger);
-  background: #fef2f2;
-  border-color: #fecaca;
 }
 .chat-msg code {
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.06);
   padding: 1px 5px;
   border-radius: 0;
 }
@@ -464,7 +460,7 @@
   border: 1px solid var(--border);
   border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-ink) 5%, transparent);
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease;

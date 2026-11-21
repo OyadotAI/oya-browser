@@ -97,7 +97,7 @@
   border-radius: 50%;
 }
 .pb-dot.succeeded {
-  background: #2f9e5b;
+  background: var(--success);
 }
 .pb-dot.failed {
   background: var(--danger);
