@@ -10,11 +10,14 @@ interface LogoProps {
   size?: number;
 }
 
-/** The two-ring mark. */
+/**
+ * The two-ring mark: the back ring is always the logo's lime, on paper and on charcoal alike. Only on a
+ * lime surface, where lime would vanish, does that surface set --logo-ring to ink.
+ */
 export function OyaLogo({ size = 24 }: LogoProps) {
   return (
     <svg viewBox="0 0 512 512" width={size} height={size} fill="none" aria-hidden="true" className="shrink-0">
-      <circle cx="276" cy="276" r="160" stroke="var(--primary)" strokeWidth="80" />
+      <circle cx="276" cy="276" r="160" stroke="var(--logo-ring, var(--lime))" strokeWidth="80" />
       <circle cx="236" cy="236" r="160" stroke="var(--foreground)" strokeWidth="80" />
     </svg>
   );

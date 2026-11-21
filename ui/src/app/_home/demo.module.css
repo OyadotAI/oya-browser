@@ -57,11 +57,11 @@
   overflow: hidden;
   border: 6px solid var(--night);
   border-radius: 26px;
-  background: #fff;
+  background: var(--ivory);
   text-align: left;
   box-shadow:
-    0 32px 64px -36px #081b1570,
-    0 0 0 1px #081b1510;
+    0 32px 64px -36px color-mix(in srgb, var(--shadow-ink) 44%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--shadow-ink) 6%, transparent);
 }
 .sceneBar {
   display: flex;
@@ -70,7 +70,7 @@
   gap: 16px;
   min-height: 56px;
   padding: 6px 28px;
-  border-bottom: 1px solid #ffffff14;
+  border-bottom: 1px solid var(--dark-line);
   background: var(--night);
   color: var(--ivory);
   font-size: 13px;
@@ -92,9 +92,9 @@
   gap: 7px;
   min-height: 44px;
   padding-inline: 10px;
-  border: 1px solid #ffffff30;
+  border: 1px solid var(--dark-control-edge);
   border-radius: 7px;
-  background: #ffffff08;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
   color: var(--ivory);
   font-size: 13px;
 }
@@ -114,11 +114,11 @@
 .portalShell {
   overflow: hidden;
   min-width: 0;
-  border: 1px solid #d6e1d1;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--ivory);
   color: var(--ink);
-  box-shadow: 0 24px 48px -24px #061e18b0;
+  box-shadow: 0 24px 48px -24px color-mix(in srgb, var(--shadow-ink) 69%, transparent);
 }
 .portalBar {
   display: flex;
@@ -126,16 +126,16 @@
   gap: 16px;
   min-height: 42px;
   padding-inline: 20px;
-  border-bottom: 1px solid #e3e9df;
-  background: #f9fbf7;
-  color: #354438;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
   font-size: 12px;
 }
 .windowDots {
   font-size: 22px;
   line-height: 1;
   letter-spacing: 2px;
-  color: #c8d3c3;
+  color: var(--line-strong);
 }
 .process {
   --focus: var(--lime);
@@ -157,7 +157,7 @@
   bottom: calc(-1 * var(--space-content));
   left: 21px;
   width: 1px;
-  background: #c8e4bb40;
+  background: var(--lime-line);
 }
 .processIcon {
   display: grid;
@@ -165,10 +165,10 @@
   flex: none;
   width: 44px;
   height: 44px;
-  border: 1px solid #c8e4bb50;
+  border: 1px solid var(--dark-line-strong);
   border-radius: 12px;
-  background: #ffffff08;
-  color: #e3f4d6;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
+  color: var(--ivory);
 }
 .processStep h3 {
   font-size: 18px;
@@ -176,7 +176,7 @@
 }
 .processStep p {
   margin-top: 8px;
-  color: #e0eddf;
+  color: var(--night-muted);
   font-size: 15px;
   line-height: 1.5;
 }
@@ -185,19 +185,20 @@
   align-items: flex-start;
   gap: 10px;
   padding: 18px;
-  border: 1px solid #c8e4bb50;
+  border: 1px solid var(--lime-line);
   border-radius: 10px;
-  background: #b9dfa012;
-  color: #f3ffe9;
+  background: var(--lime-tint);
+  color: var(--ivory);
   font-size: 14px;
   line-height: 1.5;
 }
 .result svg {
   flex: none;
+  color: var(--lime);
   margin-top: 1px;
 }
 .details {
-  background: #fff;
+  background: var(--ivory);
 }
 .detailActions {
   display: flex;
@@ -214,7 +215,7 @@
   padding: 8px 0;
   border: 0;
   background: transparent;
-  color: #193d29;
+  color: var(--ink);
   font-size: 14px;
   font-weight: 500;
 }
@@ -224,13 +225,13 @@
 }
 .detailActions > span {
   margin-left: auto;
-  color: #354438;
+  color: var(--muted);
   font-size: 12px;
 }
 .drawer {
   position: relative;
-  border-top: 1px solid #dfe4df;
-  background: #17201b;
+  border-top: 1px solid var(--line);
+  background: var(--night);
 }
 .drawer > [role='region'] {
   outline-offset: -3px;
@@ -246,8 +247,8 @@
   height: 44px;
   border: 0;
   border-radius: 6px;
-  background: #17201b;
-  color: #fff;
+  background: var(--night);
+  color: var(--ivory);
 }
 @media (max-width: 1023px) {
   .stage {
@@ -334,23 +335,23 @@
   gap: 7px;
   min-height: 44px;
   padding: 9px 13px;
-  border: 1px solid #c7d5be;
+  border: 1px solid var(--line-strong);
   border-radius: 7px;
-  background: #fff;
-  color: #173d2b;
+  background: var(--ivory);
+  color: var(--ink);
   font-size: 14px;
 }
 .handoffBar button:first-child {
-  border-color: #173d2b;
-  background: #173d2b;
-  color: #fff;
+  border-color: var(--lime);
+  background: var(--lime);
+  color: var(--on-lime);
 }
 .ownershipEvents {
   display: grid;
   gap: 8px;
   margin-top: 16px !important;
   padding-top: 16px !important;
-  border-top: 1px solid #d7e2cd;
+  border-top: 1px solid var(--line);
   font-size: 14px;
 }
 @media (max-width: 767px) {
@@ -366,7 +367,7 @@
   gap: 16px;
   padding: 20px 28px;
   border-bottom: 1px solid var(--line);
-  background: #fbfcf8;
+  background: var(--surface-soft);
   color: var(--ink);
 }
 .prompt > span {
@@ -382,14 +383,14 @@
 .artifact {
   margin-top: 16px;
   padding: 16px;
-  border: 1px solid #c8e4bb50;
+  border: 1px solid var(--dark-line-strong);
   border-radius: 8px;
-  background: #ffffff08;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
   overflow-wrap: anywhere;
 }
 .processStep .artifact p {
   margin: 0;
-  color: #f3ffe9;
+  color: var(--ivory);
   font-size: 16px;
 }
 .artifact code {
@@ -399,7 +400,7 @@
 .artifact span {
   display: block;
   margin-top: 10px;
-  color: #e0eddf;
+  color: var(--night-muted);
   font-size: 16px;
   line-height: 1.6;
 }

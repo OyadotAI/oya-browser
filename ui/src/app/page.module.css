@@ -1,19 +1,30 @@
-/** Public pages share an editorial ivory canvas, forest navigation and a generous reading hierarchy. */
+/** Public pages share an editorial paper canvas, charcoal navigation and a generous reading hierarchy. */
 .page {
-  --background: #f6f4e8;
-  --foreground: #10251c;
-  --primary: #235d3a;
-  --primary-foreground: #f6f4e8;
-  --card: #fffdf4;
-  --elevated: #e9eddd;
-  --sunken: #eff1e5;
-  --border: #143f2530;
-  --secondary: #293e30;
-  --muted: #354a3b;
-  --dim: #405447;
-  --info: #1d4ed8;
-  --warning: #92400e;
-  --destructive: #b91c1c;
+  /* Oya's five colours (tooling/colours), named as on the home page; everything else is a mix of them. */
+  --night: #1a1a1a;
+  --ivory: #f7f5f0;
+  --lime: #cdf01e;
+  --red: #f2554a;
+  --amber: #f5b14c;
+  --forest: color-mix(in srgb, var(--ivory) 8%, var(--night));
+  --night-muted: color-mix(in srgb, var(--ivory) 72%, var(--night));
+  --dark-line: color-mix(in srgb, var(--ivory) 12%, transparent);
+  --dark-line-strong: color-mix(in srgb, var(--ivory) 25%, transparent);
+  --background: var(--ivory);
+  --foreground: var(--night);
+  /* The accent that can always be read on paper is ink: lime there cannot be read as text. */
+  --primary: var(--night);
+  --primary-foreground: var(--ivory);
+  --card: var(--ivory);
+  --elevated: color-mix(in srgb, var(--night) 6%, var(--ivory));
+  --sunken: color-mix(in srgb, var(--night) 3%, var(--ivory));
+  --border: color-mix(in srgb, var(--night) 19%, transparent);
+  --secondary: color-mix(in srgb, var(--night) 85%, var(--ivory));
+  --muted: color-mix(in srgb, var(--night) 75%, var(--ivory));
+  --dim: color-mix(in srgb, var(--night) 70%, var(--ivory));
+  --info: var(--night);
+  --warning: color-mix(in srgb, var(--amber) 45%, var(--night));
+  --destructive: color-mix(in srgb, var(--red) 62%, var(--night));
   min-height: 100dvh;
   background: var(--background);
   color: var(--foreground);
@@ -30,8 +41,8 @@
   outline-offset: 4px;
 }
 .page ::selection {
-  background: #c8f56b;
-  color: #081b15;
+  background: var(--lime);
+  color: var(--night);
 }
 .page main :is(h1, h2, h3) {
   text-wrap: balance;

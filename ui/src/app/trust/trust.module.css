@@ -123,7 +123,7 @@
   font-weight: 600;
 }
 .gap {
-  color: #92400e;
+  color: var(--warning);
   font-weight: 600;
 }
 @media (max-width: 760px) {

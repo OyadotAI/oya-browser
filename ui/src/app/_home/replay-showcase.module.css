@@ -3,8 +3,8 @@
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-window);
-  background: #fff;
-  box-shadow: 0 24px 72px -48px #18201b70;
+  background: var(--ivory);
+  box-shadow: 0 24px 72px -48px color-mix(in srgb, var(--shadow-ink) 44%, transparent);
 }
 .windowBar {
   display: grid;
@@ -23,9 +23,9 @@
 .dots i {
   width: 8px;
   height: 8px;
-  border: 1px solid #cbd3cc;
+  border: 1px solid var(--line-strong);
   border-radius: 50%;
-  background: #e7ebe7;
+  background: var(--surface);
 }
 .address {
   display: flex;
@@ -52,7 +52,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--lime);
+  box-shadow: 0 0 0 1px var(--ink);
 }
 .pause {
   display: inline-flex;
@@ -63,7 +64,7 @@
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
-  background: #fff;
+  background: var(--ivory);
   color: var(--muted);
   font-size: 13px !important;
   white-space: nowrap;
@@ -104,7 +105,7 @@
   padding: 8px 12px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--ivory);
   color: var(--ink);
   font-size: 14px;
 }
@@ -113,7 +114,7 @@
 }
 .field[data-active='true'] .fieldBox {
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px #16653414;
+  box-shadow: 0 0 0 3px var(--lime-ring);
 }
 .typed {
   min-width: 0;
@@ -125,11 +126,11 @@
   padding: 9px 16px;
   border-radius: 6px;
   background: var(--primary);
-  color: #fff;
+  color: var(--ivory);
   font-size: 13px;
 }
 .portalButton[data-active='true'] {
-  box-shadow: 0 0 0 3px #16653424;
+  box-shadow: 0 0 0 3px var(--lime-ring);
 }
 .portalResult {
   display: flex;
@@ -137,9 +138,9 @@
   gap: 7px;
   min-height: 36px;
   padding: 8px 10px;
-  border: 1px solid #d5e7d8;
+  border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: #f2f8f2;
+  background: var(--lime-soft);
   color: var(--primary);
   font-size: 14px;
   opacity: 0;
@@ -155,12 +156,12 @@
 .codePane {
   min-width: 0;
   padding-block: 28px;
-  background: #17201b;
-  color: #e0e8e2;
+  background: var(--night);
+  color: var(--ivory);
 }
 .codeFile {
   padding: 0 24px 20px;
-  color: #a6b7ab;
+  color: var(--night-muted);
   font:
     400 13px var(--font-mono),
     monospace;
@@ -181,15 +182,15 @@
   white-space: pre;
 }
 .codePane li[data-state='next'] {
-  color: #a6b7ab;
+  color: var(--night-muted);
 }
 .codePane li[data-state='running'] {
-  border-left-color: #bcddae;
-  background: #bcddae12;
+  border-left-color: var(--lime);
+  background: var(--lime-tint);
 }
 .codePane em {
   font-style: normal;
-  color: #bcddae;
+  color: var(--lime);
 }
 .gutter {
   display: inline-flex;
@@ -197,16 +198,16 @@
   justify-content: center;
   flex: none;
   width: 16px;
-  color: #a6b7ab;
+  color: var(--night-muted);
   font-size: 12px;
 }
 .codePane li[data-state='done'] .gutter {
-  color: #bcddae;
+  color: var(--lime);
 }
 .codeDone {
   margin-top: 24px !important;
   padding-inline: 24px;
-  color: #a6b7ab;
+  color: var(--night-muted);
   font:
     400 13px/1.7 var(--font-mono),
     monospace;

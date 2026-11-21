@@ -9,7 +9,7 @@ test('landing is readable at desktop and mobile widths without changing the app 
   );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.locator('main').evaluate((el) => getComputedStyle(el.parentElement!).backgroundColor)).toBe(
-    'rgb(246, 244, 232)',
+    'rgb(247, 245, 240)',
   );
   await expect(page.locator('link[href^="/assets/"], script[src^="/assets/"]')).toHaveCount(0);
   const cta = page.locator('section[aria-labelledby="hero-h"]').getByRole('link', { name: 'Book a demo' });

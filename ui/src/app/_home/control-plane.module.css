@@ -16,7 +16,7 @@
   background: var(--night);
   color: var(--ink);
   text-align: left;
-  box-shadow: 0 24px 64px -36px #081b1560;
+  box-shadow: 0 24px 64px -36px color-mix(in srgb, var(--shadow-ink) 38%, transparent);
   scroll-margin-top: 112px;
 }
 .toolbar {
@@ -106,6 +106,7 @@
 .layer[data-center='true'] {
   --foreground: var(--night);
   --primary: var(--night);
+  --logo-ring: var(--night);
   --muted: var(--night);
   min-height: 200px;
   border-color: var(--line-strong);
@@ -167,10 +168,11 @@
   color: var(--muted);
   font-size: 18px;
 }
+/* A highlighter mark in the logo's lime, as text selection is: ink on lime. */
 .highlight {
   padding-block: 4px;
   background: var(--lime);
-  color: var(--ink);
+  color: var(--on-lime);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }

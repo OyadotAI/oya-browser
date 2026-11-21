@@ -8,7 +8,7 @@
   --frame-inner-radius: 16px;
   --frame-highlight: color-mix(in srgb, var(--ivory) 24%, transparent);
   --frame-accent: color-mix(in srgb, var(--lime) 30%, transparent);
-  --frame-shadow: #020d0a99;
+  --frame-shadow: color-mix(in srgb, var(--shadow-ink) 60%, transparent);
   min-width: 0;
 }
 .recovery p {
@@ -50,6 +50,9 @@
 }
 .links a {
   gap: 8px;
+  color: var(--ivory);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .links svg {
   width: 16px;

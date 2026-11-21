@@ -6,19 +6,20 @@
   min-width: 0;
   min-height: 320px;
   padding: 28px 20px 44px;
-  border: 1px solid #ffffff26;
+  border: 1px solid var(--dark-line);
   border-radius: 20px;
-  background-color: #10372a;
+  background-color: var(--forest);
   background-image:
-    linear-gradient(#ffffff06 1px, transparent 1px), linear-gradient(90deg, #ffffff06 1px, transparent 1px);
+    linear-gradient(color-mix(in srgb, var(--ivory) 2%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--ivory) 2%, transparent) 1px, transparent 1px);
   background-size: 32px 32px;
-  color: #f6f4e8;
+  color: var(--ivory);
 }
 .stage figcaption {
   position: absolute;
   bottom: 14px;
   left: 20px;
-  color: #bacbbf;
+  color: var(--night-muted);
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -28,22 +29,22 @@
   gap: 12px;
   min-width: 0;
   padding: 16px;
-  border: 1px solid #ffffff38;
+  border: 1px solid var(--dark-line-strong);
   border-radius: 12px;
-  background: #10372a;
+  background: var(--forest);
   font-size: 15px;
   line-height: 1.4;
 }
 .node svg {
   flex: none;
-  color: #c8f56b;
+  color: var(--lime);
 }
 .hub {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 16px;
-  color: #c8f56b;
+  color: var(--lime);
   font-size: 23px;
   font-weight: 500;
 }
@@ -55,7 +56,7 @@
 .connector > div {
   width: 1px;
   height: 26px;
-  background: #c8f56b80;
+  background: color-mix(in srgb, var(--lime) 50%, transparent);
   transform-origin: top;
 }
 .connector i {
@@ -75,7 +76,7 @@
 .desktop > .node {
   justify-self: stretch;
   justify-content: center;
-  border-color: #c8f56b80;
+  border-color: color-mix(in srgb, var(--lime) 50%, transparent);
 }
 .fleet {
   display: grid;
@@ -87,7 +88,7 @@
 .human {
   margin-top: 20px;
   padding-top: 16px;
-  border-top: 1px dashed #c8f56b60;
+  border-top: 1px dashed color-mix(in srgb, var(--lime) 30%, transparent);
 }
 .human .node {
   width: fit-content;
@@ -105,7 +106,7 @@
 .workflow p,
 .comparison p,
 .documents > p {
-  color: #bacbbf;
+  color: var(--night-muted);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -117,11 +118,11 @@
 .documents article {
   padding: 20px;
   border-radius: 10px;
-  background: #f6f4e8;
-  color: #10251c;
+  background: var(--ivory);
+  color: var(--night);
 }
 .documents article:nth-child(2) {
-  border-top: 4px solid #c8f56b;
+  border-top: 4px solid var(--lime);
 }
 .documents article > div {
   display: grid;
@@ -142,7 +143,7 @@
 }
 .task {
   margin-bottom: 20px;
-  color: #c8f56b;
+  color: var(--lime);
   font-size: 17px;
   font-weight: 500;
 }
@@ -154,7 +155,7 @@
   gap: 24px;
 }
 .comparisonLabel {
-  color: #c8f56b;
+  color: var(--lime);
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -165,7 +166,7 @@
 }
 .vendors > div {
   padding: 10px 14px;
-  border: 1px solid #ffffff50;
+  border: 1px solid var(--dark-line-strong);
   border-radius: 999px;
   font-size: 16px;
 }
@@ -173,7 +174,7 @@
   display: grid;
   gap: 14px;
   padding-top: 20px;
-  border-top: 1px solid #ffffff30;
+  border-top: 1px solid var(--dark-line-strong);
 }
 .criteria > div {
   display: flex;
@@ -187,7 +188,7 @@
   height: 5px;
   flex: none;
   border-radius: 50%;
-  background: #c8f56b;
+  background: var(--lime);
 }
 @media (min-width: 768px) {
   .stage {
@@ -247,6 +248,6 @@
     display: block;
     width: 100%;
     height: 24px;
-    border-block: 1px solid #143f2530;
+    border-block: 1px solid var(--dark-line);
   }
 }

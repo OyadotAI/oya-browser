@@ -1,8 +1,8 @@
 /** Audit rows remain visible and wrap inside the replay instead of disappearing on phones. */
 .ledger {
-  border-top: 1px solid #ffffff18;
-  background: #111a15;
-  color: #e0e8e2;
+  border-top: 1px solid var(--dark-line);
+  background: var(--night);
+  color: var(--ivory);
   font:
     400 13px/1.6 var(--font-mono),
     monospace;
@@ -13,8 +13,8 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 20px;
-  border-bottom: 1px solid #ffffff12;
-  color: #a6b7ab;
+  border-bottom: 1px solid var(--dark-line);
+  color: var(--night-muted);
 }
 .head > span:first-child {
   text-transform: uppercase;
@@ -24,7 +24,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #bcddae;
+  color: var(--lime);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -47,7 +47,7 @@
   opacity: 1;
 }
 .rows time {
-  color: #a6b7ab;
+  color: var(--night-muted);
 }
 .action {
   min-width: 0;
@@ -58,7 +58,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  color: #bcddae;
+  color: var(--lime);
 }
 @media (max-width: 479px) {
   .head {

@@ -24,7 +24,7 @@
   border: 1px solid var(--dark-line);
   border-radius: 999px;
   background: var(--forest);
-  box-shadow: inset 0 1px 0 #ffffff08;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ivory) 3%, transparent);
   position: relative;
 }
 .demo {
@@ -91,7 +91,7 @@
   background: var(--forest);
   border: 1px solid var(--dark-line-strong);
   border-radius: var(--radius-window);
-  box-shadow: 0 24px 64px -28px #04100cc0;
+  box-shadow: 0 24px 64px -28px color-mix(in srgb, var(--shadow-ink) 75%, transparent);
 }
 .column {
   display: grid;

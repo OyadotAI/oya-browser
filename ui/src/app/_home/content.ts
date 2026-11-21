@@ -95,44 +95,6 @@ export const REPLAY: ReplayTask = {
   ],
 };
 
-/** The same prior authorization started from your stack, one snippet per way in; MCP first, since most teams start from an agent. */
-export const FROM_AGENT = [
-  {
-    id: 'mcp',
-    tab: 'mcp',
-    code: [
-      '# Claude Code, Codex, Cursor or any MCP client',
-      'claude mcp add --transport http oya https://oyabrowser.com/mcp/pool \\',
-      '  --header "Authorization: Bearer $OYA_API_KEY"',
-      '',
-      '> Run the prior-auth playbook for member W2847-1193',
-    ],
-  },
-  {
-    id: 'sdk',
-    tab: 'sdk.ts',
-    code: [
-      'import { Oya } from "@oya-ai/browser";',
-      '',
-      'const browser = await new Oya().browser.start();',
-      'await browser.play("prior-auth", { memberId: "W2847-1193" });',
-      'await browser.stop();',
-    ],
-  },
-  {
-    id: 'playwright',
-    tab: 'playwright.ts',
-    code: [
-      'import { chromium } from "playwright-core";',
-      'import { Oya } from "@oya-ai/browser";',
-      '',
-      'const browser = await new Oya().browser.start();',
-      'const cdp = await chromium.connectOverCDP(browser.cdpUrl!);',
-      'await cdp.contexts()[0].pages()[0].goto("https://portal.payer.example/prior-auth");',
-    ],
-  },
-];
-
 /** The one throughput claim, said once so the home page and the prior-auth page cannot drift apart. */
 export const THROUGHPUT = 'Customers report 10 to 30 times the throughput of the same work by hand.';
 
@@ -183,16 +145,6 @@ export interface AuditRow {
   /** The first characters of the row's hash, which links it to the row before. */
   hash: string;
 }
-
-/** An example audit trail: fictional, shaped like the rows server/src/platform/audit-chain.ts writes. */
-export const AUDIT_ROWS: AuditRow[] = [
-  { time: '09:14:02', actor: 'agent · eligibility-bot', action: 'Signed in to payer portal', hash: '9f2c41' },
-  { time: '09:14:09', actor: 'agent · eligibility-bot', action: 'Filled member ID (password sealed)', hash: 'b71e08' },
-  { time: '09:14:15', actor: 'agent · eligibility-bot', action: 'Read eligibility: active', hash: '4d93aa' },
-  { time: '09:15:40', actor: 'person · S. Patel, operator', action: 'Took control of session', hash: 'e05b7c' },
-  { time: '09:16:02', actor: 'person · S. Patel, operator', action: 'Returned control to agent', hash: '31c8f5' },
-  { time: '09:16:05', actor: 'agent · eligibility-bot', action: 'Saved playbook eligibility-check', hash: '7a60d2' },
-];
 
 /** The five questions a regulated team asks before wiring Oya in. */
 export const FAQ = [
@@ -316,27 +268,3 @@ export const WORKFLOWS: Workflow[] = [
 
 /** The questions a visitor asks, in the order they ask them; the FAQ shows every answer open. */
 export const QUESTIONS = FAQ;
-
-/** What the audit section lists beside the trail: three plain facts a buyer can check. */
-export const AUDIT_FACTS = [
-  'Rows are hash-chained; the database refuses edits and deletes.',
-  'A person can watch any session live, take over and hand it back.',
-  'Audit records are kept for 365 days at least.',
-];
-
-/** The control-plane diagram: agents into Oya, Oya out to the portals; two-letter marks, no borrowed logos. */
-export const DIAGRAM = {
-  layout: 'hub',
-  alt: 'Claude Code, Codex and your own code send work through Oya to payer portals, EHRs, clearinghouses and state registries.',
-  center: { label: 'Oya', icon: 'text:Oy' },
-  spokes: [
-    { label: 'Claude Code', icon: 'text:Cl' },
-    { label: 'Codex', icon: 'text:Cx' },
-    { label: 'Your code', icon: 'text:TS' },
-    { label: 'Payer portal', icon: 'text:Pa' },
-    { label: 'EHR', icon: 'text:EH' },
-    { label: 'Clearinghouse', icon: 'text:Ch' },
-    { label: 'State registry', icon: 'text:Rg' },
-  ],
-  motion: { cycle: 3.2 },
-};

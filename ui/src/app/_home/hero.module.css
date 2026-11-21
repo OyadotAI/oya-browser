@@ -4,7 +4,7 @@
   --focus: var(--lime);
   --button-fill: var(--lime);
   --button-ink: var(--night);
-  --button-border: var(--dark-line-strong);
+  --button-border: var(--dark-control-edge);
   --button-secondary-ink: var(--ivory);
   --hero-top: 40px;
   --hero-bottom: 64px;
@@ -104,7 +104,7 @@
   max-width: 100%;
   padding: 12px 16px;
   margin-bottom: -4px;
-  border: 1px solid color-mix(in srgb, var(--lime) 45%, transparent);
+  border: 1px solid var(--dark-control-edge);
   border-radius: 12px;
   background: var(--forest);
   color: var(--ivory);
@@ -120,11 +120,11 @@
 }
 .trustLine svg {
   flex: none;
-  color: var(--lime);
+  color: var(--ivory);
 }
 .trustLine:hover {
-  border-color: var(--lime);
-  background: color-mix(in srgb, var(--forest) 90%, var(--lime));
+  border-color: var(--ivory);
+  background: var(--forest);
   color: var(--ivory);
 }
 .media {

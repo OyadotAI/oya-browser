@@ -1,22 +1,37 @@
 /** Shared landing tokens and editorial composition stay isolated from the application theme. */
 .page {
-  --night: #081b15;
-  --forest: #10372a;
-  --ivory: #f6f4e8;
-  --lime: #c8f56b;
-  --night-muted: #bacbbf;
-  --dark-line: #ffffff1f;
-  --dark-line-strong: #ffffff40;
-  --ink: #10251c;
-  --muted: #354a3b;
-  --line: #d6d9ca;
-  --line-strong: #bec8b7;
-  --surface: #e9eddd;
-  --surface-soft: #f0f1e7;
+  /* Oya's five colours (tooling/colours): the only colours this site names. Everything below is one of them or a mix. */
+  --night: #1a1a1a;
+  --ivory: #f7f5f0;
+  --lime: #cdf01e;
+  --red: #f2554a;
+  --amber: #f5b14c;
+  /* On dark: a raised charcoal, quieter text, and hairlines of paper. */
+  --forest: color-mix(in srgb, var(--ivory) 8%, var(--night));
+  --night-muted: color-mix(in srgb, var(--ivory) 72%, var(--night));
+  --dark-line: color-mix(in srgb, var(--ivory) 12%, transparent);
+  --dark-line-strong: color-mix(in srgb, var(--ivory) 25%, transparent);
+  /* On paper: ink text, quieter text, hairlines and sunken panels, all paper with ink in it. */
+  --ink: var(--night);
+  --muted: color-mix(in srgb, var(--night) 75%, var(--ivory));
+  --line: color-mix(in srgb, var(--night) 12%, var(--ivory));
+  --line-strong: color-mix(in srgb, var(--night) 20%, var(--ivory));
+  /* The outline of a control: 3:1 off what is behind it, on paper and on dark. Lines above are for dividers. */
+  --control-edge: color-mix(in srgb, var(--night) 56%, var(--ivory));
+  --dark-control-edge: color-mix(in srgb, var(--ivory) 45%, var(--night));
+  --surface: color-mix(in srgb, var(--night) 6%, var(--ivory));
+  --surface-soft: color-mix(in srgb, var(--night) 3%, var(--ivory));
   --brand: var(--forest);
-  --primary: #235d3a;
-  --accent: #296642;
+  /* The accent that can always be read: ink on paper. Dark sections set it to lime, which on paper cannot be read. */
+  --primary: var(--night);
   --foreground: var(--ink);
+  /* Lime as a surface: ink on it, a pale lime for success on paper, tints and lines of it on dark, a halo beside ink. */
+  --on-lime: var(--night);
+  --lime-soft: color-mix(in srgb, var(--lime) 30%, var(--ivory));
+  --lime-tint: color-mix(in srgb, var(--lime) 12%, transparent);
+  --lime-line: color-mix(in srgb, var(--lime) 30%, transparent);
+  --lime-ring: color-mix(in srgb, var(--lime) 70%, transparent);
+  --shadow-ink: var(--night);
   --radius-control: 8px;
   --radius-window: 20px;
   --space-section: 104px;
@@ -155,23 +170,23 @@
   transform: scale(0.98);
 }
 .page :global(.btn--primary) {
-  border-color: var(--button-fill, var(--brand));
-  background: var(--button-fill, var(--brand));
-  color: var(--button-ink, var(--ivory));
+  border-color: var(--button-edge, var(--button-fill, var(--lime)));
+  background: var(--button-fill, var(--lime));
+  color: var(--button-ink, var(--on-lime));
   box-shadow:
-    inset 0 1px 0 #ffffff30,
-    0 4px 12px #081b1512;
+    inset 0 1px 0 color-mix(in srgb, var(--ivory) 19%, transparent),
+    0 4px 12px color-mix(in srgb, var(--shadow-ink) 7%, transparent);
 }
 .page :global(.btn--primary:has(svg)) {
   padding-right: 12px;
 }
 .page :global(.btn--primary:hover) {
   box-shadow:
-    inset 0 1px 0 #ffffff50,
-    0 8px 24px #081b1524;
+    inset 0 1px 0 color-mix(in srgb, var(--ivory) 31%, transparent),
+    0 8px 24px color-mix(in srgb, var(--shadow-ink) 14%, transparent);
 }
 .page :global(.btn--secondary) {
-  border-color: var(--button-border, var(--line-strong));
+  border-color: var(--button-border, var(--control-edge));
   color: var(--button-secondary-ink, var(--ink));
   background: transparent;
 }

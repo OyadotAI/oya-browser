@@ -12,6 +12,7 @@
 .footer :global(.closing__panel) {
   --ink: var(--night);
   --primary: var(--night);
+  --logo-ring: var(--night);
   --foreground: var(--night);
   --focus: var(--night);
   --button-fill: var(--night);
@@ -101,13 +102,14 @@
 .footer :global(.footer__col a:hover) {
   color: var(--lime);
 }
+/* Downloads are lime, like "Book a demo": getting the app is the other thing this page asks for. */
 .footer :global(.footer__col a.footer__download) {
   gap: 8px;
   margin-bottom: 8px;
   padding: 0 18px;
   border-radius: 999px;
   background: var(--lime);
-  color: var(--night);
+  color: var(--on-lime);
   font-weight: 500;
 }
 .footer :global(.footer__col a.footer__download:hover) {
