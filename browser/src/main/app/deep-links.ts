@@ -109,7 +109,11 @@ export class DeepLinks {
     // id, close 4003, which the client treats as fatal and never retries, so the
     // desktop sits offline until a full restart happens to mint a fresh id. Rebind
     // to a new session on any key/server change; an unchanged target keeps its id.
-    if (config.apiKey !== apiKey || config.serverUrl !== serverUrl) this.deps.socket.browserId = null;
+    // The remembered account (whoami) and claim page belong to the old key too: drop them, or the
+    // account page keeps naming the previous person, and Claim opens their page, after pairing as someone else.
+    const moved = config.apiKey !== apiKey || config.serverUrl !== serverUrl;
+    if (moved) Object.assign(config, { account: null, claimUrl: '' });
+    if (moved) this.deps.socket.browserId = null;
     this.deps.socket.disconnect();
     Object.assign(config, { serverUrl, apiKey, persona, signedOut: false, keyFromApp: true });
     this.deps.config.save();

@@ -249,8 +249,11 @@ export class SessionHandlers {
    */
   private async readAccount(): Promise<Record<string, unknown> | null> {
     if (!this.deps.socket.ready) return this.lastAccount();
+    const { apiKey, serverUrl } = this.deps.config.values;
     const account = (await this.api.get('auth/whoami').catch(() => null)) as Record<string, unknown> | null;
-    if (!account) return this.lastAccount();
+    // A pairing that landed while the server was answering makes this the previous account's answer.
+    const moved = apiKey !== this.deps.config.values.apiKey || serverUrl !== this.deps.config.values.serverUrl;
+    if (!account || moved) return this.lastAccount();
     this.deps.config.merge({ account });
     this.deps.config.save();
     return account;

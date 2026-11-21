@@ -120,13 +120,25 @@ describe('DeepLinks', () => {
     links.retarget({ apiKey: 'k2', serverUrl: 'wss://a.test/ws', persona: 'p' });
     assert.equal(ctx.socket.browserId, null);
     assert.deepEqual(ctx.config.values, {
+      account: null,
       apiKey: 'k2',
+      claimUrl: '',
       serverUrl: 'wss://a.test/ws',
       persona: 'p',
       signedOut: false,
       keyFromApp: true,
     });
     assert.equal(ctx.config.saves, 2);
+  });
+
+  it('forgets the remembered account when the key changes, and keeps it otherwise', () => {
+    Object.assign(ctx.config.values, { account: { email: 'ada@example.com' }, claimUrl: 'https://a.test/claim/1' });
+    links.retarget({ apiKey: ctx.config.values.apiKey, serverUrl: ctx.config.values.serverUrl, persona: 'p' });
+    assert.deepEqual(ctx.config.values.account, { email: 'ada@example.com' });
+    assert.equal(ctx.config.values.claimUrl, 'https://a.test/claim/1');
+    links.retarget({ apiKey: 'other', serverUrl: ctx.config.values.serverUrl, persona: 'p' });
+    assert.equal(ctx.config.values.account, null);
+    assert.equal(ctx.config.values.claimUrl, '', 'the previous key had its own claim page');
   });
 
   it('changes nothing when the person cancels the pairing', async () => {

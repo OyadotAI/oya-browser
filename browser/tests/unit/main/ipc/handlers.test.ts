@@ -147,6 +147,18 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
+  it('drops an answer that arrives after the browser moved to another key', async () => {
+    ctx.config.values = { serverUrl: 'wss://s.test/ws', apiKey: 'k', account: null };
+    const late = { email: 'ada@example.com', project: { id: 'prj_1', name: 'Lab' } };
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      ctx.config.values.apiKey = 'k2';
+      return { ok: true, json: async () => late };
+    });
+    assert.equal(await call('get-account'), null);
+    assert.equal(ctx.config.values.account, null, "the previous key's account is not saved under the new one");
+    fetch.mock.restore();
+  });
+
   it('forgets the account when the browser moves to another key or server', async () => {
     ctx.config.values = { serverUrl: 'wss://s/ws', apiKey: 'k', account: { email: 'ada@example.com' } };
     await call('save-config', { browserName: 'Desk' });
