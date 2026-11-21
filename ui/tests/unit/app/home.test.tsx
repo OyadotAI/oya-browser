@@ -60,9 +60,9 @@ vi.mock('next/font/google', () => ({
 }));
 
 import Home from '@/app/page';
-import { COMPLIANCE_CLAIMS, FAQ, REPLAY, foundersCall } from '@/app/_home/content';
+import { COMPLIANCE_CLAIMS, FAQ, PRODUCT_HUNT_BADGE, REPLAY, foundersCall } from '@/app/_home/content';
 import { DEMO_LABELS, DEMO_TASKS } from '@/app/_home/demo-content';
-import { SHOWCASE_TICK_MS } from '@/app/_home/constants';
+import { PRODUCT_HUNT_BADGE_HEIGHT, PRODUCT_HUNT_BADGE_WIDTH, SHOWCASE_TICK_MS } from '@/app/_home/constants';
 import { browserDownloads } from '@/lib/browser-downloads';
 
 /** Renders the nonce-aware public page. */
@@ -100,6 +100,23 @@ describe('landing page', () => {
     expect(badge.textContent).toBe(COMPLIANCE_CLAIMS.join(' · '));
     expect(action.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(badge.compareDocumentPosition(qualification) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders the official dark Product Hunt launch badge after the PHI scope line', async () => {
+    await page();
+    const hero = screen.getByRole('heading', { level: 1 }).closest('section')!;
+    const qualification = within(hero).getByText(/Use synthetic data while developing on desktop/);
+    const link = within(hero).getByRole('link', { name: PRODUCT_HUNT_BADGE.alt });
+    const img = within(link).getByRole('img', { name: PRODUCT_HUNT_BADGE.alt });
+    expect(link.getAttribute('href')).toBe(PRODUCT_HUNT_BADGE.href);
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(link.getAttribute('data-track')).toBe('cta_clicked');
+    expect(link.getAttribute('data-track-label')).toBe('hero_product_hunt');
+    expect(img.getAttribute('src')).toBe(PRODUCT_HUNT_BADGE.image);
+    expect(img.getAttribute('width')).toBe(String(PRODUCT_HUNT_BADGE_WIDTH));
+    expect(img.getAttribute('height')).toBe(String(PRODUCT_HUNT_BADGE_HEIGHT));
+    expect(qualification.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('replaces the abstract artwork with exactly one playable hero recording and preserves headline and actions', async () => {

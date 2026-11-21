@@ -43,3 +43,7 @@ export const HERO_ART_WIDTH = 1536;
 export const HERO_ART_HEIGHT = 1024;
 /** The closing mark is decorative and intentionally crops against its panel edge. */
 export const CLOSING_MARK_SIZE = 420;
+/** Width in pixels of the official Product Hunt launch embed badge. */
+export const PRODUCT_HUNT_BADGE_WIDTH = 250;
+/** Height in pixels of the official Product Hunt launch embed badge. */
+export const PRODUCT_HUNT_BADGE_HEIGHT = 54;
