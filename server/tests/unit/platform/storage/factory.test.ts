@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { ownDataDir, restoreEnv } from '../../support/data-dir.ts';
 
 ownDataDir('oya-storage-factory-');
-const { getConnection, closeConnection, createConnection } = await import('../../../../src/platform/storage/index.ts');
+const { getConnection, getKeelConnection, closeConnection, createConnection } =
+  await import('../../../../src/platform/storage/index.ts');
 
 afterEach(async () => {
   restoreEnv('OYA_STORAGE', undefined);
@@ -35,5 +36,21 @@ describe('createConnection', () => {
     const postgres = createConnection({ kind: 'postgres', databaseUrl: 'postgres://unused/db' });
     assert.equal(postgres.kind, 'postgres');
     assert.equal(createConnection({ kind: 'file' }).kind, 'file');
+  });
+});
+
+describe('getKeelConnection', () => {
+  it('is the main connection when Keel has no database of its own, as on a self-hosted server', () => {
+    assert.equal(getKeelConnection({ kind: 'sqlite' }), getConnection());
+  });
+
+  it("is a separate Postgres connection when KEEL_DATABASE_URL names Keel's database", () => {
+    const keel = getKeelConnection({
+      kind: 'postgres',
+      databaseUrl: 'postgres://h/main',
+      keelDatabaseUrl: 'postgres://h/keel',
+    });
+    assert.equal(keel.kind, 'postgres');
+    assert.notEqual(keel, getConnection());
   });
 });

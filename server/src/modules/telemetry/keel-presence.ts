@@ -1,9 +1,9 @@
 /** Initializes and refreshes Keel presence without turning duplicate daily reports into new usage. */
-import { getConnection, type Connection } from '../../platform/storage/index.ts';
+import { getKeelConnection, type Connection } from '../../platform/storage/index.ts';
 import type { KeelReport } from './keel-batch.ts';
 
 /** Latest metadata is replaced only by an equal or newer server receipt, including a null license. */
-export async function recordKeelPresence(identity: KeelReport['identity'], now: string, db = getConnection()) {
+export async function recordKeelPresence(identity: KeelReport['identity'], now: string, db = getKeelConnection()) {
   const { install_id, ...metadata } = identity;
   await db.upsert('keel_installs', [{ ...identity, first_seen: now, last_seen: now }]);
   await db.update('keel_installs', { install_id, last_seen: { lte: now } }, { ...metadata, last_seen: now });
@@ -22,7 +22,7 @@ async function backfillInstall(rows, db: Connection) {
 }
 
 /** Postgres backfills in its additive migration; local drivers perform the equivalent idempotent insert. */
-export async function initializeKeelInstalls(db = getConnection()) {
+export async function initializeKeelInstalls(db = getKeelConnection()) {
   if (db.kind === 'postgres') return;
   const grouped = new Map<string, Record<string, any>[]>();
   for (const row of await db.select('keel_usage', {}))

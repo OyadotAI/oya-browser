@@ -12,11 +12,14 @@ const latest = readdirSync(new URL('../server/migrations/', import.meta.url))
 for (const file of ['deploy-dev.yaml', 'deploy-prod.yaml']) {
   it(`${file} applies the newest schema in every hosted rollout path`, () => {
     const workflow = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
-    const commands = workflow
-      .split('\n')
-      .filter((line) => line.includes('psql ') && line.includes('--file=server/migrations/'));
+    const lines = workflow.split('\n');
+    const commands = lines.filter((line) => line.includes('migrate-in-cluster.sh "$NAMESPACE" app '));
     assert.ok(commands.length, 'hosted deployment must have a migration command');
-    for (const command of commands)
-      assert.ok(command.includes(`--file=server/migrations/${latest}`), `missing ${latest}`);
+    for (const command of commands) assert.ok(command.includes(`server/migrations/${latest}`), `missing ${latest}`);
+  });
+
+  it(`${file} migrates from inside the cluster, since a runner cannot reach a private-IP database`, () => {
+    const workflow = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
+    assert.ok(!/^\s*psql /m.test(workflow), 'runner-side psql would time out against Cloud SQL');
   });
 }

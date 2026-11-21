@@ -249,3 +249,33 @@ describe('pool options', () => {
     assert.equal(seen[0].query_timeout, 60_000);
   });
 });
+
+describe('one pool per database', () => {
+  /** Records which database each statement ran against. */
+  function recordDatabases() {
+    const seen: string[] = [];
+    mock.method(pg.Pool.prototype, 'query', async function (this: { options: { connectionString: string } }) {
+      seen.push(this.options.connectionString.split('?')[0]);
+      return { rows: [] };
+    });
+    return seen;
+  }
+
+  it("sends each database's statements to its own pool, so Keel's rows never land in the main database", async () => {
+    const seen = recordDatabases();
+    await new PostgresConnection('postgres://h/main').select('usage');
+    await new PostgresConnection('postgres://h/keel').select('keel_usage');
+    assert.deepEqual(seen, ['postgres://h/main', 'postgres://h/keel']);
+  });
+
+  it("closes only its own database's pool", async () => {
+    const seen = recordDatabases();
+    const main = new PostgresConnection('postgres://h/main');
+    await main.select('usage');
+    const ended = mock.method(pg.Pool.prototype, 'end', async () => {});
+    await new PostgresConnection('postgres://h/keel').close();
+    assert.equal(ended.mock.callCount(), 0, 'keel had no pool open, and main stays open');
+    await main.select('usage');
+    assert.deepEqual(seen, ['postgres://h/main', 'postgres://h/main']);
+  });
+});

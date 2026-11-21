@@ -36,9 +36,22 @@ export function getConnection(): Connection {
   return (connection ||= createConnection());
 }
 
-/** Closes and forgets the connection, for shutdown and for tests that change the configuration. */
+/** Keel's own connection, when KEEL_DATABASE_URL names one. */
+let keelConnection: Connection | null = null;
+
+/**
+ * Where Keel's usage tables live: Keel's own database when KEEL_DATABASE_URL is set, so one app's load or
+ * outage never reaches another's; the main connection otherwise, as a self-hosted server keeps everything in one.
+ */
+export function getKeelConnection(config: StorageConfig = storageConfig()): Connection {
+  if (!config.keelDatabaseUrl) return getConnection();
+  return (keelConnection ||= new PostgresConnection(config.keelDatabaseUrl));
+}
+
+/** Closes and forgets both connections, for shutdown and for tests that change the configuration. */
 export async function closeConnection() {
-  const open = connection;
+  const open = [connection, keelConnection];
   connection = null;
-  await open?.close();
+  keelConnection = null;
+  await Promise.all(open.map((c) => c?.close()));
 }

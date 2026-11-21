@@ -90,3 +90,6 @@ export const API_KEY_MAX_DAYS = apiKeyMaxDays();
 
 /** Mixed into the service key to derive the signing secret, so the two never coincide. */
 export const IMPERSONATE_CONTEXT = 'oya-impersonate-token-v1';
+
+/** How many users' profiles a server remembers having ensured before it starts the list over. */
+export const ENSURED_PROFILES_MAX = 10_000;
