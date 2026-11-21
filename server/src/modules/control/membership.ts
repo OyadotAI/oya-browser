@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { userAuthMiddleware } from '../auth/service.ts';
 import { control, fault } from './service.ts';
 import { Status } from '../../platform/http-status.ts';
+import { consume } from '../../platform/limits.ts';
 import { AUTO_NAME, listProjects, joinProject, consoleAccess, projectAccess, roleIn } from './http/projects.ts';
 import { inviteMember, removeMember } from './http/members.ts';
 
@@ -22,16 +23,24 @@ projectAccountRouter.get('/', async (req, res) => res.json(await listProjects(re
 /** POST /auth/projects/join, redeem a one-time invitation code and become a member with its role. */
 projectAccountRouter.post('/join', async (req, res) => res.json(await joinProject(req.user.id, req.body?.code)));
 
+/**
+ * Answers 429 once this person has asked for this project's console too often; true when it answered.
+ * 429, not 403 or 410: the console renews only on "access gone", so a tab caught looping stops here.
+ */
+function accessLimited(req, res) {
+  const limit = consume('consoleAccess', `${req.user.id}:${req.params.id}`);
+  if (limit.allowed) return false;
+  res.set('Retry-After', String(limit.retryAfter));
+  res.status(Status.TOO_MANY_REQUESTS).json({ error: 'Too many console sign-ins for this project, try again shortly' });
+  return true;
+}
+
 /** POST /auth/projects/:id/access, a one-hour console credential for a project the user owns or belongs to. */
-projectAccountRouter.post('/:id/access', async (req, res) =>
-  res.json(
-    await consoleAccess(
-      req.user.id,
-      req.params.id,
-      req.impersonatedBy && `Console access (Login as by ${req.impersonatedBy})`,
-    ),
-  ),
-);
+projectAccountRouter.post('/:id/access', async (req, res) => {
+  if (accessLimited(req, res)) return;
+  const label = req.impersonatedBy && `Console access (Login as by ${req.impersonatedBy})`;
+  res.json(await consoleAccess(req.user.id, req.params.id, label));
+});
 
 /** PATCH /auth/projects/:id, rename a project; owner only. */
 projectAccountRouter.patch('/:id', async (req, res) => {
