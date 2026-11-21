@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.279](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.279) · 2026-11-21
+
 ### Changed
 
 - One palette of five colours across the desktop app, the website and the console: ink, paper, the logo's lime, red and amber. Lime is the only green; the olive, forest and other greens, the blues and purples are gone. Light and dark themes use the same five.
