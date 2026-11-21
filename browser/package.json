@@ -1,6 +1,6 @@
 {
   "name": "oya-browser",
-  "version": "1.0.275",
+  "version": "1.0.276",
   "description": "Oya Browser: an AI browser and agentic browser for people and AI agents; HIPAA compliant on Oya Cloud and Enterprise.",
   "main": "out/main/index.js",
   "author": "Oya <sales@getoya.ai>",
@@ -39,6 +39,7 @@
     "test:desktop-passkeys": "node tests/integration/desktop-passkeys.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
+    "test:pairing": "npm run build && node tests/integration/pairing.mjs",
     "test:connect-link": "npm run build && node tests/integration/agent-connect-link.mjs",
     "test:workflow": "node tests/integration/native-workflow.mjs",
     "test:workflow-locator": "electron tests/integration/workflow-locator-electron.cjs",
