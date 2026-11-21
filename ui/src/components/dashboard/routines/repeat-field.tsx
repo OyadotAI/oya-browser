@@ -26,7 +26,7 @@ function KindButton({
       type="button"
       role="radio"
       aria-checked={on}
-      className={`btn-ghost h-8 px-3 text-[12px] ${on ? 'text-accent' : ''}`}
+      className={`btn-ghost h-8 px-3 text-[12px] ${on ? 'bg-accent-soft text-accent' : ''}`}
       onClick={() => form.set({ kind })}
     >
       {label}

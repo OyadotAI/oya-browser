@@ -43,7 +43,7 @@ export function ModeSwitch({ fields, form }: Omit<FormProps, 'onSubmit'>) {
             form.setError('');
           }}
           className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-            fields.mode === m ? 'bg-accent/10 text-text' : 'text-text-dim hover:text-text-muted'
+            fields.mode === m ? 'bg-accent-soft text-text' : 'text-text-dim hover:text-text-muted'
           }`}
         >
           {label}

@@ -99,7 +99,7 @@ export function CodeBlock({ children, label = 'Example', plain }: CodeBlockProps
 /** A highlighted aside. */
 export function NoteBox({ children }: PropsWithChildren) {
   return (
-    <div className="bg-indigo/10 border border-indigo/20 rounded-xl p-4 text-[15px] text-indigo mb-4 leading-relaxed">
+    <div className="bg-info/10 border border-info/20 rounded-xl p-4 text-[15px] text-info mb-4 leading-relaxed">
       {children}
     </div>
   );

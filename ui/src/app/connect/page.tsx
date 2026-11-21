@@ -15,7 +15,7 @@ const linkClass = 'font-medium text-accent hover:text-accent-hover';
 
 /** The primary button's look, as the sign-in forms use it. */
 const primary =
-  'flex-1 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-lg shadow-accent/25 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60';
+  'flex-1 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60';
 
 /** The secondary button's look. */
 const secondary =

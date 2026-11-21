@@ -34,7 +34,7 @@ function Bars({ days, field }: { /** Chronological days. */ days: KeelDay[]; /**
             <div className="w-full border-b border-dashed border-text-dim" />
           ) : (
             <div
-              className={`min-h-px w-full rounded-t-sm bg-accent/80 ${field === 'runtime_ms' && day.runtime_reports < day.reports ? 'border-t-2 border-dashed border-text' : ''}`}
+              className={`min-h-px w-full rounded-t-sm bg-accent ${field === 'runtime_ms' && day.runtime_reports < day.reports ? 'border-t-2 border-dashed border-text' : ''}`}
               style={{ height: `${heights[index]}%` }}
             />
           )}

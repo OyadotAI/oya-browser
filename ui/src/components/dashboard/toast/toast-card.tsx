@@ -10,9 +10,9 @@ import type { ToastItem, ToastType } from './types';
 
 /** Colors per type. */
 const TONE: Record<ToastType, string> = {
-  success: 'bg-accent/10 border-accent/25 text-accent',
+  success: 'bg-accent-soft border-accent/25 text-accent',
   error: 'bg-red/10 border-red/20 text-red',
-  info: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400',
+  info: 'bg-info/10 border-info/20 text-info',
 };
 
 /** Icon per type. */
@@ -35,7 +35,7 @@ export default function ToastCard({ item, onDismiss }: Props) {
       animate={TOAST_SHOWN}
       exit={TOAST_HIDDEN}
       transition={TOAST_TRANSITION}
-      className={`pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium shadow-xl shadow-black/40 border backdrop-blur-sm ${TONE[item.type]}`}
+      className={`pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium shadow-xl shadow-ink/40 border backdrop-blur-sm ${TONE[item.type]}`}
     >
       <Icon className="w-4 h-4 shrink-0" />
       <span>{item.msg}</span>

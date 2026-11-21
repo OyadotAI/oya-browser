@@ -36,7 +36,7 @@ export default function LiveToolbar({ frameSrc, fps, frameAgeMs, hover, fit, onH
       {stale !== null && <span className="text-yellow num">last frame {stale}s ago</span>}
       <span className="ml-auto" />
       <button
-        className={`btn-icon h-6 w-6 ${hover ? 'text-accent' : ''}`}
+        className={`btn-icon h-6 w-6 ${hover ? 'bg-accent-soft text-accent' : ''}`}
         title="Stream mouse movement (uses bandwidth)"
         aria-pressed={hover}
         onClick={onHover}

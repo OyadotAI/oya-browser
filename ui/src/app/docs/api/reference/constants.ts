@@ -50,6 +50,12 @@ export const SCALAR_CSS = `
   --scalar-color-2: var(--color-text-muted);
   --scalar-color-3: var(--color-text-dim);
   --scalar-color-accent: var(--color-accent);
+  --scalar-color-green: var(--color-accent);
+  --scalar-color-red: var(--color-red);
+  --scalar-color-yellow: var(--color-yellow);
+  --scalar-color-orange: var(--color-yellow);
+  --scalar-color-blue: var(--color-text-secondary);
+  --scalar-color-purple: var(--color-text-secondary);
   --scalar-font: inherit;
   --scalar-font-code: ui-monospace, SFMono-Regular, Menlo, monospace;
 }`;

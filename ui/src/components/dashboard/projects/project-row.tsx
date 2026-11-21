@@ -21,7 +21,7 @@ export default function ProjectRow({ c, project }: Props) {
   const current = c.currentId === project.id,
     busy = c.ui.busy;
   return (
-    <div className={`flex items-center rounded-lg transition-colors ${current ? 'bg-accent/8' : 'hover:bg-text/4'}`}>
+    <div className={`flex items-center rounded-lg transition-colors ${current ? 'bg-accent-soft' : 'hover:bg-text/4'}`}>
       <button
         data-project-option
         disabled={busy}
@@ -31,7 +31,7 @@ export default function ProjectRow({ c, project }: Props) {
       >
         <span
           aria-hidden
-          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${current ? 'border-accent/20 bg-accent/10 text-accent' : 'border-border bg-text/3 text-text-muted'}`}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-semibold ${current ? 'border-accent/20 bg-accent-soft text-accent' : 'border-border bg-text/3 text-text-muted'}`}
         >
           {project.name.slice(0, BADGE_LETTERS).toUpperCase()}
         </span>

@@ -26,7 +26,7 @@ export function frameClass(fit: Fit, large: boolean): string {
 /** The hint in the corner: solid while captured, shown on hover otherwise. */
 export function hintClass(captured: boolean): string {
   const state = captured
-    ? 'border-accent/40 bg-black/70 text-text opacity-100'
-    : 'border-border bg-black/60 text-text-muted opacity-0 group-hover:opacity-100';
+    ? 'border-accent/40 bg-ink/80 text-paper opacity-100'
+    : 'border-border bg-ink/80 text-paper/70 opacity-0 group-hover:opacity-100';
   return `pointer-events-none absolute bottom-2 left-2 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-opacity ${state}`;
 }

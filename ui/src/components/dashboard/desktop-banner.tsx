@@ -25,10 +25,7 @@ export default function DesktopBanner({ apiKey, onDismiss }: Props) {
   const { busy, open, notOpened } = useDesktopSignIn(apiKey);
 
   return (
-    <div
-      role="status"
-      className="flex items-center gap-3 border-b border-accent/30 bg-gradient-to-r from-accent/[0.12] via-accent/[0.06] to-transparent px-4 py-2.5 lg:px-6"
-    >
+    <div role="status" className="flex items-center gap-3 border-b border-accent/30 bg-accent-soft px-4 py-2.5 lg:px-6">
       <MonitorSmartphone className="h-4 w-4 shrink-0 text-accent" />
       <div className="min-w-0 flex-1 text-[13px] leading-snug">
         {notOpened ? (

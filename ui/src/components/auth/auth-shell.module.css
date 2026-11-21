@@ -88,3 +88,10 @@
     padding: 36px;
   }
 }
+/* Text links on the sign-in pages: in the light theme the accent is ink like the text, so an underline marks them. */
+/* Only links inside a sentence: a link that is a whole card or button already looks like one. */
+.footer a,
+.card p a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

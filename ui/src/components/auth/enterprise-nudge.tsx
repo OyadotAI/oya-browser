@@ -14,7 +14,7 @@ export function EnterpriseNudge() {
       href={ENTERPRISE_SIGNUP}
       data-track="cta_clicked"
       data-track-label="auth_enterprise_nudge"
-      className="mt-6 flex w-full items-center gap-3 rounded-xl border border-accent/35 bg-accent/5 px-4 py-3.5 text-left"
+      className="mt-6 flex w-full items-center gap-3 rounded-xl border border-accent/35 bg-accent-soft px-4 py-3.5 text-left"
     >
       <span className="flex-1">
         <span className="block text-sm font-semibold text-text">Rolling Oya out across a team?</span>

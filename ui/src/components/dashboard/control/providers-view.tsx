@@ -52,7 +52,7 @@ function ProviderToolbar({
       <button
         disabled={!!ctl.busy}
         onClick={ctl.toggleAdd}
-        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium bg-accent text-bg hover:opacity-90"
+        className="flex items-center gap-1.5 px-3 py-2 rounded-md text-[12px] font-medium bg-accent text-accent-foreground hover:opacity-90"
       >
         <Plus className="w-3.5 h-3.5" /> Add provider
       </button>

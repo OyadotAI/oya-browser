@@ -140,7 +140,7 @@ function SelectedBrowser({ c }: Props) {
   const scope = c.project ?? c.apiKey;
   return (
     <div
-      className="fixed inset-0 z-40 flex justify-end bg-black/50 lg:static lg:z-auto lg:bg-transparent"
+      className="fixed inset-0 z-40 flex justify-end bg-ink/50 lg:static lg:z-auto lg:bg-transparent"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) patch({ selected: null });
       }}

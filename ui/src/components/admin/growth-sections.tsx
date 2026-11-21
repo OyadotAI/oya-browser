@@ -69,7 +69,7 @@ function Bars({ days, m }: { /** The days. */ days: Day[]; /** The counter. */ m
     >
       {days.map((d, i) => (
         <div key={d.day} className="flex h-full flex-1 items-end" title={`${d.day}: ${m.format(d[m.key])}`}>
-          <div className="w-full rounded-t-[2px] bg-accent/80 hover:bg-accent" style={{ height: `${heights[i]}%` }} />
+          <div className="w-full rounded-t-[2px] bg-accent hover:bg-accent" style={{ height: `${heights[i]}%` }} />
         </div>
       ))}
     </div>

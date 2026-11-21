@@ -47,7 +47,7 @@ export default function SnippetToolbar({
             role="tab"
             aria-selected={activeId === x.id}
             onClick={() => onChoose(x.id)}
-            className={`shrink-0 rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors ${activeId === x.id ? 'bg-accent/15 text-text' : 'text-text-muted hover:text-text'}`}
+            className={`shrink-0 rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors ${activeId === x.id ? 'bg-accent-soft text-text' : 'text-text-muted hover:text-text'}`}
           >
             {x.label}
           </button>

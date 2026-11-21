@@ -220,7 +220,7 @@ function NavLink({ id, children }: NavLinkProps) {
         e.preventDefault();
         navigate(id);
       }}
-      className={`rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors ${active === id ? 'bg-accent/8 text-accent font-medium' : 'text-text-muted hover:bg-text/5 hover:text-text'}`}
+      className={`rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors ${active === id ? 'bg-accent-soft text-accent font-medium' : 'text-text-muted hover:bg-text/5 hover:text-text'}`}
     >
       {children}
     </a>
@@ -278,7 +278,7 @@ function SearchBox({ search, inputRef }: SearchBoxProps) {
         type="text"
         placeholder="Search docs…"
         aria-label="Search documentation"
-        className="w-full bg-bg-sunken border border-border rounded-lg py-2.5 pl-8 pr-8 text-text text-sm outline-none placeholder:text-text-dim focus:border-indigo transition-colors"
+        className="w-full bg-bg-sunken border border-border rounded-lg py-2.5 pl-8 pr-8 text-text text-sm outline-none placeholder:text-text-dim focus:border-border-focus transition-colors"
         value={search.query}
         onChange={(e) => search.onInput(e.target.value)}
         onKeyDown={search.onKeyDown}
@@ -300,7 +300,7 @@ function SearchBox({ search, inputRef }: SearchBoxProps) {
 function SearchResults({ search }: SearchProps) {
   if (!search.results) return null;
   return (
-    <div className="mb-4 bg-bg-card border border-border rounded-xl overflow-hidden shadow-lg shadow-black/30">
+    <div className="mb-4 bg-bg-card border border-border rounded-xl overflow-hidden shadow-lg shadow-ink/30">
       {search.results.length === 0 ? (
         <div className="text-xs text-text-dim px-3 py-2">No results</div>
       ) : (

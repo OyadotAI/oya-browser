@@ -78,7 +78,7 @@ export default function Dialog({ open, onClose, title, description, size = 'md',
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.12 }}
-          className={`fixed inset-0 z-[60] flex bg-black/60 ${drawer ? 'justify-end' : 'items-start justify-center overflow-y-auto p-4 pt-[8vh]'}`}
+          className={`fixed inset-0 z-[60] flex bg-ink/60 ${drawer ? 'justify-end' : 'items-start justify-center overflow-y-auto p-4 pt-[8vh]'}`}
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) onClose();
           }}

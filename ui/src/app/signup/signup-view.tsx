@@ -55,7 +55,7 @@ function PlanSwitch({ plan }: SwitchProps) {
           href={HREFS[p]}
           scroll={false}
           aria-current={plan === p ? 'page' : undefined}
-          className={`rounded-md px-3 py-1.5 text-center text-sm transition-colors ${plan === p ? 'bg-accent/10 text-text' : 'text-text-dim hover:text-text-muted'}`}
+          className={`rounded-md px-3 py-1.5 text-center text-sm transition-colors ${plan === p ? 'bg-accent-soft text-text' : 'text-text-dim hover:text-text-muted'}`}
         >
           {label}
         </Link>

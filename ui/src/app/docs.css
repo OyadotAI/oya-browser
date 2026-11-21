@@ -110,3 +110,9 @@
   color: var(--foreground);
   scroll-margin-top: 104px;
 }
+/* Links in the docs: in the light theme the accent is ink like the text, so an underline marks them. */
+.docs-page main a.text-accent {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}

@@ -11,7 +11,7 @@ import type { Sales } from './use-sales';
 
 /** A chip's look, picked or not. */
 const CHIP = {
-  on: 'border-accent bg-accent/10 text-text',
+  on: 'border-accent bg-accent-soft text-text',
   off: 'border-border text-text-muted hover:text-text',
 };
 
