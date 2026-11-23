@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.282](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.282) · 2026-11-23
+
 ### Fixed
 
 - A self-hosted license whose payment is refunded in full or disputed is revoked, and its subscription issues no new keys; a revoked key stops working at the server's next daily check-in. Previously the key kept working until it expired, up to a year and 14 days later.
