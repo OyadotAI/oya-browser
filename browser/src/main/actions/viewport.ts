@@ -126,7 +126,9 @@ export async function setViewport(driver: PageDriver, view: NativePage, input: C
   const session = ownerFor(view);
   requireConfirmed(session, view, input);
   try {
-    return await (input.reset ? reset(driver, view, session.lane, session.owner) : apply(driver, view, input, session));
+    return await (input.reset
+      ? reset(driver, view, session.lane, session.owner)
+      : applyViewport(driver, view, input, session));
   } finally {
     if (!session.owner.pages.size && owners.get(session.lane) === session.owner) owners.delete(session.lane);
   }
@@ -135,7 +137,7 @@ export async function setViewport(driver: PageDriver, view: NativePage, input: C
 function ownerFor(view: NativePage): Session {
   const lane = currentLane();
   if (!lane.startsWith('mcp-')) throw Error('Viewport control is available through local MCP only');
-  requireNative(view);
+  requireViewportNative(view);
   if (!owners.has(lane) && owners.size >= MAX_SESSIONS)
     throw Error('Viewport session capacity reached. Close an inactive session.');
   const owner = owners.get(lane) || newOwner();
@@ -143,7 +145,7 @@ function ownerFor(view: NativePage): Session {
   return { lane, owner };
 }
 /** Read and validate the merged effective density before applying native settings. */
-async function apply(driver: PageDriver, view: NativePage, input: CommandParams, session: Session) {
+async function applyViewport(driver: PageDriver, view: NativePage, input: CommandParams, session: Session) {
   const { owner } = session;
   const before = await viewportInfo(driver, view);
   const params = { deviceScaleFactor: NATIVE_DPR, ...owner.pages.get(view.webContents), ...input, mobile: false };
@@ -169,7 +171,7 @@ function checkArea(params: Record<string, unknown>, natural: number): void {
 }
 
 /** Native capability checks precede acquiring a renderer lease. */
-function requireNative(view: NativePage): void {
+function requireViewportNative(view: NativePage): void {
   if (typeof view.webContents.enableDeviceEmulation !== 'function')
     throw Error('Native viewport control is unavailable in this Oya build');
 }
