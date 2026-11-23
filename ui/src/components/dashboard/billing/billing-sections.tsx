@@ -5,7 +5,7 @@
 'use client';
 
 import { Section, Table } from '@/components/admin/parts';
-import { NEW_SUBSCRIPTION_PRICE_NOTE, PERCENT, SALES_EMAIL, UPGRADES } from './constants';
+import { NEW_SUBSCRIPTION_PRICE_NOTE, PERCENT, FOUNDERS_CALL, UPGRADES } from './constants';
 import { dateOf, figure, money, share, usageRows } from './model';
 import type { BillingPageState, Invoice, Upcoming } from './use-billing-page';
 import type { Billing } from './use-plan';
@@ -67,8 +67,8 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
       {s.error && <p className="text-xs text-red">{s.error}</p>}
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
-        <a className="underline" href={`mailto:${SALES_EMAIL}`}>
-          {SALES_EMAIL}
+        <a className="underline" href={FOUNDERS_CALL} target="_blank" rel="noreferrer">
+          Book a time with the founders
         </a>
       </p>
     </Section>

@@ -44,7 +44,9 @@ it('shows prices, monthly allowances and additional usage without requiring a di
   expect(
     screen.getByText(/Paid-plan usage beyond these allowances: \$8\/GB of proxy and \$0.002\/agent step/),
   ).toBeTruthy();
-  expect(screen.getByText('Self-hosting is free up to 5 cloud browsers at once.')).toBeTruthy();
+  expect(
+    screen.getByText('Self-hosting is free up to 5 cloud browsers at once, then $20 a browser a month.'),
+  ).toBeTruthy();
   expect(screen.getByText(/For protected health information \(PHI\), use Oya Cloud or the enterprise/)).toBeTruthy();
   expect(screen.queryByRole('button')).toBeNull();
 });
@@ -59,7 +61,7 @@ it('uses existing download, dashboard and sales destinations without starting ch
   ]);
   const enterprise = within(screen.getByRole('article', { name: 'Enterprise' }));
   expect(enterprise.getByText('Custom', { exact: false })).toBeTruthy();
-  expect(enterprise.getByText('Self-hosting above 5 cloud browsers')).toBeTruthy();
+  expect(enterprise.getByText('Self-hosting above 50 cloud browsers')).toBeTruthy();
   expect(enterprise.getByRole('link', { name: 'Book a meeting' }).getAttribute('href')).toBe(foundersCall);
   for (const [name, href] of [
     ['Download free', '/#download'],

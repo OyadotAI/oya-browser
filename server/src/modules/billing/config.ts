@@ -37,3 +37,17 @@ const basePricesFor = (plan: PlanName) => [
 /** Current and grandfathered base prices retain their plan; unrelated and metered prices grant none. */
 export const planOfPrice = (priceId: string | undefined): PlanName =>
   (priceId && PAID_PLANS.find((plan) => basePricesFor(plan).includes(priceId))) || 'free';
+
+/** The billing periods a self-hosted license is sold for. */
+export const LICENSE_INTERVALS = ['month', 'year'] as const;
+
+/** A license billing period. */
+export type LicenseInterval = (typeof LICENSE_INTERVALS)[number];
+
+/** The per-browser Stripe price for a license billed each `interval`: STRIPE_PRICE_LICENSE_MONTH / _YEAR. */
+export const licensePrice = (interval: LicenseInterval) =>
+  process.env[`STRIPE_PRICE_LICENSE_${interval.toUpperCase()}`] || '';
+
+/** Which billing period a price id is the license price for, or null for any other price. */
+export const licenseIntervalOf = (priceId: string | undefined) =>
+  LICENSE_INTERVALS.find((interval) => priceId && licensePrice(interval) === priceId) ?? null;

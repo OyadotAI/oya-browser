@@ -320,7 +320,7 @@ jobs:
         PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
         KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
       run: |
-        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql
+        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql server/migrations/029_self_hosted_licenses.sql
         # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
         if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 

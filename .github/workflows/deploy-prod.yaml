@@ -537,6 +537,8 @@ jobs:
         STRIPE_LEGACY_BASE_PRICES_DEVELOPER: ${{ secrets.STRIPE_LEGACY_BASE_PRICES_DEVELOPER }}
         STRIPE_LEGACY_BASE_PRICES_STARTUP: ${{ secrets.STRIPE_LEGACY_BASE_PRICES_STARTUP }}
         STRIPE_PORTAL_CONFIGURATION: ${{ secrets.STRIPE_PORTAL_CONFIGURATION }}
+        STRIPE_PRICE_LICENSE_MONTH: ${{ secrets.STRIPE_PRICE_LICENSE_MONTH }}
+        STRIPE_PRICE_LICENSE_YEAR: ${{ secrets.STRIPE_PRICE_LICENSE_YEAR }}
         # This deployment's own license, and the key admins issue licenses with.
         OYA_LICENSE_KEY: ${{ secrets.OYA_LICENSE_KEY }}
         OYA_LICENSE_SIGNING_KEY: ${{ secrets.OYA_LICENSE_SIGNING_KEY }}
@@ -589,6 +591,8 @@ jobs:
           --from-literal=STRIPE_LEGACY_BASE_PRICES_DEVELOPER="${STRIPE_LEGACY_BASE_PRICES_DEVELOPER}" \
           --from-literal=STRIPE_LEGACY_BASE_PRICES_STARTUP="${STRIPE_LEGACY_BASE_PRICES_STARTUP}" \
           --from-literal=STRIPE_PORTAL_CONFIGURATION="${STRIPE_PORTAL_CONFIGURATION}" \
+          --from-literal=STRIPE_PRICE_LICENSE_MONTH="${STRIPE_PRICE_LICENSE_MONTH}" \
+          --from-literal=STRIPE_PRICE_LICENSE_YEAR="${STRIPE_PRICE_LICENSE_YEAR}" \
           --from-literal=OYA_LICENSE_KEY="${OYA_LICENSE_KEY}" \
           --from-literal=OYA_LICENSE_SIGNING_KEY="${OYA_LICENSE_SIGNING_KEY}" \
           -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
@@ -620,7 +624,7 @@ jobs:
         PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
         KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
       run: |
-        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql
+        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql server/migrations/029_self_hosted_licenses.sql
         # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
         if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 
@@ -1048,7 +1052,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql
+          scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql server/migrations/029_self_hosted_licenses.sql
           # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
           if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 

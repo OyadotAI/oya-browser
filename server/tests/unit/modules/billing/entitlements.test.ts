@@ -106,7 +106,8 @@ describe('Entitlements', () => {
       assert.equal(err.status, 402);
       assert.equal(err.code, 'plan_limit');
       assert.equal(err.upgrade_url, 'https://console.test/dashboard/billing');
-      assert.match(err.message, /sales@getoya\.ai/);
+      assert.match(err.message, /book a time with the founders: https:\/\/calendly\.com\//);
+      assert.equal(err.contact, 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call');
       return true;
     });
   });
@@ -223,9 +224,14 @@ describe('Entitlements', () => {
       assert.deepEqual(license, [5]);
     });
 
-    it('refuses the sixth cloud browser without a license, naming who to write to', async () => {
+    it('refuses the sixth cloud browser without a license, linking where to buy one and where to book the founders', async () => {
       const { e } = fixture({ cloud: ['a', 'b', 'c', 'd', 'e'], hostedDeployment: false });
-      await assert.rejects(e.admitCloud('k-u'), { status: 402, code: 'license_required', contact: 'sales@getoya.ai' });
+      await assert.rejects(e.admitCloud('k-u'), {
+        status: 402,
+        code: 'license_required',
+        upgrade_url: 'https://oyabrowser.com/dashboard/billing#self-hosted',
+        contact: 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
+      });
     });
 
     it('counts starts on their way against the cap too', async () => {

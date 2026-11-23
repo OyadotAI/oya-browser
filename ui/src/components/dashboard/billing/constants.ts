@@ -12,8 +12,8 @@ export const UPGRADES = [
 export const NEW_SUBSCRIPTION_PRICE_NOTE =
   'Prices shown apply to new subscriptions. Existing subscriptions keep their current prices.';
 
-/** Where to write for more than the plans offer. */
-export const SALES_EMAIL = 'sales@getoya.ai';
+/** Where to book a call with the founders for more than the plans or self-serve licenses offer: the landing page's link. */
+export { foundersCall as FOUNDERS_CALL } from '@/app/_home/content';
 
 /** The billing page. */
 export const BILLING_PAGE = '/dashboard/billing';

@@ -257,6 +257,23 @@ describe('Subscriptions', () => {
     assert.deepEqual(summary.used, { cloud_seconds: 60 });
     assert.equal(summary.since, '2026-03-01T00:00:00.000Z');
   });
+
+  it('leaves the person’s plan alone for a self-hosted license subscription, created, updated or deleted', async () => {
+    const { s: subs, rows } = fixture();
+    await subs.applyEvent(event('customer.subscription.created'));
+    const before = structuredClone(rows.get('u1'));
+    for (const type of [
+      'customer.subscription.created',
+      'customer.subscription.updated',
+      'customer.subscription.deleted',
+    ]) {
+      const e = event(type, 'license_month', 'active', 'sub_license', 200);
+      e.data.object.metadata = { user_id: 'u1', kind: 'self_hosted_license' } as any;
+      await subs.applyEvent(e);
+    }
+    assert.deepEqual(rows.get('u1'), before);
+    assert.equal(rows.get('u1').plan, 'developer');
+  });
 });
 
 it('shows actual usage alongside the extended allowance in the customer billing summary', async () => {

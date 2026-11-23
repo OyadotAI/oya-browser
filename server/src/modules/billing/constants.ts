@@ -123,8 +123,6 @@ export const WEBHOOK_TOLERANCE_S = 300;
 export const STRIPE_API = 'https://api.stripe.com/v1';
 /** The Stripe API version every call is pinned to; the webhook endpoint must be set to the same one. */
 export const STRIPE_VERSION = '2025-03-31.basil';
-/** Who to write to for more than the plans offer, or a self-hosted license. */
-export const SALES_EMAIL = 'sales@getoya.ai';
 /** Where in the console a person manages their plan. */
 export const BILLING_PATH = '/dashboard/billing';
 /** How Checkout looks: Oya's name, icon and colors, whatever else shares the Stripe account. */
@@ -147,3 +145,15 @@ const RESERVATION_MINUTES = 3;
 export const RESERVATION_MS = RESERVATION_MINUTES * MS_PER_MINUTE;
 /** Payment events remembered, so a retried delivery is not announced twice. */
 export const TOLD_MAX = 1_000;
+/** The metadata `kind` that marks a Stripe subscription as a self-hosted license, not a hosted plan. */
+export const LICENSE_KIND = 'self_hosted_license';
+/** Days a self-hosted key outlives its paid period: Stripe's payment retries, and time to swap in the renewal's key. */
+const LICENSE_GRACE_DAYS = 14;
+/** Hours in a day. */
+const HOURS_PER_DAY = 24;
+/** The grace, in seconds, as Stripe's periods are counted. */
+export const LICENSE_GRACE_S = LICENSE_GRACE_DAYS * HOURS_PER_DAY * SECONDS_PER_HOUR;
+/** The fewest browsers a license is sold for: up to SELF_HOST_FREE_CAP run free. */
+export const LICENSE_MIN = 6;
+/** Subscription states in which a license is still being paid for, so a second purchase would double-bill. */
+export const LICENSE_LIVE = ['active', 'trialing', 'past_due', 'incomplete'];

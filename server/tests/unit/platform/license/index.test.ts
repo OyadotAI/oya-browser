@@ -16,11 +16,14 @@ describe('license facade', () => {
     mock.restoreAll();
   });
 
-  it('without the module, allows five cloud browsers at once and refuses the sixth, naming who sells licenses', () => {
+  it('without the module, allows five cloud browsers at once and refuses the sixth, naming where to buy more', () => {
     assert.equal(license.admit(5).ok, true);
     const refused = license.admit(6);
     assert.equal(refused.ok, false);
-    assert.match(refused.message, /above 5 concurrent cloud browsers needs a commercial license: sales@getoya\.ai/);
+    assert.equal(
+      refused.message,
+      'This server is licensed for 5 cloud browsers at once. Add more at https://oyabrowser.com/dashboard/billing#self-hosted, or for more than 50 book a time with the founders: https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
+    );
   });
 
   it('keeps the free cap when the module file is missing, and says so', async () => {

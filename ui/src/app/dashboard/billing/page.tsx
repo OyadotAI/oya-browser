@@ -1,6 +1,6 @@
 /**
- * The billing page: the plan and its period, this period's use against what
- * it includes, the next invoice line by line, and every invoice issued. Its
+ * The billing page: the plan and its period, a self-hosted license, this
+ * period's use against what it includes, the next invoice line by line, and every invoice issued. Its
  * state lives in `components/dashboard/billing/use-billing-page.ts`.
  */
 'use client';
@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useBillingPage } from '@/components/dashboard/billing/use-billing-page';
 import { History, NextInvoice, PlanCard, Usage } from '@/components/dashboard/billing/billing-sections';
+import { SelfHostedLicense } from '@/components/dashboard/billing/self-hosted-license';
 
 /** A short message in place of the page. */
 const Notice = ({ children }: { /** The message. */ children: React.ReactNode }) => (
@@ -39,6 +40,7 @@ function Body({ s }: { /** The page's state. */ s: ReturnType<typeof useBillingP
   return (
     <>
       <PlanCard b={b} s={s} />
+      <SelfHostedLicense />
       <Usage b={b} />
       {s.data?.upcoming && <NextInvoice u={s.data.upcoming} />}
       <History invoices={s.data?.invoices || []} />

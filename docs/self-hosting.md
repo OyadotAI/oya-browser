@@ -305,9 +305,11 @@ With `ecs.auth` set, the key's ECS browsers run on its own account, and none of 
 
 A self-hosted server runs up to 5 cloud browsers (browsers it launches in Docker, Kubernetes,
 ECS or Daytona) at once for free. The sixth start is refused with a 402 that says so. The
-desktop app and browsers you connect yourself are not counted. For more, write to
-**sales@getoya.ai** for a license key and set it as `OYA_LICENSE_KEY`. See the
-[license](../LICENSE.md).
+desktop app and browsers you connect yourself are not counted. To run more, buy a license at
+[oyabrowser.com/dashboard/billing](https://oyabrowser.com/dashboard/billing#self-hosted) (6 to 50
+browsers, $20 each a month or $240 a year) and set its key as `OYA_LICENSE_KEY`, then restart. Each
+renewal issues a new key; the old one keeps working 14 days past its period, so swap it in before
+then. For more than 50, [book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call). See the [license](../LICENSE.md).
 
 ## Telemetry
 

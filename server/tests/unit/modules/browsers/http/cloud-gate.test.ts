@@ -49,7 +49,7 @@ describe('cloudNeedsPerson', () => {
     assert.equal((await runMiddleware(cloudNeedsPerson(), start('k'.repeat(32), 'cdp'))).passed, true);
   });
 
-  it('refuses a self-hosted server’s sixth cloud browser at once without a license, with who to write to', async () => {
+  it('refuses a self-hosted server’s sixth cloud browser at once without a license, with where to buy one', async () => {
     const { registry } = await import('../../../../../src/modules/browsers/registry.ts');
     const ids = ['c1', 'c2', 'c3', 'c4', 'c5'];
     ids.forEach((id) => registry.add(id, { apiKey: 'other', provider: 'oya-cloud', clientType: 'oya', name: id }));
@@ -57,7 +57,8 @@ describe('cloudNeedsPerson', () => {
       await assert.rejects(runMiddleware(cloudNeedsPerson('oya-cloud'), start('k'.repeat(32))), {
         status: 402,
         code: 'license_required',
-        contact: 'sales@getoya.ai',
+        upgrade_url: 'https://oyabrowser.com/dashboard/billing#self-hosted',
+        contact: 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
       });
       assert.equal((await runMiddleware(cloudNeedsPerson(), start('k'.repeat(32), 'cdp'))).passed, true);
     } finally {

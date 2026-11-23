@@ -48,7 +48,7 @@ export function PricingPlans({
         ))}
       </div>
       <p className={styles.note}>Monthly cloud plans include the allowances shown. {PAID_USAGE_NOTE}</p>
-      <p className={styles.note}>Self-hosting is free up to 5 cloud browsers at once.</p>
+      <p className={styles.note}>Self-hosting is free up to 5 cloud browsers at once, then $20 a browser a month.</p>
       <p className={styles.note}>
         Use synthetic data while developing on desktop. For protected health information (PHI), use Oya Cloud or the
         enterprise edition under a Business Associate Agreement (BAA).{' '}

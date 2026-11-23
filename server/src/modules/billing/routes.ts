@@ -1,6 +1,6 @@
 /**
- * REST routes for a person's plan: see it, subscribe, manage it, and the
- * webhook Stripe reports changes on. Signed-in people only; a self-hosted
+ * REST routes for a person's plan: see it, subscribe, manage it; their
+ * self-hosted license, likewise; and the webhook Stripe reports changes on. Signed-in people only; a self-hosted
  * server, which has no plans, says so and nothing more.
  */
 import { Router } from 'express';
@@ -16,6 +16,7 @@ export function billingRoutes(billing: Billing) {
   const router = Router({ caseSensitive: true });
   planRoutes(router, billing);
   invoiceRoutes(router, billing);
+  licenseRoutes(router, billing);
   return router;
 }
 
@@ -42,6 +43,24 @@ function invoiceRoutes(router, billing: Billing) {
     res.json(await billing.invoices.upcoming(req.user.id)),
   );
 }
+
+/** A self-hosted license: see it with its key, buy one, manage its card. */
+function licenseRoutes(router, billing: Billing) {
+  /** GET /billing/license, the person's self-hosted license and key; `{enabled: false}` on a self-hosted server. */
+  router.get('/billing/license', userAuthMiddleware, async (req, res) => res.json(await license(billing, req.user.id)));
+  /** POST /billing/license/checkout {browsers, interval}, a Stripe Checkout page to buy a license on. */
+  router.post('/billing/license/checkout', userAuthMiddleware, async (req, res) =>
+    res.json(await billing.licenses.checkout(req.user.id, req.body?.browsers, req.body?.interval)),
+  );
+  /** POST /billing/license/portal, the Stripe page to change the license's card, see receipts or cancel. */
+  router.post('/billing/license/portal', userAuthMiddleware, async (req, res) =>
+    res.json(await billing.licenses.portal(req.user.id)),
+  );
+}
+
+/** The person's self-hosted license, or that this server sells none. */
+const license = async (billing: Billing, userId: string) =>
+  hosted() ? billing.licenses.view(userId) : { enabled: false };
 
 /** A Checkout page for the plan the request names. */
 const checkout = (billing: Billing, req) => billing.subscriptions.checkout(req.user.id, String(req.body?.plan || ''));
@@ -70,6 +89,7 @@ export const billingWebhook = (billing: Billing) => async (req, res) => {
   const event = parseWebhookEvent(req.body);
   if (!event) return res.status(Status.BAD_REQUEST).json({ error: 'Invalid payload', code: 'invalid_request' });
   await billing.subscriptions.applyEvent(event);
+  await billing.licenses.applyEvent(event);
   notePayment(event);
   res.json({ received: true });
 };

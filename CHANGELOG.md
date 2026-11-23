@@ -6,6 +6,14 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Self-hosted servers can buy more cloud browsers themselves. The billing page has a Self-hosted license section: choose 6 to 50 browsers, billed $20 a browser a month or $240 a year, pay through Stripe, and copy the key to set as `OYA_LICENSE_KEY`. Each renewal issues a new key; every key works 14 days past its paid period so there is time to swap it in.
+
+### Changed
+
+- A self-hosted server past its cap now answers with a link to buy a license (`upgrade_url`) instead of an email address. For more than self-serve sells, refusals, the billing page and the docs link a call with the founders instead of sales@getoya.ai.
+
 ## [1.0.280](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.280) · 2026-11-21
 
 ### Changed

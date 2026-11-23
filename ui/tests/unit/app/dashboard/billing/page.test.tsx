@@ -16,6 +16,9 @@ vi.mock('@/lib/api', () => ({
   billingUpcoming: vi.fn(),
   billingCheckout: vi.fn(),
   billingPortal: vi.fn(),
+  getLicense: vi.fn(() => Promise.resolve({ enabled: false, license: null })),
+  licenseCheckout: vi.fn(),
+  licensePortal: vi.fn(),
 }));
 
 /** A Developer plan halfway through its hours. */

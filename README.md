@@ -277,8 +277,8 @@ Self-hosted deployments include host-level egress rules and a tamper-evident aud
 [control evidence](compliance/EVIDENCE.md) and the [trust center](https://oyabrowser.com/trust).
 To report a vulnerability, follow [SECURITY.md](SECURITY.md).
 
-An enterprise edition, including a HIPAA-ready offering, is maintained separately. Contact
-[sales@getoya.ai](mailto:sales@getoya.ai).
+An enterprise edition, including a HIPAA-ready offering, is maintained separately.
+[Book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call).
 
 ## Documentation
 
@@ -295,7 +295,8 @@ An enterprise edition, including a HIPAA-ready offering, is maintained separatel
 
 - Questions and discussion: [Discord](https://discord.gg/wqSeXJPygn)
 - Bug reports and feature requests: [GitHub Issues](https://github.com/OyadotAI/oya-browser/issues)
-- Commercial licensing and enterprise: [sales@getoya.ai](mailto:sales@getoya.ai)
+- Self-hosted license (more than 5 cloud browsers): [oyabrowser.com/dashboard/billing](https://oyabrowser.com/dashboard/billing#self-hosted)
+- Enterprise: [book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call)
 
 ## Contributing
 

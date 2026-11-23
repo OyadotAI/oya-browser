@@ -151,6 +151,25 @@ export const billingPortal = (token: string) =>
     headers: authHeaders(token),
   });
 
+/** The person's self-hosted license and its key, or `{license: null}`; `{enabled: false}` on a self-hosted server. */
+export const getLicense = (token: string) =>
+  account('/billing/license', 'Could not load your license', { headers: authHeaders(token) });
+
+/** A Stripe Checkout page to buy a self-hosted license for `browsers` browsers, billed each `interval`. */
+export const licenseCheckout = (token: string, browsers: number, interval: string) =>
+  account<Redirect>('/billing/license/checkout', 'Could not open checkout', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ browsers, interval }),
+  });
+
+/** The Stripe page to change the license's card, see its receipts or cancel it. */
+export const licensePortal = (token: string) =>
+  account<Redirect>('/billing/license/portal', 'Could not open billing', {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
 /** The admin overview: accounts, plans, heaviest users, installs, downloads and the fleet. Admins only. */
 export const adminOverview = (token: string) =>
   account(`/admin/overview?version=${ADMIN_OVERVIEW_VERSION}`, 'Could not load the overview', {

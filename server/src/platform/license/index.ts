@@ -5,12 +5,12 @@
  * facade holds the free cap itself: a broken install never runs unlicensed
  * past it.
  */
-import { LICENSE_EMAIL, PING_URL, SELF_HOST_FREE_CAP, VENDOR_FILE } from './constants.ts';
+import { FOUNDERS_CALL, LICENSE_URL, PING_URL, SELF_HOST_FREE_CAP, SELF_SERVE_MAX, VENDOR_FILE } from './constants.ts';
 import * as store from './repository.ts';
 import { HttpError } from '../errors.ts';
 import { Status } from '../http-status.ts';
 
-export { SELF_HOST_FREE_CAP, LICENSE_EMAIL } from './constants.ts';
+export { SELF_HOST_FREE_CAP, SELF_SERVE_MAX, FOUNDERS_CALL, LICENSE_URL } from './constants.ts';
 
 /** A decision on a cloud start. */
 export type Admission = {
@@ -60,9 +60,9 @@ export type Minted = {
 /** The loaded module, or null when there is none. */
 let impl: LicenseModule | null = null;
 
-/** What an unlicensed server over the cap is told. */
+/** What a server over its cap is told: where to buy more itself, and where to book the founders past self-serve. */
 export const overCap = (cap: number) =>
-  `Self-hosted use above ${cap} concurrent cloud browsers needs a commercial license: ${LICENSE_EMAIL}`;
+  `This server is licensed for ${cap} cloud browsers at once. Add more at ${LICENSE_URL}, or for more than ${SELF_SERVE_MAX} book a time with the founders: ${FOUNDERS_CALL}`;
 
 /** Loads the vendored module; a missing or broken one leaves the free cap in force. */
 export async function load(file = VENDOR_FILE) {

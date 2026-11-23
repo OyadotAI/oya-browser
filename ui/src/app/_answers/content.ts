@@ -327,7 +327,7 @@ export const VS_STEEL: AnswerPageContent = {
   faq: [
     {
       q: 'Is Oya a self-hosted alternative to Steel?',
-      a: 'Oya self-hosts in two editions. The source-available community edition runs in your network and is free up to 5 cloud browsers at once. The enterprise edition runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Write to sales@getoya.ai.',
+      a: 'Oya self-hosts in two editions. The source-available community edition runs in your network and is free up to 5 cloud browsers at once, then $20 a browser a month with a license from oyabrowser.com/dashboard/billing. The enterprise edition runs on Docker, ECS, GCP or Kubernetes, comes with a BAA, and keeps HIPAA workloads in your own infrastructure. Book a time with the founders: https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
     },
     {
       q: 'Can I use Oya with Steel?',
@@ -618,7 +618,7 @@ export const REGULATED_INDUSTRIES: AnswerPageContent = {
     { q: 'Is Oya SOC 2 compliant?', a: 'Oya holds a SOC 2 Type I report, and its Type II audit is in progress.' },
     {
       q: 'Can we run it in our own network?',
-      a: 'Yes. Oya self-hosts on Docker, ECS, GCP or Kubernetes, and self-hosted, pages, recordings and audit records stay in your infrastructure. The source-available community edition is free up to 5 cloud browsers at once. The enterprise edition adds the HIPAA offering and a BAA. Write to sales@getoya.ai.',
+      a: 'Yes. Oya self-hosts on Docker, ECS, GCP or Kubernetes, and self-hosted, pages, recordings and audit records stay in your infrastructure. The source-available community edition is free up to 5 cloud browsers at once, then $20 a browser a month with a license from oyabrowser.com/dashboard/billing. The enterprise edition adds the HIPAA offering and a BAA. Book a time with the founders: https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
     },
     {
       q: 'What does the audit trail record?',

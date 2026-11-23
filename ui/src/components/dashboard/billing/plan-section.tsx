@@ -6,7 +6,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BILLING_PAGE, NEW_SUBSCRIPTION_PRICE_NOTE, SALES_EMAIL, UPGRADES } from './constants';
+import { BILLING_PAGE, NEW_SUBSCRIPTION_PRICE_NOTE, FOUNDERS_CALL, UPGRADES } from './constants';
 import { hours, usePlan } from './use-plan';
 
 /** One line of use against an allowance. */
@@ -81,8 +81,8 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
       </Link>
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
-        <a className="underline" href={`mailto:${SALES_EMAIL}`}>
-          {SALES_EMAIL}
+        <a className="underline" href={FOUNDERS_CALL} target="_blank" rel="noreferrer">
+          Book a time with the founders
         </a>
       </p>
       {error && <p className="text-xs text-red">{error}</p>}

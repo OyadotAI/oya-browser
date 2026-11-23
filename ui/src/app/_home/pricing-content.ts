@@ -59,7 +59,7 @@ export const PUBLIC_PLANS: PublicPlan[] = [
     price: 'Custom',
     period: 'pricing',
     description: 'Scope the capacity your team needs.',
-    includes: ['For larger teams', 'Self-hosting above 5 cloud browsers', 'PHI workloads under a signed BAA'],
+    includes: ['For larger teams', 'Self-hosting above 50 cloud browsers', 'PHI workloads under a signed BAA'],
     action: 'Book a meeting',
     href: foundersCall,
   },

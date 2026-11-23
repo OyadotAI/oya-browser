@@ -150,12 +150,14 @@ export const TABLES: Record<string, Table> = {
     key: ['day', 'kind', 'platform'],
     columns: { day: 'text', kind: 'text', platform: 'text', count: 'int' },
   },
-  // Self-hosted licenses admins issued; the key itself is never stored.
+  // Self-hosted licenses: issued by admins (key never stored) or bought through Stripe (key sealed, so the buyer sees it again).
   licenses: {
     key: ['id'],
     columns: {
       ...{ id: 'text', licensee: 'text', max_concurrent: 'int', expires_at: 'time' },
       ...{ created_at: 'time', created_by: 'text', revoked_at: 'time' },
+      ...{ user_id: 'text', stripe_customer_id: 'text', stripe_subscription_id: 'text', stripe_invoice_id: 'text' },
+      ...{ key_sealed: 'text', interval: 'text' },
     },
   },
   audit_log: {
