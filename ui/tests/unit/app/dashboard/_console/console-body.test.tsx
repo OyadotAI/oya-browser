@@ -22,6 +22,7 @@ function PersonasStub() {
 }
 
 vi.mock('@/components/dashboard/personas-tab', () => ({ default: PersonasStub }));
+vi.mock('@/components/dashboard/playbooks-tab', () => ({ default: () => null }));
 
 afterEach(() => {
   cleanup();
@@ -89,5 +90,15 @@ describe('ConsoleBody', () => {
 
     rerender(<ConsoleBody c={stateFor('prj-2', 'cred-3')} />);
     expect(screen.queryByText('New profile dialog')).toBeNull();
+  });
+
+  it('marks the open tab and scrolls it into view when the tab changes', () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const c = stateFor(null, 'k');
+    const { rerender } = render(<ConsoleBody c={c} />);
+    rerender(<ConsoleBody c={{ ...c, view: { ...c.view, tab: 'playbooks' } } as Console} />);
+    expect(screen.getByRole('button', { name: /Playbooks/ }).getAttribute('aria-current')).toBe('true');
+    expect(scroll).toHaveBeenLastCalledWith({ inline: 'nearest', block: 'nearest' });
   });
 });

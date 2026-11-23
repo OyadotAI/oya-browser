@@ -394,6 +394,7 @@ describe('landing page', () => {
       'Pricing',
       'Docs',
       'Security',
+      'Sign in',
     ]);
     expect(main.getByRole('link', { name: 'Pricing' }).getAttribute('href')).toBe('/pricing');
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));

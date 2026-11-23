@@ -5,6 +5,7 @@ export const WORDS = [
   { word: 'Pricing', href: '/pricing' },
   { word: 'Docs', href: '/docs' },
   { word: 'Security', href: '/trust' },
+  { word: 'Sign in', href: '/login' },
 ];
 
 /** The product menu's original groups, descriptions and links. */

@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { HelpCircle } from 'lucide-react';
 import FleetStrip from '@/components/dashboard/fleet-strip';
 import FleetTable from '@/components/dashboard/fleet-table';
@@ -45,26 +46,40 @@ function Notices({ c }: Props) {
   );
 }
 
-/** The tab bar and the shortcut-help button. */
+/** Keeps the open tab in view when the tab row scrolls sideways on a phone. */
+function useActiveTabInView(tab: string) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // jsdom has no scrollIntoView, hence the optional call.
+    row.current?.querySelector('[aria-current="true"]')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  }, [tab]);
+  return row;
+}
+
+/** The tab bar and the shortcut-help button; the tabs scroll sideways on narrow screens, help stays pinned. */
 function TabBar({ c }: Props) {
+  const row = useActiveTabInView(c.view.tab);
   return (
     <div className="flex items-center gap-1 border-b border-border px-4 lg:px-6">
-      {TABS.map((t) => (
-        <button
-          key={t.key}
-          onClick={() => c.patch({ tab: t.key })}
-          className={`flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
-            c.view.tab === t.key
-              ? 'border-accent text-text'
-              : 'border-transparent text-text-muted hover:text-text-secondary'
-          }`}
-        >
-          <t.icon className="h-4 w-4 shrink-0" />
-          {t.label}
-        </button>
-      ))}
+      <div ref={row} className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => c.patch({ tab: t.key })}
+            aria-current={c.view.tab === t.key ? 'true' : undefined}
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
+              c.view.tab === t.key
+                ? 'border-accent text-text'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <t.icon className="h-4 w-4 shrink-0" />
+            {t.label}
+          </button>
+        ))}
+      </div>
       <button
-        className="btn-icon ml-auto"
+        className="btn-icon shrink-0"
         onClick={() => c.patch({ showHelp: true })}
         title="Keyboard shortcuts (?)"
         aria-label="Keyboard shortcuts"

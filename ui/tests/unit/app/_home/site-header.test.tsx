@@ -75,6 +75,7 @@ describe('public header', () => {
       ['Workflows', '/#workflows'],
       ['Docs', '/docs'],
       ['Security', '/trust'],
+      ['Sign in', '/login'],
     ])
       expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(href);
   });

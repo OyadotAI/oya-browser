@@ -523,8 +523,11 @@ textarea {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-.fleet-data {
-  min-width: 1040px;
+/* Phones drop the minor fleet columns instead of scrolling sideways. */
+@media (min-width: 768px) {
+  .fleet-data {
+    min-width: 1040px;
+  }
 }
 .profile-data {
   min-width: 1160px;
