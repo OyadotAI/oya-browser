@@ -13,7 +13,7 @@ import { ANSWER_PAGES } from '../_answers/content';
 export const metadata: Metadata = {
   title: 'Compare Oya Browser',
   description:
-    'Compare Oya Browser with Browserbase, Steel, Anchor, Browser Use, Playwright MCP, Chrome DevTools MCP, Firecrawl, Stagehand and Skyvern from public docs.',
+    'Compare Oya with Browserbase, Steel, Anchor, Browser Use, Playwright MCP, Chrome DevTools MCP, Firecrawl, Stagehand, Skyvern and Nova Act, from public docs.',
   alternates: { canonical: '/vs', types: SITE_ALTERNATE_TYPES },
 };
 

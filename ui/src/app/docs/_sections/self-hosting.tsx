@@ -38,7 +38,9 @@ function Install() {
       <SectionHeading id="self-hosting">Self-hosting</SectionHeading>
       <p className="mb-3">
         Run the whole stack in your own network, for HIPAA and SOC 2 workloads or anywhere data may not leave. It needs
-        git, Docker and Node 20 or later.
+        git, Docker and Node 20 or later. For protected health information, HIPAA mode and the BAA come with the
+        enterprise edition: see <a href="/baa">the BAA and where PHI flows</a>, the <a href="/trust">trust center</a>,
+        and <a href="/browser-for-healthcare">Oya for healthcare</a>.
       </p>
       <CodeBlock label="Terminal">{`curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh`}</CodeBlock>
       <p className="mb-3">
