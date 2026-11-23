@@ -46,11 +46,11 @@ function Consent() {
   return (
     <p className="text-center text-xs text-text-dim">
       By creating an account you agree to the{' '}
-      <Link href="/terms" className="underline hover:text-text">
+      <Link href="/terms" className="whitespace-nowrap underline hover:text-text">
         Terms of Service
       </Link>{' '}
       and{' '}
-      <Link href="/privacy" className="underline hover:text-text">
+      <Link href="/privacy" className="whitespace-nowrap underline hover:text-text">
         Privacy Policy
       </Link>
       .

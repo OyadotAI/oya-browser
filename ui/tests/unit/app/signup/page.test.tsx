@@ -115,10 +115,10 @@ describe('SignupPage enterprise path', () => {
     expect(screen.getByRole('link', { name: 'Sign in' }).getAttribute('href')).toBe('/login');
   });
 
-  it('points the account form at the sales questions, from the switch and the nudge', () => {
+  it('points the account form at the sales questions from the switch alone, with no nudge card', () => {
     render(<SignupPage />);
     expect(screen.getByRole('link', { name: 'Enterprise' }).getAttribute('href')).toBe('/signup?plan=enterprise');
-    expect(screen.getByRole('link', { name: /Talk to sales/ }).getAttribute('href')).toBe('/signup?plan=enterprise');
+    expect(screen.queryByRole('link', { name: /Talk to sales/ })).toBeNull();
   });
 
   it('holds the calendar back until the required answers are in', async () => {

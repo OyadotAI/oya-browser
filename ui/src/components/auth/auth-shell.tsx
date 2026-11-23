@@ -14,19 +14,16 @@ interface ShellProps {
   footer: ReactNode;
   /** Optional context placed after the form on phones. */
   pitch?: ReactNode;
-  /** Optional flow controls above the form. */
-  above?: ReactNode;
 }
 
 /** A solid panel keeps validation and credentials readable in either saved theme. */
-export function AuthShell({ glow, children, footer, pitch, above }: ShellProps) {
+export function AuthShell({ glow, children, footer, pitch }: ShellProps) {
   return (
     <div className={styles.shell} data-accent={glow}>
       <div className={styles.frame} data-wide={Boolean(pitch)}>
         <div className={styles.brand}>
           <OyaWordmark />
         </div>
-        {above}
         <div className={styles.columns}>
           <div className={styles.form}>
             <div className={styles.card}>{children}</div>

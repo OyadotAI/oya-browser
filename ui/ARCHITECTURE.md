@@ -46,7 +46,7 @@ src/
     auth-provider.tsx    facade: AuthProvider and useAuth (the session logic is lib/auth)
     auth/                shared by sign-in and sign-up: AuthShell, fields, useFormState/runSubmit
     ui/                  dialog.tsx (+ use-dialog.ts), context-menu.tsx (+ use-context-menu.ts), kbd, syntax-code
-    copy-example, oya-logo, theme-toggle
+    oya-logo, theme-toggle
     dashboard/           the console's components (below)
   lib/
     api.ts               API URL, auth headers, account endpoints, the tab's console credential
