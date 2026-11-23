@@ -68,3 +68,17 @@ it('gives a notification no reply, and a malformed or unknown request an error',
     -32_601,
   );
 });
+
+it('a screenshot keeps measured viewport metadata beside its actual image block', async () => {
+  const result: any = await answer(
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'screenshot' } },
+    async () => ({
+      ok: true,
+      data: { screenshot: 'data:image/png;base64,UE5H', viewport: { width: 375, height: 812, dpr: 2 } },
+      error: null,
+    }),
+  );
+  assert.match(result.result.content[0].text, /375/);
+  assert.equal(result.result.content[1].type, 'image');
+  assert.equal(result.result.content[1].data, 'UE5H');
+});

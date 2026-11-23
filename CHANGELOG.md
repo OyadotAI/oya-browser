@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Added session-scoped viewport sizing to local MCP and preserved screenshot metadata; wrapped links now use reachable client-rect points for both coverage analysis and native clicks.
+
 ## [1.0.282](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.282) · 2026-11-23
 
 ### Fixed

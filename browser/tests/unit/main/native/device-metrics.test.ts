@@ -66,3 +66,20 @@ test('destroyed pages release listeners and connection ownership without native 
   assert.equal(f.restored(), 0);
   assert.equal(f.contents.listenerCount('destroyed'), 0);
 });
+
+test('main-frame commit reapplies retained metrics before the new document scripts run', () => {
+  const f = fixture(),
+    owner = new NativeDeviceMetrics();
+  owner.set(f.page, metrics);
+  f.contents.emit('did-navigate');
+  assert.equal(f.applied.length, 2);
+  assert.deepEqual(f.applied[1], f.applied[0]);
+  f.contents.emit('did-finish-load');
+  assert.equal(f.applied.length, 3);
+  owner.clear(f.page);
+  assert.equal(f.contents.listenerCount('did-navigate'), 0);
+  assert.equal(f.contents.listenerCount('did-finish-load'), 0);
+  f.contents.emit('did-navigate');
+  f.contents.emit('did-finish-load');
+  assert.equal(f.applied.length, 3);
+});

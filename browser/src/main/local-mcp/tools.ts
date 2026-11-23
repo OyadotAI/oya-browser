@@ -72,6 +72,21 @@ const PAGE_TOOLS: Record<string, LocalTool> = {
     ]),
     command: ({ direction, amount }) => ['scroll', { direction, amount }],
   },
+  viewport: {
+    description:
+      'Set CSS width/height until reset:true. Optional DPR retains its value; mobile:true is unsupported. Open a page first.',
+    inputSchema: object({
+      width: { type: 'integer', minimum: 1, maximum: 4096 },
+      height: { type: 'integer', minimum: 1, maximum: 4096 },
+      deviceScaleFactor: { type: 'number', minimum: 0.25, maximum: 4 },
+      mobile: { type: 'boolean' },
+      reset: { type: 'boolean' },
+    }),
+    command: ({ width, height, deviceScaleFactor, mobile, reset }) => [
+      'viewport',
+      given({ width, height, deviceScaleFactor, mobile, reset }),
+    ],
+  },
   screenshot: {
     description: 'Capture the visible part of your tab as an image.',
     inputSchema: object(),

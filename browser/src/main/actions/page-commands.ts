@@ -5,6 +5,8 @@
  * Pointer and raw keyboard commands are in pointer-commands.cjs.
  */
 import { capturePage, evaluatePage, screenshotOptions, type NativePage as PageView } from '../native/index.ts';
+import { setViewport, viewportInfo, viewportCaptureSize } from './viewport.ts';
+import { viewportDeadline } from './viewport-deadline.ts';
 import { actionNavigation } from './action-navigation.ts';
 import { sleep, jitter } from '../input/timing.ts';
 import * as s from './scripts.ts';
@@ -18,6 +20,15 @@ import { isWebAddress, NOT_A_WEB_ADDRESS } from '../tabs/navigation.ts';
 import { loadUntilReady, isUnprotected } from '../tabs/load.ts';
 import type { PageDriver, TabView } from './driver.ts';
 import type { CommandId, CommandParams, ElementSpot, Landed, Located, ScriptResult } from './types.ts';
+
+/** Crop an active viewport lease while preserving the native compositor's original pixels. */
+function screenshotPage(view: PageView, format: string, quality?: number): Promise<string> {
+  return capturePage(
+    view,
+    format === 'jpeg' ? (quality ?? c.SCREENSHOT_JPEG_QUALITY) : undefined,
+    viewportCaptureSize(view),
+  );
+}
 
 /** A server command: answers through sendResult, given the view it targets. */
 export type PageHandler = (
@@ -230,11 +241,19 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { url: view.webContents.getURL(), title: view.webContents.getTitle() });
   },
 
+  /** Resize only the command's owned native tab through session-scoped emulation. */
+  async viewport(driver, id, params, view) {
+    const viewport = await setViewport(driver, view, params || {});
+    driver.deps.sendResult(id, true, { viewport });
+  },
+
   /** Capture the command's exact native view, or a JPEG when asked (a model reads it). */
   async screenshot(driver, id, params, view) {
     const { format, quality } = screenshotOptions(params || {});
-    const screenshot = await capturePage(view, format === 'jpeg' ? (quality ?? c.SCREENSHOT_JPEG_QUALITY) : undefined);
-    driver.deps.sendResult(id, true, { screenshot });
+    await viewportDeadline(driver.deps.worldEval(view, 'window.__acHideHighlights?.()'));
+    const viewport = await viewportInfo(driver, view);
+    const screenshot = await screenshotPage(view, format, quality);
+    driver.deps.sendResult(id, true, { screenshot, viewport });
   },
 
   /** Clicks an unobscured element with native input and follows any navigation it starts. */

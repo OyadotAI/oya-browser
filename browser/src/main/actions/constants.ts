@@ -86,3 +86,8 @@ export const FRAME_OUTSIDE_ERROR = 'That element is outside its frame. Scroll it
 /** Why a command is refused on a frame element: only some commands can run inside a frame. */
 export const FRAME_UNSUPPORTED_ERROR =
   'That action cannot be used on an element inside another site’s frame yet. Use click, type, hover or select.';
+
+/** A frozen renderer must release viewport work before Keel’s 20-second caller deadline. */
+export const VIEWPORT_READ_MS = 5000;
+/** A timed-out viewport read is explicitly uncertain until its native transaction restores settings. */
+export const VIEWPORT_TIMEOUT_MESSAGE = 'Viewport measurement timed out; the renderer did not answer.';

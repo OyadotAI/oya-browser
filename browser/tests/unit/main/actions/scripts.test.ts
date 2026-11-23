@@ -4,6 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import * as s from '../../../../src/main/actions/scripts.ts';
 
 describe('page scripts', () => {
@@ -117,4 +118,44 @@ describe('page scripts', () => {
   it('the name of an unknown action never reaches a script, whatever it contains', () => {
     assert.equal(s.actionScript("x'}),(globalThis.pwned=1),({a:'", {}), null);
   });
+  it('native click coordinates use the analyzer reachable line point instead of the union centre', () => {
+    const document: any = {};
+    const el: any = {
+      ownerDocument: document,
+      tagName: 'A',
+      innerText: 'Privacy Policy',
+      getAttribute: () => null,
+      scrollIntoView: () => {},
+      getBoundingClientRect: () => ({ x: 0, y: 80, top: 80, width: 100, height: 40 }),
+    };
+    const window = { __acFindElement: () => el, __acReachablePoint: () => ({ x: 12.5, y: 110 }), scrollBy: () => {} };
+    const result = vm.runInNewContext(s.findElementJs('a'), { window, document });
+    assert.equal(result.data.x, 12.5);
+    assert.equal(result.data.y, 110);
+    assert.equal(result.data.covered, false);
+    window.__acReachablePoint = () => null;
+    assert.equal(vm.runInNewContext(s.findElementJs('a'), { window, document }).data.covered, true);
+  });
+});
+
+it('same-origin framed clicks use the shared mapped point without adding offsets twice', () => {
+  const document = {};
+  const el: any = {
+    ownerDocument: {},
+    tagName: 'A',
+    innerText: 'Privacy Policy',
+    getAttribute: () => null,
+    scrollIntoView: () => {},
+    getBoundingClientRect: () => ({ x: 0, y: 100, top: 100, width: 100, height: 40 }),
+  };
+  const window = {
+    __acFindElement: () => el,
+    __acReachablePoint: () => ({ x: 125, y: 270 }),
+    __acFrameOffset: () => ({ x: 100, y: 50 }),
+    scrollBy: () => {},
+  };
+  const result = vm.runInNewContext(s.findElementJs('a'), { window, document });
+  assert.equal(result.data.x, 125);
+  assert.equal(result.data.y, 270);
+  assert.equal(result.data.covered, false);
 });

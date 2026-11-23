@@ -50,11 +50,22 @@ function image(dataUrl: string): ToolReply {
   return { content: [{ type: 'image', data: dataUrl.replace(DATA_URL, ''), mimeType: type }] };
 }
 
+/** A native screenshot keeps its measured metadata beside its image block. */
+function screenshotReply(data: Record<string, unknown>): ToolReply {
+  const result = image(String(data.screenshot));
+  if (data.viewport)
+    result.content.unshift({
+      type: 'text',
+      text: `Screenshot viewport: ${JSON.stringify(data.viewport)}. Mobile mode: off (touch emulation unsupported).`,
+    });
+  return result;
+}
+
 /** A command's answer as tool content: the page text for a read, an image for a screenshot, else its data. */
 export function toolReply(result: LocalResult): ToolReply {
   if (!result.ok) return failed(result.error || 'The browser could not do that.');
   const data = (result.data ?? {}) as Record<string, unknown>;
-  if (typeof data.screenshot === 'string') return image(data.screenshot);
+  if (typeof data.screenshot === 'string') return screenshotReply(data);
   const text = typeof data.page === 'string' ? data.page : JSON.stringify(data);
   return { content: [{ type: 'text', text: text === '{}' ? 'Done.' : text }] };
 }

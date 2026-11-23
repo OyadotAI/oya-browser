@@ -11,7 +11,7 @@ import { ACTION_SCRIPTS } from '../../../../src/main/actions/scripts.ts';
 import { TAB_COMMANDS } from '../../../../src/main/connection/tab-commands.ts';
 
 /** Actions only the server sends: done by the app, never announced. */
-const INTERNAL = new Set(['evaluate_raw', 'record', 'run_script']);
+const INTERNAL = new Set(['evaluate_raw', 'record', 'run_script', 'viewport']);
 
 describe('OYA_ACTIONS', () => {
   it('equals the actions the command maps answer, plus handle_dialog, without the internal ones', () => {

@@ -68,7 +68,8 @@
     "test:native-app": "npm run build && node tests/integration/native-app.mjs",
     "test:native-packaged-app": "node tests/integration/native-packaged-app.mjs",
     "test:desktop-highlights": "node tests/integration/desktop-highlights.mjs",
-    "postinstall": "node build/minimatch-compat.cjs"
+    "postinstall": "node build/minimatch-compat.cjs",
+    "test:keel-browser": "node tests/integration/keel-browser-viewport.mjs"
   },
   "dependencies": {
     "@playwright/test": "^1.65.1",

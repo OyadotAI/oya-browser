@@ -248,7 +248,7 @@
         const rect = dom.getBoundingClientRect();
         el.visible = inViewport(rect, getIframeOffset(dom));
         if (el.visible && !pinnedAt(dom) && rectOnScreen(rect, dom)) onScreenIds.add(el.id);
-        if (el.visible && isCovered(dom, rect)) {
+        if (el.visible && isCovered(dom)) {
           el.covered = true;
           el.state = el.state ? el.state + ' covered' : 'covered';
         }
@@ -283,12 +283,8 @@
         ? `${Math.round((panel.scrollTop / (panel.scrollHeight - panel.clientHeight)) * 100)}% (${Math.round(panel.scrollTop)}px of ${panel.scrollHeight}px); the content scrolls inside a panel`
         : '',
       elements: `${elementMap.length} total, ${visibleCount} visible`,
-      modal: activeModal
-        ? `${ariaName(activeModal) || 'unnamed'} (only this dialog was read)`
-        : '',
-      covered: coveredCount
-        ? `${coveredCount} visible elements are behind something drawn over them (close it first)`
-        : '',
+      modal: activeModal ? `${ariaName(activeModal) || 'unnamed'} (only this dialog was read)` : '',
+      covered: coveredCount ? `${coveredCount} visible elements could not be reached at any sampled point` : '',
       focused: focusedId || '',
     };
     const { rows, anchored } = capRows(blocks);
@@ -350,7 +346,9 @@
   function capRows(rows) {
     const anchored = rows.some((row) => row.screen === true);
     if (rows.length <= MAX_BLOCKS) return { rows, anchored };
-    const kept = capOrder(rows).slice(0, MAX_BLOCKS).sort((a, b) => a - b);
+    const kept = capOrder(rows)
+      .slice(0, MAX_BLOCKS)
+      .sort((a, b) => a - b);
     return { rows: kept.map((i) => rows[i]), anchored };
   }
 
@@ -358,22 +356,57 @@
    * Whether something else is drawn over the element's centre, such as a cookie
    * banner or an overlay. A click there lands on that instead.
    */
-  function isCovered(dom, rect) {
-    let x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+  function isCovered(dom) {
+    const win = dom.ownerDocument.defaultView;
+    const onScreen = [...dom.getClientRects()].some(
+      (r) =>
+        r.width !== 0 &&
+        r.height !== 0 &&
+        r.right > 0 &&
+        r.bottom > 0 &&
+        r.left < win.innerWidth &&
+        r.top < win.innerHeight,
+    );
+    return onScreen && reachablePoint(dom) === null;
+  }
+
+  /** A reachable client-rect centre, clipped to its own viewport and checked through every frame. */
+  function reachablePoint(dom) {
+    const win = dom.ownerDocument.defaultView;
+    for (const rect of dom.getClientRects()) {
+      const left = Math.max(0, rect.left),
+        top = Math.max(0, rect.top);
+      const right = Math.min(win.innerWidth, rect.right),
+        bottom = Math.min(win.innerHeight, rect.bottom);
+      if (right <= left || bottom <= top) continue;
+      const point = { x: (left + right) / 2, y: (top + bottom) / 2 };
+      const reached = pointReaches(dom, point.x, point.y);
+      if (reached) return reached;
+    }
+    return null;
+  }
+
+  /** Descendants count as the target; ancestors, gaps and sticky headers do not bypass overlays. */
+  function pointReaches(dom, x, y) {
     for (let target = dom; target;) {
       const root = target.getRootNode();
       const hit = root.elementFromPoint?.(x, y);
-      if (hit && hit !== target && !target.contains(hit) && !hit.contains(target) && !isStickyHeader(hit)) return true;
-      if (root.host) { target = root.host; continue; }
+      if (!hit || (hit !== target && !target.contains(hit))) return null;
+      if (root.host) {
+        target = root.host;
+        continue;
+      }
+      if (target.ownerDocument === document) return { x, y };
       const frame = target.ownerDocument.defaultView?.frameElement;
-      if (!frame) return false;
+      if (!frame) return null;
       const r = frame.getBoundingClientRect();
       x = r.left + (x + frame.clientLeft) * (frame.offsetWidth ? r.width / frame.offsetWidth : 1);
       y = r.top + (y + frame.clientTop) * (frame.offsetHeight ? r.height / frame.offsetHeight : 1);
       target = frame;
     }
-    return false;
+    return null;
   }
+  window.__acReachablePoint = reachablePoint;
 
   /** Whether an element sits in a fixed or sticky strip across the top of the viewport. */
   function isStickyHeader(el) {
@@ -793,7 +826,8 @@
         // Headers remain addressable even when a library installs listeners with
         // addEventListener, which an isolated analyzer cannot introspect. A
         // semantic header target does not claim that a plain header is a button.
-        const type = getInteractiveType(cell) ||
+        const type =
+          getInteractiveType(cell) ||
           (cell.tagName === 'TH' ? (cell.getAttribute('scope') === 'row' ? 'rowheader' : 'columnheader') : null);
         if (type && !hasInteractiveChild(cell)) addElement(cell, type, row);
         else for (const c of childrenOf(cell)) walk(c, row);
@@ -1772,6 +1806,19 @@
     });
   }
 
+  /** Hide only inspection decorations; element ids stay valid for the next native action. */
+  window.__acHideHighlights = function () {
+    const hide = (doc) => {
+      doc.getElementById('ac-labels')?.remove();
+      doc.getElementById('ac-highlight-style')?.remove();
+      for (const frame of doc.querySelectorAll('iframe')) {
+        try {
+          if (frame.contentDocument) hide(frame.contentDocument);
+        } catch {}
+      }
+    };
+    hide(document);
+  };
   window.__acCleanup = cleanup;
 
   // ─── Live DOM Observer ───

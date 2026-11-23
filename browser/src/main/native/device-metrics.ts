@@ -22,17 +22,26 @@ function validateDimension(value: unknown): void {
   if (!Number.isInteger(value) || Number(value) < 0 || Number(value) > MAX_DIMENSION)
     throw Error('Viewport dimensions must be integers from 0 to 10000');
 }
+/** Native navigation can reset emulation; this exact connection owns its reapplication and cleanup. */
+interface Lease {
+  /** Last native parameters belonging to this connection. */
+  parameters: Parameters;
+  /** Destruction releases references without touching a dead renderer. */
+  cleanup: () => void;
+  /** Navigation reapplies the same fixed metrics. */
+  refresh: () => void;
+}
 /** Own emulation only while the requesting connection is alive. */
 export class NativeDeviceMetrics {
   /** Strong references exist only until clear, destruction, or disconnect. */
-  private readonly pages = new Map<WebContents, () => void>();
+  private readonly pages = new Map<WebContents, Lease>();
   /** Apply validated metrics to the exact commanded native surface. */
   set(page: NativePage, params: Record<string, unknown>): object {
     const parameters = metricParameters(params),
       contents = page.webContents;
     this.check(contents);
     contents.enableDeviceEmulation(parameters);
-    this.own(contents);
+    this.own(contents, parameters);
     return {};
   }
   /** Restore native metrics only when this connection owns the override. */
@@ -51,17 +60,33 @@ export class NativeDeviceMetrics {
     if (owner && owner !== this) throw Error('Device metrics are owned by another connection');
   }
   /** Native destruction releases ownership without calling methods on a dead renderer. */
-  private own(contents: WebContents): void {
-    if (this.pages.has(contents)) return;
-    const cleanup = (): void => this.forget(contents);
+  private own(contents: WebContents, parameters: Parameters): void {
+    this.forget(contents);
+    const lease = { parameters, cleanup: () => this.forget(contents), refresh: () => this.refresh(contents) };
     OWNERS.set(contents, this);
-    this.pages.set(contents, cleanup);
-    contents.once('destroyed', cleanup);
+    this.pages.set(contents, lease);
+    contents.once('destroyed', lease.cleanup);
+    contents.on('did-navigate', lease.refresh);
+    contents.on('did-finish-load', lease.refresh);
+  }
+  /** Reapply at main-frame commit so initial scripts see retained metrics without changing another lease. */
+  private refresh(contents: WebContents): void {
+    const lease = this.pages.get(contents);
+    if (!lease || OWNERS.get(contents) !== this || contents.isDestroyed()) return;
+    try {
+      contents.enableDeviceEmulation(lease.parameters);
+    } catch {
+      console.warn('[native] Could not restore viewport after navigation');
+    }
   }
   /** Forget exactly this connection's override and associated listener. */
   private forget(contents: WebContents): void {
-    const listener = this.pages.get(contents);
-    if (listener) contents.off('destroyed', listener);
+    const lease = this.pages.get(contents);
+    if (lease) {
+      contents.off('destroyed', lease.cleanup);
+      contents.off('did-navigate', lease.refresh);
+      contents.off('did-finish-load', lease.refresh);
+    }
     this.pages.delete(contents);
     if (OWNERS.get(contents) === this) OWNERS.delete(contents);
   }

@@ -1,6 +1,13 @@
 /** Browser-owned page execution and capture, with no debugging protocol transport. */
 import type { NativeImage, WebContents } from 'electron';
-import { CAPTURE_VIZ_BACKOFF_MS, CAPTURE_VIZ_TRIES, JPEG_MAX_QUALITY } from './constants.ts';
+import {
+  CAPTURE_VIZ_BACKOFF_MS,
+  CAPTURE_VIZ_TRIES,
+  JPEG_MAX_QUALITY,
+  NATIVE_CAPTURE_TIMEOUT_MS,
+  NATIVE_CAPTURE_TIMEOUT_MESSAGE,
+} from './constants.ts';
+import { withinTime } from '../../shared/within-time.ts';
 /** Validate explicit capture options before reading pixels or invoking the native encoder. */
 export function screenshotOptions(params: ScreenshotInput): ScreenshotOptions {
   const format = params.format ?? 'png';
@@ -42,11 +49,31 @@ export async function evaluatePage<T = unknown>(view: NativePage, expression: st
   if (view.webContents.isDestroyed()) throw new Error('View is destroyed');
   return (view.webContents.mainFrame ?? view.webContents).executeJavaScript(expression) as Promise<T>;
 }
+/** The emulated viewport's logical capture region, independent of unused window space. */
+export interface CaptureViewport {
+  /** Width in native view pixels before the encoder applies its host scale. */
+  width: number;
+  /** Height in native view pixels. */
+  height: number;
+}
 /** Capture rendered page pixels, preserving the existing PNG/JPEG data-URL response contract. */
-export async function capturePage(view: NativePage | null, jpegQuality?: number): Promise<string> {
+export async function capturePage(view: NativePage | null, jpegQuality?: number, viewport?: CaptureViewport) {
   if (!view || view.webContents.isDestroyed()) throw new Error('View is destroyed');
-  const image = await compositorFrame(view.webContents);
+  const image = await boundedFrame(view, viewport);
   if (image.isEmpty()) throw new Error('The page has no rendered pixels to capture');
+  verifyCaptureSize(image, viewport);
+  return imageUrl(image, jpegQuality);
+}
+/** Bound the entire native read, so a wedged compositor cannot hold automation control forever. */
+function boundedFrame(view: NativePage, viewport?: CaptureViewport): Promise<NativeImage> {
+  return withinTime(
+    compositorFrame(view.webContents, viewport),
+    NATIVE_CAPTURE_TIMEOUT_MS,
+    NATIVE_CAPTURE_TIMEOUT_MESSAGE,
+  );
+}
+/** Native encoding preserves captured pixels; emulated DPR is reported separately from PNG dimensions. */
+function imageUrl(image: NativeImage, jpegQuality?: number): string {
   const jpeg = jpegQuality !== undefined;
   const bytes = jpeg ? image.toJPEG(jpegQuality) : image.toPNG();
   return `data:image/${jpeg ? 'jpeg' : 'png'};base64,${bytes.toString('base64')}`;
@@ -57,12 +84,22 @@ export async function capturePage(view: NativePage | null, jpegQuality?: number)
  * navigation can fail with UnknownVizError while the GPU process catches up; that is the display,
  * not the page, so it is tried again a few times. Any other failure is reported at once.
  */
-async function compositorFrame(contents: WebContents, attempt = 1): Promise<NativeImage> {
+async function compositorFrame(contents: WebContents, viewport?: CaptureViewport, attempt = 1): Promise<NativeImage> {
   try {
-    return await contents.capturePage();
+    return await contents.capturePage(viewport ? { x: 0, y: 0, ...viewport } : undefined);
   } catch (err) {
     if (attempt >= CAPTURE_VIZ_TRIES || !/UnknownVizError/.test(String(err))) throw err;
     await new Promise((resolve) => setTimeout(resolve, CAPTURE_VIZ_BACKOFF_MS * attempt));
-    return compositorFrame(contents, attempt + 1);
+    return compositorFrame(contents, viewport, attempt + 1);
   }
+}
+
+/** A native compositor can clip requests to its window; never pass that off as a full viewport. */
+function verifyCaptureSize(image: NativeImage, viewport?: CaptureViewport): void {
+  if (!viewport) return;
+  const size = image.getSize();
+  if (size.width !== viewport.width || size.height !== viewport.height)
+    throw Error(
+      'The viewport does not fit Oya’s native capture surface. Enlarge the Oya window or choose a smaller viewport, then retry the screenshot.',
+    );
 }

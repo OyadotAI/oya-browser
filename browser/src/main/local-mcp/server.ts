@@ -16,6 +16,7 @@ import { inLane } from '../control/agent-tab.ts';
 import type { LocalResult } from '../connection/commands.ts';
 import { ensureToken } from './token.ts';
 import * as C from './constants.ts';
+import { releaseViewport, releaseAllViewports } from '../actions/viewport.ts';
 
 /** What the port uses: the command runner, control, agent tabs, and Electron for the token's keychain. */
 type Deps = Pick<AppServices, 'commands' | 'control' | 'electron' | 'agentTab'>;
@@ -68,6 +69,7 @@ export class LocalMcp {
 
   /** Stops listening. */
   stop(): void {
+    releaseAllViewports();
     this.server?.close();
     this.server = null;
     this.bound = false;
@@ -92,7 +94,10 @@ export class LocalMcp {
   /** Releases the session's lane and closes tabs it opened when the MCP client ends its session. */
   private endSession(req: IncomingMessage): Reply {
     const given = validSessionId(req);
-    if (given) inLane(`mcp-${given}`, () => this.deps.agentTab?.release());
+    if (given) {
+      releaseViewport(`mcp-${given}`);
+      inLane(`mcp-${given}`, () => this.deps.agentTab?.release());
+    }
     return { status: C.Status.OK };
   }
 

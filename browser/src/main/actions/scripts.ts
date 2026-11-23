@@ -34,35 +34,27 @@ const FIND_ELEMENT_JS = `(() => {
   }
   // Check the target document and every containing frame. Never bypass an
   // overlay using synthetic events, including an overlay outside an iframe.
-  const reaches = (r) => {
-    let target = el, x = r.x + r.width / 2, y = r.y + r.height / 2;
-    while (target) {
-      const doc = target.ownerDocument;
-      let top = doc.elementFromPoint(x, y);
-      while (top !== target && !target.contains(top) && top?.shadowRoot?.elementFromPoint) {
-        const inner = top.shadowRoot.elementFromPoint(x, y);
-        if (!inner || inner === top) break;
-        top = inner;
-      }
-      if (!top || (top !== target && !target.contains(top))) return false;
-      if (doc === document) return true;
-      const frame = doc.defaultView.frameElement;
-      if (!frame) return false;
-      const bounds = frame.getBoundingClientRect();
-      x += bounds.x + frame.clientLeft;
-      y += bounds.y + frame.clientTop;
-      target = frame;
+  const reachable = () => {
+    if (window.__acReachablePoint) return window.__acReachablePoint(el);
+    const win = el.ownerDocument.defaultView;
+    for (const r of el.getClientRects()) {
+      const left=Math.max(0,r.left),top=Math.max(0,r.top),right=Math.min(win.innerWidth,r.right),bottom=Math.min(win.innerHeight,r.bottom);
+      if(right<=left || bottom<=top) continue;
+      const x=(left+right)/2,y=(top+bottom)/2,hit=el.getRootNode().elementFromPoint?.(x,y);
+      if(hit && (hit===el || el.contains(hit)) && el.ownerDocument===document) return {x,y};
     }
-    return false;
+    return null;
   };
-  if (!reaches(rect)) {
+  let point = reachable();
+  if (!point) {
     el.scrollIntoView({ behavior: 'instant', block: 'start' });
     window.scrollBy(0, -100);
     rect = el.getBoundingClientRect();
+    point = reachable();
   }
-  const covered = !reaches(rect);
+  const covered = !point;
   const ownerDoc = el.ownerDocument;
-  const offset = ownerDoc === document ? { x: 0, y: 0 } : window.__acFrameOffset?.(el);
+  const offset = window.__acReachablePoint || ownerDoc === document ? { x: 0, y: 0 } : window.__acFrameOffset?.(el);
   if (!offset) return { ok: false, error: 'Native frame coordinates are unavailable' };
   const offsetX = offset.x;
   const offsetY = offset.y;
@@ -74,8 +66,8 @@ const FIND_ELEMENT_JS = `(() => {
   return {
     ok: true,
     data: {
-      x: rect.x + rect.width / 2 + offsetX,
-      y: rect.y + rect.height / 2 + offsetY,
+      x: (point ? point.x : rect.x + rect.width / 2) + offsetX,
+      y: (point ? point.y : rect.y + rect.height / 2) + offsetY,
       tag: el.tagName,
       editable: el.isContentEditable,
       inIframe: ownerDoc !== document,

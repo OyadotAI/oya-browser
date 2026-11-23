@@ -102,13 +102,15 @@ describe('page commands', () => {
 
   it('screenshot answers a PNG data URL', async () => {
     const ctx = await run(pageView(), 'screenshot', {});
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,UE5H' }]]);
+    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,UE5H', viewport: undefined }]]);
   });
 
   it('screenshot answers a JPEG when asked for one', async () => {
     const view = pageView();
     const ctx = await run(view, 'screenshot', { format: 'jpeg' });
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/jpeg;base64,SlBFRw==' }]]);
+    assert.deepEqual(results(ctx), [
+      ['c1', true, { screenshot: 'data:image/jpeg;base64,SlBFRw==', viewport: undefined }],
+    ]);
     assert.deepEqual(view.webContents.calls.at(-1), ['jpeg', c.SCREENSHOT_JPEG_QUALITY]);
   });
 
@@ -426,3 +428,36 @@ function navigateOnInput(view, type) {
     view.webContents.emit('dom-ready');
   };
 }
+
+it('a suspended screenshot preparation releases the command and cannot start a late capture', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const view = pageView();
+  let resume: (value: unknown) => void = () => {},
+    captured = 0,
+    released = false;
+  view.webContents.capturePage = async () => {
+    captured++;
+    throw Error('must not capture after deadline');
+  };
+  const ctx = pageCtx(view, {
+    world: () =>
+      new Promise((resolve) => {
+        resume = resolve;
+      }),
+  });
+  const pending = driverFor(ctx)
+    .runPageAction('shot', 'screenshot', {}, view)
+    .finally(() => {
+      released = true;
+    });
+  const rejected = assert.rejects(pending, /measurement timed out/);
+  await Promise.resolve();
+  await Promise.resolve();
+  t.mock.timers.tick(c.VIEWPORT_READ_MS);
+  await rejected;
+  assert.equal(released, true);
+  assert.equal(captured, 0);
+  resume(undefined);
+  await Promise.resolve();
+  assert.equal(captured, 0);
+});

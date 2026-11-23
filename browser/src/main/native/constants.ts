@@ -57,3 +57,8 @@ export const CAPTURE_VIZ_BACKOFF_MS = 250;
  * agent's whole page read waited on it until the server gave up.
  */
 export const SUBFRAME_RUN_MS = 15_000;
+
+/** Preparation (5 s), metadata (5 s) and capture (8 s) finish below Keel's 20-second caller deadline. */
+export const NATIVE_CAPTURE_TIMEOUT_MS = 8000;
+/** A late native frame is discarded before encoding or forwarding any pixels. */
+export const NATIVE_CAPTURE_TIMEOUT_MESSAGE = 'Native screenshot timed out; retry after the renderer recovers.';
