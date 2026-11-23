@@ -126,12 +126,14 @@ export async function setViewport(driver: PageDriver, view: NativePage, input: C
   const session = ownerFor(view);
   requireConfirmed(session, view, input);
   try {
-    return await (input.reset
-      ? reset(driver, view, session.lane, session.owner)
-      : applyViewport(driver, view, input, session));
+    return await changeViewport(driver, view, input, session);
   } finally {
     if (!session.owner.pages.size && owners.get(session.lane) === session.owner) owners.delete(session.lane);
   }
+}
+/** Dispatch the validated change while keeping lease cleanup in the public operation. */
+function changeViewport(driver: PageDriver, view: NativePage, input: CommandParams, session: Session) {
+  return input.reset ? reset(driver, view, session.lane, session.owner) : applyViewport(driver, view, input, session);
 }
 /** Resolve a bounded session lease before any mutation. */
 function ownerFor(view: NativePage): Session {

@@ -51,12 +51,12 @@ async function analyse(win) {
   await win.loadFile(file);
   return (await world.evaluate({ webContents: win.webContents }, 'analyzePage({highlight:false})')).data.elements;
 }
-/** Decorative test ids must not swallow semantic controls inside an app frame. */
+/** Decorative ids preserve semantic controls; every control must fit the frame before overlay testing. */
 async function customControls(win) {
   const file = path.join(profile, 'custom-controls.html');
   fs.writeFileSync(
     file,
-    `<iframe srcdoc='<style>ui-button,[role=option]{display:block;cursor:pointer}ui-button>button{display:none}</style>
+    `<iframe style="height:320px" srcdoc='<style>ui-button,[role=option]{display:block;cursor:pointer}ui-button>button{display:none}</style>
     <ui-button role="button" aria-label="Settings"><button tabindex="-1"></button><span data-testid="symbols-glyph"><svg></svg></span></ui-button>
     <div role="option" aria-label="Inbox"><span data-testid="folder-label">Inbox</span></div>
     <div role="treeitem" aria-label="Example message"><span data-testid="thread-subject">Example message</span></div>
@@ -75,9 +75,11 @@ async function customControls(win) {
     'document.body.insertAdjacentHTML("beforeend", `<div style="position:fixed;inset:0;background:white"></div>`);void 0',
   );
   const covered = await world.evaluate({ webContents: win.webContents }, 'analyzePage({highlight:false})');
+
   assert.ok(
     covered.data.elements.filter((e) => e.visible).every((e) => e.covered),
-    'A real overlay outside the frame covers its controls',
+    'A real overlay outside the frame covers its controls: ' +
+      JSON.stringify(covered.data.elements.filter((e) => e.visible && !e.covered)),
   );
   for (const name of ['Settings', 'Inbox', 'Example message', 'Real child', 'Reply action'])
     assert.ok(names.includes(name), `Missing ${name}`);
