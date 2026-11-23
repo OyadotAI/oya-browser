@@ -18,6 +18,9 @@ import {
   PORTAL_ROWS,
   SKYVERN,
   STAGEHAND,
+  NOVA_ACT,
+  NOVA_ACT_CHECKED,
+  NOVA_ACT_ROWS,
 } from './compare';
 import type { AnswerPageContent } from './content';
 
@@ -384,4 +387,73 @@ export const VS_SKYVERN: AnswerPageContent = {
     SELF_HOST_FAQ,
   ],
   sources: { checked: CHECKED, links: SKYVERN.sources },
+};
+
+/** /vs/amazon-nova-act: Oya next to Amazon Nova Act for healthcare portal work, from AWS's own pages. */
+export const VS_NOVA_ACT: AnswerPageContent = {
+  path: '/vs/amazon-nova-act',
+  label: 'Oya vs Amazon Nova Act',
+  title: 'Oya vs Amazon Nova Act for healthcare browser agents',
+  lead: 'Comparing Oya Browser and Amazon Nova Act for payer portals and other healthcare web work? Nova Act is an AWS service with an Apache-2.0 Python SDK, priced per agent hour and listed by AWS as HIPAA eligible. Oya signs its own BAA for HIPAA mode on Oya Cloud and the enterprise edition, runs the whole stack in your own cloud if you choose, and saves each finished task as a Playwright playbook that replays with no model.',
+  hero: {
+    headline: 'Oya vs Amazon Nova Act: compare where the agent runs and what you keep.',
+    paragraphs: [
+      'Both put an AI agent in a real browser for work that has no API. Compare who signs the BAA, where the model and the browser run, how a person steps in, and what you are left with after the first run.',
+    ],
+    action: DEMO_ACTION,
+  },
+  sections: [
+    {
+      heading: 'Start with one portal task your team repeats.',
+      body: 'Take one eligibility check, prior authorization or claim status lookup. Trace where the credentials, MFA codes, recordings and PHI go on each platform before comparing features.',
+    },
+    COMPARISON_REQUIREMENTS,
+    {
+      ...PUBLISHED_DIFFERENCES,
+      table: compareTable('Oya and Amazon Nova Act, from each vendor\u2019s own pages', NOVA_ACT_ROWS, [OYA, NOVA_ACT]),
+      fit: {
+        oya: {
+          heading: 'Choose Oya when',
+          points: [
+            'You want the browser vendor itself to sign a BAA, on Oya Cloud or with the whole stack in your own cloud.',
+            'You want each finished task saved as Playwright code that replays with no model, and an append-only audit trail of every agent and person action.',
+            'Your agents work from Claude Code, Codex, Cursor or another MCP client, or from TypeScript as well as Python.',
+          ],
+        },
+        other: {
+          heading: 'Choose Amazon Nova Act when',
+          points: [
+            'Your team already builds on AWS and wants a HIPAA-eligible AWS service under its existing AWS BAA.',
+            'You prefer an Apache-2.0 Python SDK and per-agent-hour pricing, with deployment to AgentCore.',
+            'You want to call MCP tools from inside the agent through the Strands MCPClient.',
+          ],
+        },
+      },
+    },
+    {
+      heading: 'Check what each run leaves behind.',
+      body: 'Oya does not route browsers through Nova Act. Before production, confirm which BAA covers each service on the PHI path, how long audit records are kept, and whether a finished task becomes code your team can rerun without a model.',
+    },
+    COMPARISON_CLOSING,
+  ],
+  faq: [
+    {
+      q: 'What is the difference between Oya Browser and Amazon Nova Act?',
+      a: `On AWS pages read on ${NOVA_ACT_CHECKED}, Nova Act is an AWS service for UI automation agents with an Apache-2.0 Python SDK, priced at $4.75 per agent hour, and listed as HIPAA eligible. Oya is a browser and control plane for AI agents on desktop, Oya Cloud or your own cloud; it signs BAAs for HIPAA mode on Oya Cloud and the enterprise edition and saves every finished task as a Playwright playbook that replays with no model.`,
+    },
+    {
+      q: 'Is Amazon Nova Act HIPAA eligible?',
+      a: `AWS lists Amazon Nova Act on its HIPAA Eligible Services Reference (read ${NOVA_ACT_CHECKED}), so it can be used under an AWS BAA. Check the current list and your AWS agreement before sending PHI.`,
+    },
+    {
+      q: 'Does Oya sign a BAA?',
+      a: 'Yes, for HIPAA mode on Oya Cloud and the enterprise edition. Request it at enterprise.oyabrowser.com/trust or from sales@getoya.ai.',
+    },
+    {
+      q: 'Do Oya and Nova Act support MCP?',
+      a: 'Nova Act documents MCP client support in Preview, through the Strands MCPClient. Oya is an MCP server: one click connects it to Claude Code, Codex, Cursor or VS Code, and any MCP client can connect to Oya Cloud.',
+    },
+    SELF_HOST_FAQ,
+  ],
+  sources: { checked: NOVA_ACT_CHECKED, links: NOVA_ACT.sources },
 };

@@ -29,7 +29,26 @@ const INSTALL_SCRIPT_HEADERS = [{ key: "Content-Type", value: "text/plain; chars
  */
 const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com", "host.docker.internal"];
 
+/**
+ * Short addresses buyers and assistants guess for the healthcare and comparison pages. Each one
+ * points permanently at the page that already ranks for it, so the guess lands and no second page
+ * competes with the first for the same search.
+ */
+const ALIASES: [string, string][] = [
+  ["/security", "/trust"],
+  ["/hipaa", "/baa"],
+  ["/healthcare", "/browser-for-healthcare"],
+  ["/use-cases/payer-portal-automation", "/payer-portal-automation"],
+  ["/use-cases/eligibility-verification", "/eligibility-verification-automation"],
+  ["/use-cases/prior-authorization", "/prior-authorization-automation"],
+  ["/use-cases/claim-status", "/claim-status-automation"],
+  ["/compare/:vendor", "/vs/:vendor"],
+];
+
 const nextConfig: NextConfig = {
+  async redirects() {
+    return ALIASES.map(([source, destination]) => ({ source, destination, permanent: true }));
+  },
   output: "standalone",
   devIndicators: false,
   allowedDevOrigins: DEV_TUNNEL_ORIGINS,

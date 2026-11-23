@@ -14,6 +14,7 @@ export const PRESENTATIONS: Record<string, AnswerPresentation> = {
   '/vs/firecrawl': { family: 'comparison', eyebrow: 'Compare approaches' },
   '/vs/stagehand': { family: 'comparison', eyebrow: 'Compare approaches' },
   '/vs/skyvern': { family: 'comparison', eyebrow: 'Compare approaches' },
+  '/vs/amazon-nova-act': { family: 'comparison', eyebrow: 'Compare approaches' },
   '/ai-browser': { family: 'desktop', eyebrow: 'Your browser, with an agent' },
   '/browser-for-healthcare': { family: 'controls', eyebrow: 'Healthcare & compliance' },
   '/browser-automation-for-regulated-industries': {

@@ -71,6 +71,7 @@ export const OYA: Vendor = {
     audit: 'Append-only and hash-chained; every read of ePHI audited; kept six years in HIPAA mode',
     secrets: 'Passwords and TOTP seeds are sealed and never shown to the model',
     takeover: 'Watch live, take over, hand back',
+    openSource: 'SDK and CLI under MIT; control plane source-available (Sustainable Use License)',
     providers:
       'Yes: Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome, with failover; HIPAA mode uses no outside browser vendors',
     price: 'Free desktop app and 1 cloud browser hour; $500 a month for 100 hours',
@@ -525,5 +526,51 @@ export const STAGEHAND: Vendor = {
     { label: 'Stagehand on GitHub', url: 'https://github.com/browserbase/stagehand' },
     { label: 'Stagehand caching docs', url: 'https://docs.stagehand.dev/v3/best-practices/caching' },
     { label: 'Stagehand quickstart', url: 'https://docs.stagehand.dev/v4/first-steps/quickstart' },
+  ],
+};
+
+/** When the Amazon Nova Act pages below were read; separate from CHECKED because they were read later. */
+export const NOVA_ACT_CHECKED = '2026-11-23';
+
+/** What a healthcare team weighs between a browser-agent service and Oya, including MCP and open source. */
+export const NOVA_ACT_ROWS: Row[] = [
+  { key: 'baa', label: 'Signs a BAA for HIPAA work' },
+  { key: 'selfHost', label: 'Runs in your own infrastructure' },
+  { key: 'openSource', label: 'Open source' },
+  { key: 'mcpSetup', label: 'MCP support' },
+  { key: 'replay', label: 'Replays your finished task with no model' },
+  { key: 'code', label: 'Replay is standard Playwright you own' },
+  { key: 'takeover', label: 'A person can take over live' },
+  { key: 'audit', label: 'Audit trail of agent and person actions' },
+  { key: 'price', label: 'Pricing model' },
+];
+
+/** Amazon Nova Act, from its AWS product, pricing, user guide, HIPAA reference, GitHub and PyPI pages. */
+export const NOVA_ACT: Vendor = {
+  name: 'Amazon Nova Act',
+  cells: {
+    baa: 'Listed as HIPAA eligible by AWS, so it can fall under the AWS BAA',
+    selfHost:
+      'The SDK drives a browser on your own hosts or AgentCore Browser; the model is an AWS service in us-east-1',
+    openSource: 'Python SDK under Apache-2.0; the model and service are not open source',
+    mcpSetup: 'MCP client (in Preview) through the Strands MCPClient',
+    takeover: 'Yes: human-input callbacks for approval and UI takeover',
+    code: 'Not stated; the SDK records video and an HTML trace of each step',
+    price: '$4.75 per agent hour',
+  },
+  sources: [
+    { label: 'Amazon Nova Act', url: 'https://aws.amazon.com/nova/act/' },
+    { label: 'Amazon Nova pricing', url: 'https://aws.amazon.com/nova/pricing/' },
+    {
+      label: 'Nova Act user guide',
+      url: 'https://docs.aws.amazon.com/nova-act/latest/userguide/what-is-nova-act.html',
+    },
+    { label: 'Nova Act tool use (MCP)', url: 'https://docs.aws.amazon.com/nova-act/latest/userguide/tool-use.html' },
+    {
+      label: 'AWS HIPAA eligible services reference',
+      url: 'https://aws.amazon.com/compliance/hipaa-eligible-services-reference/',
+    },
+    { label: 'Nova Act SDK on GitHub', url: 'https://github.com/aws/nova-act' },
+    { label: 'Nova Act on PyPI', url: 'https://pypi.org/project/nova-act/' },
   ],
 };
