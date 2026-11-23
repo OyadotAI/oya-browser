@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.284](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.284) · 2026-11-23
+
 ### Added
 
 - A comparison of Oya and Amazon Nova Act for healthcare browser agents at /vs/amazon-nova-act, with every Nova Act fact sourced from AWS's own pages.

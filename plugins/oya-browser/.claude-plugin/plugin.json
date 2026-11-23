@@ -1,7 +1,7 @@
 {
   "name": "oya-browser",
   "description": "Real Chrome browsers for agents, with HIPAA-compliant Oya Cloud for healthcare. MCP tools and a browsing skill. Cloud signs in with your Oya account; the free desktop app needs none.",
-  "version": "1.0.283",
+  "version": "1.0.284",
   "author": {
     "name": "Oya",
     "url": "https://getoya.ai"
