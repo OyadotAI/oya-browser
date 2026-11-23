@@ -29,3 +29,13 @@ export const forUser = (userId: string): Promise<LicenseRow[]> =>
 
 /** Stores a newly issued license; a second row for the same invoice fails on the unique index rather than landing. */
 export const insert = (row: LicenseRow) => getConnection().upsert(TABLE, [row]);
+
+/** Whether any license bought under a Stripe subscription was revoked: a renewal on it issues no new key. */
+export async function revokedUnder(subscriptionId: string) {
+  const rows = await getConnection().select(TABLE, { stripe_subscription_id: subscriptionId });
+  return rows.some((row) => row.revoked_at);
+}
+
+/** Revokes every live license bought under a Stripe subscription; answers how many. */
+export const revokeUnder = (subscriptionId: string, at: string) =>
+  getConnection().update(TABLE, { stripe_subscription_id: subscriptionId, revoked_at: null }, { revoked_at: at });

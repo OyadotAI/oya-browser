@@ -36,6 +36,9 @@ function fixture(subscription: any = null) {
     byInvoice: async (id) => rows.find((r) => r.stripe_invoice_id === id) ?? null,
     forUser: async (id) => rows.filter((r) => r.user_id === id && !r.revoked_at).reverse(),
     insert: async (row) => void rows.push(row),
+    revokedUnder: async (sub) => rows.some((r) => r.stripe_subscription_id === sub && r.revoked_at),
+    revokeUnder: async (sub, at) =>
+      rows.filter((r) => r.stripe_subscription_id === sub && !r.revoked_at).map((r) => (r.revoked_at = at)).length,
     returnUrl: () => 'https://console.test/dashboard/billing',
     now: () => NOW,
   };
@@ -150,6 +153,17 @@ describe('LicenseSales', () => {
     await sales.applyEvent(paid('in_1', 12, 'retired_price'));
     assert.equal(rows.length, 0);
     assert.match(String(warn.mock.calls[0].arguments[0]), /in_1 has no current license price/);
+  });
+
+  it('issues no new key on a subscription whose key was revoked, ends its billing, and says to refund', async (t) => {
+    const warn = t.mock.method(console, 'warn', () => {});
+    const { sales, rows, posts } = fixture();
+    await sales.applyEvent(paid('in_1'));
+    rows[0].revoked_at = '2026-03-20T00:00:00.000Z';
+    await sales.applyEvent(paid('in_2'));
+    assert.equal(rows.length, 1);
+    assert.deepEqual(posts, [{ path: '/subscriptions/sub_L', params: { cancel_at_period_end: true } }]);
+    assert.match(String(warn.mock.calls[0].arguments[0]), /in_2 paid on a revoked subscription, refund it by hand/);
   });
 
   it('reads the line price from before API 2025-03-31 too', async () => {

@@ -309,7 +309,8 @@ desktop app and browsers you connect yourself are not counted. To run more, buy 
 [oyabrowser.com/dashboard/billing](https://oyabrowser.com/dashboard/billing#self-hosted) (6 to 50
 browsers, $20 each a month or $240 a year) and set its key as `OYA_LICENSE_KEY`, then restart. Each
 renewal issues a new key; the old one keeps working 14 days past its period, so swap it in before
-then. For more than 50, [book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call). See the [license](../LICENSE.md).
+then. A refunded or disputed payment revokes the license, and the server drops back to 5 at
+its next daily ping. For more than 50, [book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call). See the [license](../LICENSE.md).
 
 ## Telemetry
 

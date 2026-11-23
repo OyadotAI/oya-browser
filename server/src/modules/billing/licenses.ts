@@ -17,6 +17,7 @@ import {
 } from './config.ts';
 import { LICENSE_GRACE_S, LICENSE_KIND, LICENSE_LIVE, LICENSE_MIN } from './constants.ts';
 import type { LicenseRow } from './license-repository.ts';
+import { revokeForEvent, revokeSubscription } from './license-revocation.ts';
 import type { StripeEvent } from './subscriptions.ts';
 import type { Stripe } from './stripe.ts';
 
@@ -38,6 +39,10 @@ export type LicenseDeps = {
   forUser(userId: string): Promise<LicenseRow[]>;
   /** Stores a license. */
   insert(row: LicenseRow): Promise<void>;
+  /** Whether a license under a subscription was revoked. */
+  revokedUnder(subscriptionId: string): Promise<boolean>;
+  /** Revokes the live licenses under a subscription; answers how many. */
+  revokeUnder(subscriptionId: string, at: string): Promise<number>;
   /** The billing page, where Checkout and the Portal send the person back. */
   returnUrl(): string;
   /** The time, in ms. */
@@ -112,15 +117,26 @@ export class LicenseSales {
     return { url: session.url };
   }
 
-  /** Issues a key for a paid license invoice, once per invoice; any other event is ignored. */
+  /** Issues a key for a paid license invoice, or revokes the keys a refund or dispute took back; anything else is ignored. */
   async applyEvent(event: StripeEvent) {
     const invoice = event.data?.object;
-    if (event.type !== 'invoice.paid' || !invoice || detailsOf(invoice).metadata?.kind !== LICENSE_KIND) return;
+    if (event.type !== 'invoice.paid') return revokeForEvent(event, this.deps);
+    if (!invoice || detailsOf(invoice).metadata?.kind !== LICENSE_KIND) return;
     const line = licenseLine(invoice);
-    if (!line)
-      return console.warn(`[billing] license invoice ${invoice.id} has no current license price; no key issued`);
+    if (!line) return warn(`license invoice ${invoice.id} has no current license price; no key issued`);
     if (await this.deps.byInvoice(invoice.id)) return;
-    await this.deps.insert(this.issue(invoice, line));
+    await this.issueUnlessRevoked(invoice, line);
+  }
+
+  /** Issues the key, unless the subscription had a key revoked (refund, dispute or admin): then no key, and its billing is stopped. */
+  async issueUnlessRevoked(invoice: StripeObject, line: StripeObject) {
+    const { subscription } = detailsOf(invoice);
+    if (!(await this.deps.revokedUnder(subscription))) return this.deps.insert(this.issue(invoice, line));
+    await revokeSubscription(
+      this.deps,
+      subscription,
+      `invoice ${invoice.id} paid on a revoked subscription, refund it by hand`,
+    );
   }
 
   /** Mints the key for one paid invoice line and answers its row, the key sealed to its buyer. */
@@ -190,6 +206,9 @@ function boughtColumns(invoice: StripeObject, line: StripeObject) {
     ...{ stripe_invoice_id: invoice.id, interval: licenseIntervalOf(priceOfLine(line)) },
   };
 }
+
+/** Says why a paid license invoice issued no key: someone has to look. */
+const warn = (why: string) => console.warn(`[billing] ${why}`);
 
 /** The 409 for a second license while one is being paid for: more browsers go through the portal or sales. */
 const alreadyLicensed = () =>
