@@ -6,6 +6,13 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- A comparison of Oya and Amazon Nova Act for healthcare browser agents at /vs/amazon-nova-act, with every Nova Act fact sourced from AWS's own pages.
+- Short addresses for healthcare buyers: /security, /hipaa, /healthcare, /use-cases/* and /compare/* now lead to the trust center, the BAA page, the healthcare page, the workflow pages and the comparisons.
+- The BAA page answers whether you can self-host to keep PHI in your own VPC, and whether the free community edition is covered.
+- llms.txt opens with a healthcare and HIPAA summary, and the self-hosting docs link to the BAA page and trust center.
+
 ## [1.0.283](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.283) · 2026-11-23
 
 ### Fixed
