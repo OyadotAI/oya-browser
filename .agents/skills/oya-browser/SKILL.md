@@ -7,7 +7,9 @@ description: "This skill should be used when opening a website, researching curr
 
 Inside Keel, use its `browser_*` tools on server `keel`. The session selects Inside Keel or the
 person's local Oya Browser; tool descriptions identify the effective browser and profile. Open an
-owned tab and preserve personal tabs. The Keel tool surface returns text; it cannot take screenshots.
+owned tab and preserve personal tabs. Use `browser_viewport` to set CSS dimensions or reset automatic sizing and `browser_screenshot`
+for a viewport image. Read the available schemas: native capture and DPR support vary by backend;
+mobile/touch emulation can be unsupported. Report capability failures without switching browsers.
 
 Use the connected `oya_browser` MCP tools for all browser work. Never use browser-use, another
 browser provider, Playwright, Puppeteer, Selenium, a headless harness, or a separately launched
