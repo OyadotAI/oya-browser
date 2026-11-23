@@ -2,6 +2,15 @@
 
 > Real Chrome for AI coding agents and teams. On your computer it is a free AI browser that connects to Claude Code, Codex, Cursor and VS Code over local MCP with no account or API key, keeps your logins, gives each agent its own tab, and lets a person take over at any time. In Oya Cloud or self-hosted it is a HIPAA-compliant agentic browser with a tamper-evident audit trail, signed BAAs, and playbooks that save an agent run as standard Playwright code and replay it with no model.
 
+## Healthcare and HIPAA
+
+Oya runs AI agents on healthcare portals with no API or EDI path: eligibility, prior authorization, claim status, appeals, provider enrollment and state registries. An agent does a task once, signed in as your staff, and Oya saves it as a Playwright playbook that replays with no model. In HIPAA mode, on Oya Cloud or the self-hosted enterprise edition, Oya signs a BAA, keeps PHI on its own browsers (no outside browser vendors, proxies or CAPTCHA solvers), uses only BAA-covered models, and logs every agent and person action to a hash-chained audit trail kept six years. SOC 2 Type I issued; Type II in progress.
+
+- [Browser for healthcare](https://oyabrowser.com/browser-for-healthcare), [HIPAA-compliant browser](https://oyabrowser.com/hipaa-compliant-browser), [HIPAA browser automation](https://oyabrowser.com/hipaa-browser-automation), [regulated industries](https://oyabrowser.com/browser-automation-for-regulated-industries)
+- [BAA and HIPAA mode](https://oyabrowser.com/baa): who signs, where PHI flows, which models see it
+- Workflows: [payer portals](https://oyabrowser.com/payer-portal-automation), [eligibility](https://oyabrowser.com/eligibility-verification-automation), [prior authorization](https://oyabrowser.com/prior-authorization-automation), [claim status](https://oyabrowser.com/claim-status-automation), [denials](https://oyabrowser.com/denial-management-automation), [provider enrollment](https://oyabrowser.com/provider-enrollment-automation), [state registries](https://oyabrowser.com/state-registry-automation)
+- [Best payer portal automation in 2026, compared](https://oyabrowser.com/best-payer-portal-automation)
+
 ## Desktop setup for coding agents (no account, no key)
 
 When the person asks you to set up Oya on their computer, run one line with your shell tool (signed and notarized official installer). Replace `claude-code` with your own name (`claude-code`, `codex`, `cursor` or `vscode`):
@@ -81,10 +90,6 @@ Cookies and personas are scoped to the API key; browsers sharing a persona share
 - [Browser for Claude Code, Codex and Cursor](https://oyabrowser.com/browser-for-claude-code)
 - [Best browser for AI agents](https://oyabrowser.com/best-browser-for-ai-agents)
 - [Best AI browser](https://oyabrowser.com/best-ai-browser)
-- [Best payer portal automation](https://oyabrowser.com/best-payer-portal-automation)
 - [AI browser](https://oyabrowser.com/ai-browser) and [AI browser for ChatGPT and Claude](https://oyabrowser.com/ai-browser-chatgpt-claude)
 - [Agentic browser](https://oyabrowser.com/agentic-browser)
-- [HIPAA-compliant browser](https://oyabrowser.com/hipaa-compliant-browser) and [HIPAA browser automation](https://oyabrowser.com/hipaa-browser-automation)
-- [Browser for healthcare](https://oyabrowser.com/browser-for-healthcare) and [regulated industries](https://oyabrowser.com/browser-automation-for-regulated-industries)
-- Healthcare workflows: [payer portals](https://oyabrowser.com/payer-portal-automation), [prior authorization](https://oyabrowser.com/prior-authorization-automation), [eligibility verification](https://oyabrowser.com/eligibility-verification-automation), [claim status](https://oyabrowser.com/claim-status-automation), [denial management](https://oyabrowser.com/denial-management-automation), [provider enrollment](https://oyabrowser.com/provider-enrollment-automation), [state registries](https://oyabrowser.com/state-registry-automation)
-- Comparisons: [Oya vs Browserbase](https://oyabrowser.com/vs/browserbase), [Oya vs Steel](https://oyabrowser.com/vs/steel), [Oya vs Anchor](https://oyabrowser.com/vs/anchor), [Oya vs Browser Use](https://oyabrowser.com/vs/browser-use), [Oya vs Playwright MCP](https://oyabrowser.com/vs/playwright-mcp), [Oya vs Chrome DevTools MCP](https://oyabrowser.com/vs/chrome-devtools-mcp), [Oya vs Firecrawl](https://oyabrowser.com/vs/firecrawl), [Oya vs Stagehand](https://oyabrowser.com/vs/stagehand), [Oya vs Skyvern](https://oyabrowser.com/vs/skyvern)
+- Comparisons: [Oya vs Browserbase](https://oyabrowser.com/vs/browserbase), [Oya vs Steel](https://oyabrowser.com/vs/steel), [Oya vs Anchor](https://oyabrowser.com/vs/anchor), [Oya vs Browser Use](https://oyabrowser.com/vs/browser-use), [Oya vs Playwright MCP](https://oyabrowser.com/vs/playwright-mcp), [Oya vs Chrome DevTools MCP](https://oyabrowser.com/vs/chrome-devtools-mcp), [Oya vs Firecrawl](https://oyabrowser.com/vs/firecrawl), [Oya vs Stagehand](https://oyabrowser.com/vs/stagehand), [Oya vs Skyvern](https://oyabrowser.com/vs/skyvern), [Oya vs Amazon Nova Act](https://oyabrowser.com/vs/amazon-nova-act)

@@ -17,15 +17,16 @@ it.each(ANSWER_PAGES)('explains the BAA acronym in the visible narrative on $pat
   expect(narrative).toMatch(/Business Associate Agreements? \(BAAs?\)/);
 });
 
-it('preserves the established metadata values across all 28 routes', () => {
+it('preserves the established metadata values across all 29 routes', () => {
   const metadata = ANSWER_PAGES.map(({ path, title, lead }) => [path, title, lead]).sort(([a], [b]) =>
     a.localeCompare(b),
   );
   // Captured from the pre-narrative records and independently compared with HEAD on 2026-11-18.
   // Recaptured on 2026-11-20 for the regulated-industries page, and again after adding the five
-  // new /vs/* comparison pages while keeping all 23 earlier routes unchanged.
+  // new /vs/* comparison pages while keeping all 23 earlier routes unchanged. Recaptured on
+  // 2026-11-23 for /vs/amazon-nova-act, with the 28 earlier routes verified unchanged.
   expect(createHash('sha256').update(JSON.stringify(metadata)).digest('hex')).toBe(
-    'a9d92d3b8f1299201080f3ff06334c866fa8597cbe8db3729fbd0716f3136133',
+    'f75b8c3aaecf4d94d2d8843eb2192e3d7357d6e37bc870b5a2279ef73ad2d581',
   );
 });
 

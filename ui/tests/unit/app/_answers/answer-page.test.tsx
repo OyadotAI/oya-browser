@@ -15,6 +15,7 @@ import VsChromeDevtoolsMcp, { metadata as chromeDevtoolsMcpMetadata } from '@/ap
 import VsFirecrawl, { metadata as firecrawlMetadata } from '@/app/vs/firecrawl/page';
 import VsStagehand, { metadata as stagehandMetadata } from '@/app/vs/stagehand/page';
 import VsSkyvern, { metadata as skyvernMetadata } from '@/app/vs/skyvern/page';
+import VsNovaAct, { metadata as novaActMetadata } from '@/app/vs/amazon-nova-act/page';
 import AiBrowser, { metadata as aiMetadata } from '@/app/ai-browser/page';
 import AgenticBrowser, { metadata as agenticMetadata } from '@/app/agentic-browser/page';
 import BrowserForHealthcare, { metadata as healthcareMetadata } from '@/app/browser-for-healthcare/page';
@@ -65,6 +66,7 @@ import {
   VS_BROWSER_USE,
   VS_CHROME_DEVTOOLS_MCP,
   VS_FIRECRAWL,
+  VS_NOVA_ACT,
   VS_PLAYWRIGHT_MCP,
   VS_SKYVERN,
   VS_STAGEHAND,
@@ -96,6 +98,7 @@ const PAGES = [
   { name: 'vs/firecrawl', Page: VsFirecrawl, metadata: firecrawlMetadata, content: VS_FIRECRAWL },
   { name: 'vs/stagehand', Page: VsStagehand, metadata: stagehandMetadata, content: VS_STAGEHAND },
   { name: 'vs/skyvern', Page: VsSkyvern, metadata: skyvernMetadata, content: VS_SKYVERN },
+  { name: 'vs/amazon-nova-act', Page: VsNovaAct, metadata: novaActMetadata, content: VS_NOVA_ACT },
   { name: 'ai-browser', Page: AiBrowser, metadata: aiMetadata, content: AI_BROWSER },
   { name: 'agentic-browser', Page: AgenticBrowser, metadata: agenticMetadata, content: AGENTIC_BROWSER },
   {
@@ -345,8 +348,16 @@ describe('the comparison pages', () => {
     VS_FIRECRAWL,
     VS_STAGEHAND,
     VS_SKYVERN,
+    VS_NOVA_ACT,
   ];
-  const NON_PROVIDER_VS = [VS_PLAYWRIGHT_MCP, VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_STAGEHAND, VS_SKYVERN];
+  const NON_PROVIDER_VS = [
+    VS_PLAYWRIGHT_MCP,
+    VS_CHROME_DEVTOOLS_MCP,
+    VS_FIRECRAWL,
+    VS_STAGEHAND,
+    VS_SKYVERN,
+    VS_NOVA_ACT,
+  ];
 
   it('each open with a different answer, so they are not one page with the name swapped', () => {
     expect(new Set(VS.map((page) => page.lead)).size).toBe(VS.length);

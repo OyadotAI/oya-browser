@@ -49,9 +49,16 @@ import {
   STEEL,
 } from './compare';
 
-import { VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_PLAYWRIGHT_MCP, VS_SKYVERN, VS_STAGEHAND } from './vs-pages';
+import {
+  VS_CHROME_DEVTOOLS_MCP,
+  VS_FIRECRAWL,
+  VS_NOVA_ACT,
+  VS_PLAYWRIGHT_MCP,
+  VS_SKYVERN,
+  VS_STAGEHAND,
+} from './vs-pages';
 
-export { VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_PLAYWRIGHT_MCP, VS_SKYVERN, VS_STAGEHAND };
+export { VS_CHROME_DEVTOOLS_MCP, VS_FIRECRAWL, VS_NOVA_ACT, VS_PLAYWRIGHT_MCP, VS_SKYVERN, VS_STAGEHAND };
 
 /** One side of a side-by-side fit card grounded in the comparison table. */
 export interface AnswerFitSide {
@@ -1301,6 +1308,14 @@ export const BAA: AnswerPageContent = {
       a: 'In HIPAA mode, only models on BAA-covered hosts. A saved playbook replays with no model at all.',
     },
     { q: 'How long are audit records kept?', a: 'Six years in HIPAA mode.' },
+    {
+      q: 'Can I self-host Oya to keep PHI in my own VPC?',
+      a: 'Yes. Self-hosted HIPAA mode runs the whole stack, browsers, agents and playbooks, in your own cloud on Docker, ECS, GCP or Kubernetes, so PHI stays in your network. It is the enterprise edition; write to sales@getoya.ai.',
+    },
+    {
+      q: 'Is the free community edition covered by the BAA?',
+      a: 'No. The source-available community edition self-hosts free up to 5 cloud browsers, without the HIPAA offering. HIPAA mode and the BAA come with Oya Cloud and the enterprise edition.',
+    },
   ],
 };
 
@@ -1334,4 +1349,5 @@ export const ANSWER_PAGES = [
   VS_FIRECRAWL,
   VS_STAGEHAND,
   VS_SKYVERN,
+  VS_NOVA_ACT,
 ];
