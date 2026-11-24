@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- The desktop app no longer stops taking agent commands after a page closes its own tab (for example Gmail's pop-out compose). Every command failed with "Cannot read properties of undefined (reading 'isFocused')" until Oya was restarted.
+
 ## [1.0.284](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.284) · 2026-11-23
 
 ### Added

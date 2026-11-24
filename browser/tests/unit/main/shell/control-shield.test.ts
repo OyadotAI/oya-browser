@@ -32,6 +32,14 @@ describe('ControlShield', () => {
     assert.ok(!ctx.shell.window.views.includes(ctx.shield.view));
   });
 
+  it('takes the shield off, without throwing, when the shown tab closed itself and lost its web contents', () => {
+    ctx.control.state.interactive = false;
+    ctx.shield.sync();
+    page.webContents = undefined;
+    assert.doesNotThrow(() => ctx.shield.sync());
+    assert.ok(!ctx.shell.window.views.includes(ctx.shield.view));
+  });
+
   it('covers the page exactly while an agent has control', () => {
     ctx.control.state.interactive = false;
     ctx.shield.sync();

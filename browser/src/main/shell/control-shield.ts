@@ -215,7 +215,7 @@ export class ControlShield {
     if (!win || win.isDestroyed()) return;
     announcePage(this.deps);
     const view = this.deps.tabs.getShownView() as BrowserView | null; // a tab shown in the window is a BrowserView; popups have windows of their own
-    if (!this.shouldCover() || !view) return this.uncover(win);
+    if (!this.shouldCover() || !view || !liveContents(view)) return this.uncover(win);
     this.cover(win, view, this.prepare());
   }
 
