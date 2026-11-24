@@ -111,7 +111,10 @@ try {
   const [active] = await api('/browsers');
   const present = (name, args) => client.callTool({ name, arguments: args });
   const shot = await present('screenshot', { caption: 'Fixture page' });
-  assert(shot.content[0]?.type === 'image' && shot._meta?.capture?.data === shot.content[0]?.data, 'the inline screenshot uses the captured bytes');
+  assert(
+    shot.content[0]?.type === 'image' && shot._meta?.capture?.data === shot.content[0]?.data,
+    'the inline screenshot uses the captured bytes',
+  );
   for (const turn of [1, 2]) {
     const shown = await present('show_browser', { browser_id: active.id });
     assert(shown.structuredContent?.browserId === active.id, `turn ${turn} shows the same cloud browser`);
@@ -120,7 +123,10 @@ try {
   const viewer = new URLSearchParams(new URL(watch._meta.watchUrl).hash.slice(1)).get('t');
   const headers = { Authorization: 'Bearer ' + viewer };
   const detail = await fetch(base + '/api/browsers/' + active.id, { headers }).then((r) => r.json());
-  assert(detail.canControl === false && detail.id === active.id, 'the watch link opens its browser without a dashboard login');
+  assert(
+    detail.canControl === false && detail.id === active.id,
+    'the watch link opens its browser without a dashboard login',
+  );
   const ticket = await fetch(base + '/api/control/sessions/' + active.id + '/ticket', { method: 'POST', headers });
   assert(ticket.ok, 'the viewer may open a stream');
   const takeover = await fetch(base + '/api/control/sessions/' + active.id + '/control', { method: 'POST', headers });

@@ -163,8 +163,14 @@ try {
   assert(started.error, 'unconfigured cloud start fails without borrowing the desktop');
   assert((await api('/browsers')).length === 1, 'desktop remains connected');
   const act = (action, params = {}) => api('/browsers/native-mcp-fixture/command', { action, params });
-  await act('navigate', { url: siteUrl });
-  await act('click', { selector: 'button' });
+  const navigated = await act('navigate', { url: siteUrl });
+  if (!navigated.ok) throw Error('Fixture navigation failed: ' + navigated.error);
+  const page = await act('analyze');
+  const button = page.data?.elements?.find((element) => element.text === 'Press me');
+  if (!button?.id) throw Error(page.error || 'Native analysis did not find the fixture button');
+  const click = () => act('click', { selector: String(button.id) });
+  const clicked = await click();
+  if (!clicked.ok) throw Error('Native REST click failed: ' + clicked.error);
   assert((await browser.evaluateMain('window.trusted')) === true, 'trusted native input still works through REST');
   /** Match a desktop ownership reply before attempting the next agent action. */
   const handoff = (action) =>
@@ -185,11 +191,11 @@ try {
       socket.send(JSON.stringify({ type: 'desktop_control', id, action }));
     });
   assert((await handoff('acquire')).state?.mode === 'human', 'the human can take native browser ownership');
-  const paused = await act('click', { selector: 'button' });
+  const paused = await click();
   assert(paused.error, 'REST cannot act while the human owns the native browser');
   assert((await browser.evaluateMain('window.clicks')) === 1, 'the refused action never reaches the page');
   assert((await handoff('return')).state?.mode === 'agent', 'control returns to the agent');
-  assert((await act('click', { selector: 'button' })).ok, 'REST can act after explicit handback');
+  assert((await click()).ok, 'REST can act after explicit handback');
   assert((await browser.evaluateMain('window.clicks')) === 2, 'the resumed action reaches the page exactly once');
   const other = new Client({ name: 'other-owner', version: '1.0.0' });
   try {

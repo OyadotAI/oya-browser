@@ -105,7 +105,9 @@ export const refusal = (err) =>
 
 /** Records the vendor's cleanup on the durable session, then checks provisioning may go on. */
 export async function claimSession(key, browserId, session) {
-  const patch = session.hostedProvider ? { hostedProvider: true, cleanup: session.cleanup } : { cleanup: session.cleanup };
+  const patch = session.hostedProvider
+    ? { hostedProvider: true, cleanup: session.cleanup }
+    : { cleanup: session.cleanup };
   if (session.hostedProvider || session.cleanup) await control().update(key, browserId, patch);
   await control().assertProvisioning(key, browserId);
 }
