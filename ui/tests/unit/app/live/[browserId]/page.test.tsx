@@ -25,7 +25,7 @@ const streamCallbacks = () => vi.mocked(subscribeFrames).mock.calls[0].slice(2) 
 
 beforeEach(() => {
   vi.mocked(api).mockImplementation(async (path: string) =>
-    path.endsWith('/control') ? { mode: 'human' } : { name: 'QA' },
+    path.endsWith('/control') ? { mode: 'human' } : { name: 'QA', canControl: true },
   );
 });
 afterEach(() => {
@@ -64,7 +64,7 @@ describe('LiveBrowserPage', () => {
     sessionStorage.setItem('oya_console_key', 'k');
     vi.mocked(api).mockImplementation(async (path: string) => {
       if (path === '/control/sessions/b1') return { control: { mode: 'paused' } };
-      return { name: 'QA' };
+      return { name: 'QA', canControl: true };
     });
     render(<LiveBrowserPage />);
     expect(await screen.findByRole('button', { name: 'Resume agent' })).toBeTruthy();
@@ -80,8 +80,17 @@ describe('LiveBrowserPage', () => {
     await act(() => vi.advanceTimersByTimeAsync(1000));
     expect(viewProps).toMatchObject({ frameSrc: 'f2', fps: 2 });
     act(() => onLost());
-    expect(screen.getByRole('alert').textContent).toBe('The live stream disconnected. Reconnecting…');
-    expect(viewProps.frameSrc).toBeNull();
+    expect(screen.getByRole('alert').textContent).toBe('Disconnected. Reconnecting…');
+    expect(viewProps.frameSrc).toBe('f2');
+  });
+
+  it('keeps a viewer watch-only even when a person holds control', async () => {
+    history.replaceState(null, '', '/live/b1#t=viewer');
+    vi.mocked(api).mockResolvedValue({ name: 'Watched tab', controlMode: 'human', canControl: false });
+    render(<LiveBrowserPage />);
+    await screen.findByRole('heading', { name: 'Watched tab' });
+    expect(viewProps.interactive).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Release control' })).toBeNull();
   });
 
   it('takes control and makes the view interactive', async () => {

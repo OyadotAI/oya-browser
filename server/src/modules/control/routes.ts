@@ -8,11 +8,13 @@ import { authMiddleware } from '../auth/service.ts';
 import { control, fault, projectId } from './service.ts';
 import { desktopState } from './desktop.ts';
 import { assertSafeTarget } from '../../platform/net-guard.ts';
+import { ownsCloudBrowser } from '../browsers/pool.ts';
 import { registry } from '../browsers/registry.ts';
 import { Status } from '../../platform/http-status.ts';
 import { sendError } from '../../platform/errors.ts';
 import { key, admin, requireOwnBrowser, redispatchStart } from './http/guards.ts';
 import { transferControl } from './http/takeover.ts';
+import { WATCH_SECONDS } from './http/constants.ts';
 import { humanInput } from './http/input.ts';
 import { recordFlow } from './http/record.ts';
 import { recover } from './http/recover.ts';
@@ -78,6 +80,13 @@ controlRouter.post('/sessions/:id/share', admin, async (req, res) =>
     }),
   ),
 );
+/** Opens a fixed-duration, view-only link for an operator watching their connected browser. */
+controlRouter.post('/sessions/:id/watch', async (req, res) => {
+  if (!ownsCloudBrowser(key(req), req.params.id))
+    throw fault('not_found', 'Cloud browser unavailable', Status.NOT_FOUND);
+  const share = await control().share(key(req), { id: req.params.id, control: false, expiresIn: WATCH_SECONDS });
+  res.set('Cache-Control', 'no-store').status(Status.CREATED).json({ token: share.token });
+});
 /** POST /control/sessions/:id/ticket, a single-use connection ticket for a ready session, valid 60 seconds. */
 controlRouter.post('/sessions/:id/ticket', async (req, res) => {
   const x = await control().findSession(key(req), req.params.id);

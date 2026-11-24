@@ -43,6 +43,8 @@ export interface Registration {
   ws: any;
   /** The credential as presented, kept for live-view re-checks. */
   authToken: string;
+  /** Authenticated before this socket can claim the previous registration. */
+  cloudVerified?: boolean;
 }
 
 /**
@@ -55,16 +57,18 @@ export function providerOf(browserId: string, claimed?: string) {
 }
 
 /** A managed browser must present the enrolment token its session was created with. */
-async function checkEnrolment(browserId: string, token?: string) {
+export async function checkEnrolment(browserId: string, token?: string) {
   const durable = await control().store.get('session', browserId);
+  if (durable?.hostedProvider || durable?.cleanup?.kind === 'vendor')
+    throw new Error('Hosted vendor connection required');
   if (durable?.enrollmentHash && durable.enrollmentHash !== hash(String(token || ''))) {
     throw new Error('Managed browser enrollment token required');
   }
+  return Boolean(durable?.enrollmentHash);
 }
 
 /** The control plane adopts the session under the key and persona caps. */
-export async function adopt(reg: Registration, provider: string, enrollmentToken?: string) {
-  await checkEnrolment(reg.browserId, enrollmentToken);
+export async function adopt(reg: Registration, provider: string) {
   await control().adopt(reg.apiKey, {
     id: reg.browserId,
     provider,
@@ -138,10 +142,11 @@ function announcedActions(announced: unknown): string[] | null {
 }
 
 /** The registry entry: what the dashboard and the command path see of the browser. */
-function addToRegistry({ apiKey, browserId, persona, ws, authToken }: Registration, provider: string, msg) {
+function addToRegistry(reg: Registration, provider: string, msg) {
+  const { apiKey, browserId, persona, ws, authToken, cloudVerified } = reg;
   const name = msg.browser_name || 'Browser';
   const actions = announcedActions(msg.actions);
   const offered = { cdp: msg.cdp === true, profileSync: msg.profile_sync === true, actions };
-  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, ...offered });
+  registry.add(browserId, { ws, apiKey, name, cloudVerified, clientType: 'oya', persona, provider, ...offered });
   registry.get(browserId).authToken = authToken;
 }

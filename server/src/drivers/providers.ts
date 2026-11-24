@@ -136,7 +136,7 @@ function vendorFor(provider, env) {
 async function connectOrRelease({ provider, cfg, key, payload, sessionId, release, cleanup, onCreated }) {
   try {
     if (cleanup && onCreated) await onCreated(cleanup);
-    return { wsUrl: cdpUrl(provider, cfg, key, payload), provider, sessionId, release, cleanup };
+    return { wsUrl: cdpUrl(provider, cfg, key, payload), provider, sessionId, release, cleanup, hostedProvider: true };
   } catch (err) {
     await noteCleanupFailure(err, release);
     throw err;

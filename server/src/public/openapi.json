@@ -2031,6 +2031,52 @@
         }
       }
     },
+    "/api/control/sessions/{id}/watch": {
+      "post": {
+        "tags": [
+          "Control"
+        ],
+        "summary": "Open a ten-minute viewing link for one connected cloud browser",
+        "description": "Returns a viewer token to an operator or administrator of the browser’s project.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "View-only credential issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "token"
+                  ],
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "postControlSessionsIdWatch"
+      }
+    },
     "/api/control/sessions/{id}/share": {
       "post": {
         "tags": [

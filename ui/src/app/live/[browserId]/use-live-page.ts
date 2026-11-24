@@ -35,8 +35,9 @@ function usePicture() {
   const [frame, setFrame] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [age, setAge] = useState<number | null>(null);
-  const setters = useMemo(() => ({ frame: setFrame, fps: setFps, age: setAge }), []);
-  return { frame, fps, age, setters };
+  const [canControl, setCanControl] = useState(false);
+  const setters = useMemo(() => ({ frame: setFrame, fps: setFps, age: setAge, canControl: setCanControl }), []);
+  return { frame, fps, age, setters, canControl };
 }
 
 /** The stream's state and the sink that writes it. */
@@ -61,6 +62,7 @@ function useLiveState(apiKey: string | null, browserId: string, attempt: number,
 
 /** Clears the last stream's state and opens a new one. */
 function restart(browserId: string, apiKey: string, sink: LiveSink) {
+  sink.canControl(false);
   sink.frame(null);
   sink.error('');
   sink.fps(0);

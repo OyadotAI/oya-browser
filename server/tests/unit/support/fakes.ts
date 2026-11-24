@@ -36,9 +36,9 @@ export class FakeSocket {
 }
 
 /** Registers a connected Oya browser for the duration of a test; returns its socket. */
-export function connectBrowser(browserId: string, apiKey = 'key-a') {
+export function connectBrowser(browserId: string, apiKey = 'key-a', cloudVerified = false) {
   const ws = new FakeSocket();
-  registry.add(browserId, { ws, apiKey, name: 'Test', clientType: 'oya', persona: { id: 'p-1' } });
+  registry.add(browserId, { ws, apiKey, cloudVerified, name: 'Test', clientType: 'oya', persona: { id: 'p-1' } });
   return ws;
 }
 

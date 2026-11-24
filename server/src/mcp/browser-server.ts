@@ -4,6 +4,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerBrowserTools, SHARE_TOOL_NAMES } from './browser-tools.ts';
+import { ownsCloudBrowser } from '../modules/browsers/pool.ts';
 import { registry } from '../modules/browsers/registry.ts';
 import { Status } from '../platform/http-status.ts';
 import { authorize } from './auth.ts';
@@ -56,4 +57,4 @@ async function serveBrowser(browserId, share, req, res) {
  * Scope check, only the key that owns this browser can access its MCP.
  * 404 (not 403) so non-owners can't probe for browser existence.
  */
-const reachable = (browserId, key) => registry.isConnected(browserId) && registry.belongsTo(browserId, key);
+const reachable = (browserId, key) => ownsCloudBrowser(key, browserId);

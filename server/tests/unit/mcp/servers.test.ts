@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { handleMcpRequest, handlePoolMcpRequest } from '../../../src/mcp/server.ts';
 import { POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
+import { CARD_URI, SCREENSHOT_URI } from '../../../src/mcp/constants.ts';
 import { APP_ONLY_TOOLS } from '../../../src/mcp/browser-card.ts';
 import { answerFailure } from '../../../src/mcp/transport.ts';
 import { registry } from '../../../src/modules/browsers/registry.ts';
@@ -63,14 +64,14 @@ describe('per-browser MCP endpoint', () => {
 
   it('answers 404 for a browser that belongs to another key, as for a missing one', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-theirs');
+    connectBrowser(B, 'k-theirs', true);
     const res = await call(handleMcpRequest);
     assert.deepEqual([res.statusCode, res.body], [404, { error: `Browser ${B} not connected` }]);
   });
 
   it('offers every browser tool, tabs included', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     const names = resultOf(await call(handleMcpRequest)).tools.map((t) => t.name);
     assert.ok(names.includes('list_tabs'));
     assert.ok(!names.includes('start_browser'));
@@ -78,7 +79,7 @@ describe('per-browser MCP endpoint', () => {
 
   it('withholds project playbooks, agent tasks and persona credential tools from share links', async () => {
     stubControl({ authenticate: async () => ({ key: 'k-mine', role: 'operator', sessionId: B }) });
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     const names = resultOf(await call(handleMcpRequest)).tools.map((t) => t.name);
     assert.ok(names.includes('navigate') && names.includes('click') && names.includes('list_tabs'));
     for (const hidden of [
@@ -102,13 +103,13 @@ describe('per-browser MCP endpoint', () => {
 
   it('gives every tool a title and read-only and destructive hints', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     for (const tool of resultOf(await call(handleMcpRequest)).tools) assertAnnotated(tool);
   });
 
   it('reads the current page as a resource', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     registry.updateUrl(B, 'https://a.test');
     const res = await call(handleMcpRequest, { method: 'resources/read', params: { uri: 'browser://current-page' } });
     assert.equal(resultOf(res).contents[0].text, 'URL: https://a.test\nBrowser: Test');
@@ -116,7 +117,7 @@ describe('per-browser MCP endpoint', () => {
 
   it('answers 500 when serving the request fails', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     mock.method(McpServer.prototype, 'connect', async () => {
       throw new Error('transport broke');
     });
@@ -174,15 +175,18 @@ describe('pool MCP endpoint', () => {
     for (const tool of resultOf(await call(handlePoolMcpRequest)).tools) assertAnnotated(tool);
   });
 
-  it('points MCP Apps hosts at the browser card from start_browser alone, through the real SDK', async () => {
+  it('points MCP Apps hosts at the browser card for screenshots and turn-end views, through the real SDK', async () => {
     operatorOn('k-pool');
     const tools = resultOf(await call(handlePoolMcpRequest)).tools;
     const withCard = tools.filter((t) => t._meta?.ui?.resourceUri);
     assert.deepEqual(
       withCard.map((t) => t.name),
-      ['start_browser'],
+      ['screenshot', 'show_browser'],
     );
-    assert.equal(withCard[0]._meta.ui.resourceUri, 'ui://oya/browser-card.html');
+    assert.deepEqual(
+      withCard.map((t) => t._meta.ui.resourceUri),
+      [SCREENSHOT_URI, CARD_URI],
+    );
     const view = tools.find((t) => t.name === 'view_browser');
     assert.deepEqual(view?._meta?.ui?.visibility, ['app'], 'only the card may call view_browser');
   });
@@ -191,7 +195,7 @@ describe('pool MCP endpoint', () => {
     operatorOn('k-pool');
     const res = await call(handlePoolMcpRequest, {
       method: 'resources/read',
-      params: { uri: 'ui://oya/browser-card.html' },
+      params: { uri: CARD_URI },
     });
     const page = resultOf(res).contents[0];
     assert.equal(page.mimeType, 'text/html;profile=mcp-app');
@@ -200,14 +204,14 @@ describe('pool MCP endpoint', () => {
 
   it('keeps the card and its tool off a single browser’s endpoint', async () => {
     operatorOn('k-mine');
-    connectBrowser(B, 'k-mine');
+    connectBrowser(B, 'k-mine', true);
     const tools = resultOf(await call(handleMcpRequest)).tools;
     assert.ok(!tools.some((t) => t.name === 'view_browser' || t._meta?.ui));
   });
 
   it('reads the pool’s status as a JSON resource', async () => {
     operatorOn('k-pool');
-    connectBrowser(B, 'k-pool');
+    connectBrowser(B, 'k-pool', true);
     const res = await call(handlePoolMcpRequest, {
       method: 'resources/read',
       params: { uri: 'browser://pool-status' },

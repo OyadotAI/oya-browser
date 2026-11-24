@@ -30,25 +30,34 @@ describe('pool state', () => {
   });
 
   it('stays on the pinned browser for commands in the same page context', () => {
-    connectBrowser('m-1', KEY);
-    connectBrowser('m-2', KEY);
+    connectBrowser('m-1', KEY, true);
+    connectBrowser('m-2', KEY, true);
     const pick = pickFor(KEY);
     const first = pick(false);
     assert.equal(pick(false), first);
     assert.equal(pick(false), first);
   });
 
-  it('moves on to the next browser for a new page context', () => {
+  it('skips a connected desktop even when it was previously pinned', () => {
     connectBrowser('m-1', KEY);
-    connectBrowser('m-2', KEY);
+    hold(KEY, 'm-1');
+    assert.equal(pickFor(KEY)(false), null);
+    connectBrowser('m-2', KEY, true);
+    assert.equal(pickFor(KEY)(true), 'm-2');
+    assert.equal(pickFor(KEY)(true), 'm-2');
+  });
+
+  it('moves on to the next browser for a new page context', () => {
+    connectBrowser('m-1', KEY, true);
+    connectBrowser('m-2', KEY, true);
     const pick = pickFor(KEY);
     const first = pick(false);
     assert.notEqual(pick(true), first);
   });
 
   it('keeps a held browser even for a new page context', () => {
-    connectBrowser('m-1', KEY);
-    connectBrowser('m-2', KEY);
+    connectBrowser('m-1', KEY, true);
+    connectBrowser('m-2', KEY, true);
     hold(KEY, 'm-2');
     const pick = pickFor(KEY);
     assert.equal(pick(true), 'm-2');
@@ -56,7 +65,7 @@ describe('pool state', () => {
   });
 
   it('re-picks when the pinned browser has gone', () => {
-    connectBrowser('m-1', KEY);
+    connectBrowser('m-1', KEY, true);
     poolPinned.set(KEY, 'gone');
     assert.equal(pickFor(KEY)(false), 'm-1');
   });
@@ -79,7 +88,7 @@ describe('pool state', () => {
   });
 
   it('tags output with the browser’s name, or just its id once gone', () => {
-    connectBrowser('m-1', KEY);
+    connectBrowser('m-1', KEY, true);
     assert.equal(browserTag('m-1'), '[Test m-1]');
     assert.equal(browserTag('gone'), '[gone]');
   });

@@ -92,6 +92,15 @@ describe('browser tools', () => {
     assert.equal(format.safeParse('xml').success, false);
   });
 
+  it('gives a chat widget the same immutable capture the client receives', async () => {
+    const { server } = tools(() => ({ ok: true, data: { screenshot: 'data:image/png;base64,QUJD' } }), {
+      screenshotCard: true,
+    });
+    const reply = await server.call('screenshot', { caption: '1. Search results' });
+    assert.deepEqual(reply._meta, { capture: reply.content[0], caption: '1. Search results' });
+    assert.equal(reply.content[0].data, 'QUJD');
+  });
+
   it('returns a screenshot as a PNG image without its data-URL prefix', async () => {
     const { server } = tools(() => ({ ok: true, data: { screenshot: 'data:image/png;base64,QUJD' } }));
     assert.deepEqual(await server.call('screenshot'), {

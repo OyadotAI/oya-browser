@@ -4,7 +4,7 @@
  * browser so element IDs remain valid. A browser from start_browser is sticky.
  */
 import { registry } from '../modules/browsers/registry.ts';
-import { nextBrowser } from '../modules/browsers/pool.ts';
+import { nextBrowser, ownsCloudBrowser } from '../modules/browsers/pool.ts';
 
 /** Pool pinned browser state: apiKey → browserId */
 export const poolPinned = new Map();
@@ -30,16 +30,40 @@ export function destroyMcpServer(browserId) {
   dropValue(poolSticky, browserId);
 }
 
+/** Reserve a starting browser until its registered cloud connection is ready. */
+function selectionReady(apiKey: string) {
+  const pending = pendingBrowser(apiKey);
+  if (!pending) return true;
+  if (!ownsCloudBrowser(apiKey, pending)) return false;
+  hold(apiKey, pending);
+  return true;
+}
+
 /** Pick browser: sticky if set, else pinned if alive, else round-robin. */
 export function pickFor(apiKey) {
   return (advance: boolean) => {
+    if (!selectionReady(apiKey)) return null;
     const pinned = poolPinned.get(apiKey);
-    if (pinned && registry.isConnected(pinned) && (!advance || poolSticky.get(apiKey) === pinned)) return pinned;
-    const id = nextBrowser(apiKey);
-    if (!id) return null;
-    poolPinned.set(apiKey, id);
+    if (pinned && ownsCloudBrowser(apiKey, pinned) && (!advance || poolSticky.get(apiKey) === pinned)) return pinned;
+    const id = nextBrowser(apiKey, true);
+    if (id) poolPinned.set(apiKey, id);
     return id;
   };
+}
+
+/** A start awaiting enrollment reserves its selection before returning to the caller. */
+export function awaitBrowser(apiKey: string, id: string) {
+  poolPinned.delete(apiKey);
+  poolSticky.set(apiKey, id);
+}
+
+/** A reserved browser stays the target even while no commands can run on it. */
+export const pendingBrowser = (key: string) => (poolPinned.has(key) ? undefined : poolSticky.get(key));
+
+/** Tell the caller to wait when its selected worker is still enrolling. */
+export function waitingMessage(key: string) {
+  const id = pendingBrowser(key);
+  return id && !ownsCloudBrowser(key, id) ? `Cloud browser ${id} is starting. Check pool_status shortly.` : '';
 }
 
 /** Makes `id` the browser every tool drives for this key until it is stopped. */

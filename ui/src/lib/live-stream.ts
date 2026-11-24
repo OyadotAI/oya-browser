@@ -4,7 +4,18 @@
  * a project credential in its URL.
  */
 import { apiUrl, authHeaders } from './api';
+import { ApiError } from './api-client';
+import { Status } from './http-status';
 import { LIVE_RETRY_MS } from './constants';
+
+/** Ticket refusals that require a new credential or a new browser. */
+const TERMINAL = new Set<number>([Status.UNAUTHORIZED, Status.FORBIDDEN, Status.NOT_FOUND, Status.GONE]);
+
+/** A live page can stop retries after a terminal refusal. Other subscribers recover as before. */
+type StreamError = (status?: number) => boolean | void;
+
+/** Delivers one captured browser frame. */
+type FrameHandler = (frame: string) => void;
 
 /** One subscription: fetches a ticket, opens the stream, and retries after a failure until closed. */
 class FrameStream {
@@ -23,10 +34,10 @@ class FrameStream {
   /** Receives each frame (a data URL). */
   private readonly onFrame: (frame: string) => void;
   /** Told whenever the stream is lost or cannot be opened. */
-  private readonly onError: () => void;
+  private readonly onError: StreamError;
 
-  /** Streams `id`'s frames with `key`, reporting frames and losses to the callbacks. */
-  constructor(id: string, key: string, onFrame: (frame: string) => void, onError: () => void) {
+  /** Streams the browser with this credential, reporting pictures and connection losses. */
+  constructor(id: string, key: string, onFrame: FrameHandler, onError: StreamError) {
     this.id = id;
     this.key = key;
     this.onFrame = onFrame;
@@ -39,14 +50,15 @@ class FrameStream {
       const ticket = await this.ticket();
       if (this.closed) return;
       this.open(ticket);
-    } catch {
-      if (!this.closed) this.failed();
+    } catch (err) {
+      if (!this.closed) this.failed(err);
     }
   }
 
   /** Reports a failure and reconnects after a pause. */
-  private failed() {
-    this.onError();
+  private failed(err: unknown) {
+    const status = err instanceof ApiError && TERMINAL.has(err.status) ? err.status : undefined;
+    if (this.onError(status) === false) return;
     this.scheduleRetry();
   }
 
@@ -63,7 +75,7 @@ class FrameStream {
     const url = apiUrl(`/control/sessions/${encodeURIComponent(this.id)}/ticket`);
     const init = { method: 'POST', headers: authHeaders(this.key), body: '{}', signal: this.abort.signal };
     const res = await fetch(url, init);
-    if (!res.ok) throw new Error('Cannot obtain a live-view ticket');
+    if (!res.ok) throw new ApiError('Cannot obtain a live-view ticket', res.status, null);
     const { ticket } = await res.json();
     return ticket;
   }
@@ -89,7 +101,7 @@ class FrameStream {
 }
 
 /** Streams a browser's frames until the returned function is called. */
-export function subscribeFrames(id: string, key: string, onFrame: (frame: string) => void, onError: () => void) {
+export function subscribeFrames(id: string, key: string, onFrame: FrameHandler, onError: StreamError) {
   const stream = new FrameStream(id, key, onFrame, onError);
   void stream.connect();
   return () => stream.close();

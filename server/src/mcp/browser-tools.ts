@@ -13,7 +13,7 @@ import { registry } from '../modules/browsers/registry.ts';
 import { analysis, type Page } from './analysis.ts';
 import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
 import * as pageRender from '../../../browser/src/page/render.ts';
-import { DEFAULT_SCROLL_PX, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from './constants.ts';
+import { DEFAULT_SCROLL_PX, MAX_NAME, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS, SCREENSHOT_URI } from './constants.ts';
 import { fail } from './replies.ts';
 import { AGENT_TOOL_NAMES, PAGE_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
 import { toolConfig } from './annotations.ts';
@@ -256,6 +256,8 @@ type Options = {
   tag?: (id: string) => string;
   /** Tool names to register; all by default. */
   only?: string[];
+  /** Whether this server serves the static screenshot resource. */
+  screenshotCard?: boolean;
   /** Error text when pick finds no browser. */
   noBrowser?: string;
   /** Whether pick always names the same browser (the per-browser endpoint), so tools it cannot run are left out. */
@@ -273,14 +275,13 @@ export const SHARE_TOOL_NAMES = [...Object.keys(TOOLS), ...PAGE_TOOL_NAMES];
  * call goes to, or null when there is none; `tag(id)` prefixes every text reply
  * (the pool says which of its browsers answered). `only` limits the set.
  */
-export function registerBrowserTools(
-  server: McpServer,
-  { pick, tag = () => '', only = BROWSER_TOOL_NAMES, noBrowser = 'no browser is connected', oneBrowser }: Options,
-) {
-  if (oneBrowser) only = availableTools(only, pick);
+export function registerBrowserTools(server: McpServer, options: Options) {
+  const { pick, tag = () => '', noBrowser = 'no browser is connected', oneBrowser } = options;
+  const names = options.only || BROWSER_TOOL_NAMES;
+  const only = oneBrowser ? availableTools(names, pick) : names;
   registerAgentTools(server, only, { pick: () => pick(false), noBrowser, oneBrowser });
   for (const name of only.filter((n) => Object.hasOwn(TOOLS, n))) {
-    registerDirectTool(server, name, { pick, tag, noBrowser });
+    registerDirectTool(server, name, { pick, tag, noBrowser }, options.screenshotCard);
   }
 }
 
@@ -315,9 +316,30 @@ function reply(out: Reply, prefix: () => string) {
 }
 
 /** Register one direct command without duplicating its routing or result encoder. */
-function registerDirectTool(server: McpServer, name: string, routing: Routing): void {
+function registerDirectTool(server: McpServer, name: string, routing: Routing, screenshotCard = false): void {
   const tool = TOOLS[name];
+  const isCapture = screenshotCard && name === 'screenshot';
+  if (isCapture) return registerCapture(server, tool, routing);
   server.registerTool(name, toolConfig(name, tool.description, tool.schema), (args) =>
     runTool(name, tool, args, routing),
   );
+}
+
+/** A caption labels successive captures without changing the underlying screenshot command. */
+function registerCapture(server: McpServer, tool: Tool, routing: Routing) {
+  const schema = {
+    caption: z.string().max(MAX_NAME).optional().describe('Page title, with capture number for a series'),
+  };
+  const config = toolConfig('screenshot', tool.description, schema);
+  const _meta = { ui: { resourceUri: SCREENSHOT_URI } };
+  server.registerTool('screenshot', { ...config, _meta }, async (args) =>
+    presentCapture(await runTool('screenshot', tool, args, routing), args.caption),
+  );
+}
+
+/** Some hosts give widgets only structured data and metadata, while the model receives the image block. */
+function presentCapture(result: Awaited<ReturnType<typeof runTool>>, caption?: string) {
+  const shot = result.content[0];
+  if (shot.type !== 'image') return { ...result, isError: true };
+  return { ...result, _meta: { capture: shot, caption: caption || 'Browser screenshot' } };
 }

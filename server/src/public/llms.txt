@@ -39,12 +39,12 @@ For servers, containers, CI or teams (HIPAA mode + BAA on Oya Cloud and enterpri
 
 ### Pool MCP Endpoint
 
-`POST https://oyabrowser.com/mcp/pool` (`Authorization: Bearer $OYA_API_KEY`) serves 32 tools:
-analyze_page, navigate, click, type, screenshot, press_key, handle_dialog, scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag, select_option, run_script, wait_for, find, hover, go_back, go_forward, reload, solve_captcha, sign_in, complete_mfa, list_saved_logins, list_playbooks, run_playbook, run_task, start_browser, stop_browser, pool_status.
+`POST https://oyabrowser.com/mcp/pool` (`Authorization: Bearer $OYA_API_KEY`) serves 33 model-visible tools:
+analyze_page, navigate, click, type, screenshot, press_key, handle_dialog, scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag, select_option, run_script, wait_for, find, hover, go_back, go_forward, reload, solve_captcha, sign_in, complete_mfa, list_saved_logins, list_playbooks, run_playbook, run_task, show_browser, start_browser, stop_browser, pool_status.
 
-Per-browser cloud tools (list_tabs, open_tab, switch_tab, close_tab, read_elements, read_console, read_network) run on `/mcp/{BROWSER_ID}`. Local desktop MCP at `http://127.0.0.1:47321/mcp` supports list_tabs, open_tab, switch_tab, close_tab, read_console and read_network; use analyze_page to read local page elements. Full parameter reference: https://oyabrowser.com/docs/mcp-tools
+After browsing, call show_browser once with the final browser ID. The pool and /mcp/{BROWSER_ID} use cloud browsers only. Desktop MCP is local at http://127.0.0.1:47321/mcp. Tab tools, read_elements, read_console and read_network are per-browser tools. See https://oyabrowser.com/docs/mcp-tools
 
-Cloud browser access requires an Oya API key or supported OAuth sign-in. Listing tools without a key does not grant browser access. A signup key must be claimed before cloud browsers are enabled. In the SDK, use `oya.browser.start()` and stop cloud browsers in `finally`; `oya.desktop.connect()` is optional desktop pairing, not a headless cloud setup.
+Cloud calls require an Oya API key or supported OAuth sign-in. Tool discovery is public. Claim a signup key before starting cloud browsers. In SDK code, stop cloud browsers in finally.
 
 ### Cookie Sync
 

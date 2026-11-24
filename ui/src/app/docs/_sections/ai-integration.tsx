@@ -23,7 +23,7 @@ const TRY_PROMPTS: [string, string, string, string][] = [
     'Prompt 2 \u00b7 connector, no key',
     'Add https://oyabrowser.com/mcp/pool as a connector with no key, then:',
     'List every tool the Oya connector offers and what each one does. Do not call any of them yet.\n\nNow call pool_status.',
-    'Expected: all 32 tools listed without signing in, then a sign-in prompt on pool_status.',
+    'Expected: all 33 tools listed without signing in, then a sign-in prompt on pool_status.',
   ],
   [
     'Prompt 3 \u00b7 human handback',
@@ -58,12 +58,13 @@ function CloudSetup() {
       </p>
       <CodeBlock>{'https://oyabrowser.com/mcp/pool'}</CodeBlock>
       <p className={PARA}>
-        Thirty-two tools: twenty-nine that act on a page, round-robined across your browsers, plus{' '}
-        <InlineCode>start_browser</InlineCode>, <InlineCode>stop_browser</InlineCode> and{' '}
-        <InlineCode>pool_status</InlineCode>. Tab tools, <InlineCode>read_elements</InlineCode>,{' '}
-        <InlineCode>read_console</InlineCode>, <InlineCode>read_network</InlineCode> and the browser-specific tools
-        marked in <InlineLink href="/docs#more-tools">More tools</InlineLink> are not on this endpoint; to use those,
-        point at one browser instead, <InlineCode>/mcp/{'{BROWSER_ID}'}</InlineCode>, with the id from the{' '}
+        Thirty-three tools: twenty-nine that act on a page, round-robined across your browsers, plus{' '}
+        <InlineCode>show_browser</InlineCode>, <InlineCode>start_browser</InlineCode>,{' '}
+        <InlineCode>stop_browser</InlineCode> and <InlineCode>pool_status</InlineCode>. Tab tools,{' '}
+        <InlineCode>read_elements</InlineCode>, <InlineCode>read_console</InlineCode>,{' '}
+        <InlineCode>read_network</InlineCode> and the browser-specific tools marked in{' '}
+        <InlineLink href="/docs#more-tools">More tools</InlineLink> are not on this endpoint; to use those, point at one
+        browser instead, <InlineCode>/mcp/{'{BROWSER_ID}'}</InlineCode>, with the id from the{' '}
         <InlineLink href="/dashboard">dashboard</InlineLink>.
       </p>
       <p className={PARA}>

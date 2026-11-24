@@ -95,7 +95,7 @@ every other command fails immediately with the dialog's message until you call
 `handle_dialog(accept, prompt_text?)`. Accept only what the task asks for, a
 confirm is often guarding something destructive.
 
-If a tool says no browser is running, call `start_browser`. If `pool_status` already lists browsers (the user's desktop app, say), you can drive those without starting one.
+If a tool says no browser is running, call `start_browser`. Remote MCP lists and drives cloud browsers only. Desktop browsing uses the local MCP connection.
 
 ## Over the CLI
 

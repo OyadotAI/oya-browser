@@ -1,8 +1,8 @@
 <!doctype html>
 <!--
-  The browser card MCP Apps hosts (Claude, ChatGPT) show for start_browser. It knows only the
+  The browser card MCP Apps hosts (Claude, ChatGPT) show for show_browser. It knows only the
   browser's id, from the tool result; its snapshots come through the host's own MCP connection
-  (the app-only view_browser tool), so it never holds a token. Take over opens the live page.
+  (the app-only view_browser tool). Watch live requests a short-lived viewing link.
   Protocol: MCP Apps 2026-01-26 (ui/initialize, tool-result notification, tools/call, ui/open-link,
   size-changed). Self-contained: the host's sandbox loads no fonts, images or scripts from elsewhere.
 -->
@@ -52,11 +52,7 @@
         --scrim: color-mix(in srgb, var(--paper) 55%, transparent);
         --sheen: color-mix(in srgb, #fff 35%, transparent);
       }
-      @property --spin {
-        syntax: '<angle>';
-        inherits: false;
-        initial-value: 0deg;
-      }
+
       * {
         box-sizing: border-box;
       }
@@ -78,32 +74,13 @@
         font-variant-numeric: tabular-nums;
       }
 
-      /* The card, wrapped in a border that sweeps lime while the agent works. */
+      /* A static border keeps the live frame distinct from the conversation. */
       .frame {
         position: relative;
         border-radius: 22px;
         padding: 1.5px;
         background: var(--border);
         box-shadow: var(--shadow);
-      }
-      .frame::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        border-radius: inherit;
-        padding: 1.5px;
-        background: conic-gradient(from var(--spin), transparent 0 62%, var(--lime) 80%, transparent 92%);
-        -webkit-mask:
-          linear-gradient(#000 0 0) content-box,
-          linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-        opacity: 0;
-        transition: opacity 0.6s;
-        animation: spin 3.2s linear infinite;
-      }
-      .live .frame::before {
-        opacity: 1;
       }
       .card {
         position: relative;
@@ -142,14 +119,7 @@
         width: 28px;
         height: 28px;
       }
-      .live .mark::after {
-        content: '';
-        position: absolute;
-        inset: -4px;
-        border-radius: 14px;
-        border: 1.5px solid var(--glow);
-        animation: halo 2.4s ease-out infinite;
-      }
+
       .who {
         flex: 1;
         min-width: 0;
@@ -166,7 +136,7 @@
       }
       .brand {
         color: var(--dim);
-        font-size: 11px;
+        font-size: 12px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -182,7 +152,7 @@
         gap: 7px;
         padding: 5px 11px 5px 9px;
         border-radius: 999px;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.1em;
         text-transform: uppercase;
@@ -205,15 +175,7 @@
       .live .badge i {
         background: var(--lime);
       }
-      .live .badge i::after {
-        content: '';
-        position: absolute;
-        inset: -4px;
-        border-radius: 50%;
-        background: var(--lime);
-        opacity: 0.5;
-        animation: ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
-      }
+
       .stalled .badge {
         color: var(--warning);
       }
@@ -292,14 +254,10 @@
         inset: 0;
         width: 100%;
         height: 100%;
-        object-fit: cover;
-        object-position: top;
+        object-fit: contain;
+        object-position: center;
         opacity: 0;
-        transform: scale(1.012);
-        transition:
-          opacity 0.5s ease,
-          transform 0.8s ease,
-          filter 0.5s ease;
+        transition: opacity 200ms ease;
       }
       .shot img.on {
         opacity: 1;
@@ -330,25 +288,6 @@
       .shot.has::before {
         display: none;
       }
-      /* The agent reading a fresh frame: a lime line passes down the page. */
-      .scan {
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: -30%;
-        height: 30%;
-        pointer-events: none;
-        background: linear-gradient(
-          transparent,
-          color-mix(in srgb, var(--lime) 18%, transparent) 85%,
-          var(--lime) 99%,
-          transparent
-        );
-        opacity: 0;
-      }
-      .scan.go {
-        animation: scan 1.1s ease-out;
-      }
       .veil {
         position: absolute;
         inset: 0;
@@ -364,6 +303,7 @@
         display: inline-flex;
         align-items: center;
         gap: 8px;
+        min-height: 44px;
         padding: 8px 16px;
         border-radius: 999px;
         font-weight: 650;
@@ -417,34 +357,11 @@
       .stalled .status {
         color: var(--warning);
       }
-      .typing {
-        display: none;
-        gap: 3px;
-      }
-      .live .typing {
-        display: inline-flex;
-      }
-      .typing i {
-        width: 4px;
-        height: 4px;
-        border-radius: 50%;
-        background: var(--lime);
-        animation: bob 1.2s ease-in-out infinite;
-      }
-      :root[data-theme='light'] .typing i {
-        background: var(--ink);
-      }
-      .typing i:nth-child(2) {
-        animation-delay: 0.15s;
-      }
-      .typing i:nth-child(3) {
-        animation-delay: 0.3s;
-      }
       .meta {
         display: flex;
         gap: 6px;
         color: var(--dim);
-        font-size: 11px;
+        font-size: 12px;
         white-space: nowrap;
         overflow: hidden;
       }
@@ -470,6 +387,7 @@
         background: linear-gradient(180deg, color-mix(in srgb, var(--lime) 80%, #fff), var(--lime));
         border: 1px solid var(--fill-edge);
         border-radius: 999px;
+        min-height: 44px;
         padding: 8px 16px;
         cursor: pointer;
         overflow: hidden;
@@ -516,58 +434,12 @@
       [hidden] {
         display: none !important;
       }
-      @keyframes spin {
-        to {
-          --spin: 360deg;
-        }
-      }
-      @keyframes ping {
-        75%,
-        100% {
-          transform: scale(2.2);
-          opacity: 0;
-        }
-      }
-      @keyframes halo {
-        0% {
-          opacity: 0.9;
-          transform: scale(0.96);
-        }
-        100% {
-          opacity: 0;
-          transform: scale(1.12);
-        }
-      }
       @keyframes sweep {
         from {
           background-position: 120% 0;
         }
         to {
           background-position: -120% 0;
-        }
-      }
-      @keyframes scan {
-        0% {
-          top: -30%;
-          opacity: 0;
-        }
-        15% {
-          opacity: 1;
-        }
-        100% {
-          top: 100%;
-          opacity: 0;
-        }
-      }
-      @keyframes bob {
-        0%,
-        100% {
-          transform: translateY(0);
-          opacity: 0.5;
-        }
-        50% {
-          transform: translateY(-3px);
-          opacity: 1;
         }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -632,23 +504,21 @@
             <div class="shot" id="shot">
               <img id="img" alt="The browser's page" />
               <img id="img2" alt="" aria-hidden="true" />
-              <div class="scan" id="scan"></div>
               <div class="veil"><span id="veil">A person is driving</span></div>
             </div>
           </div>
           <div class="foot">
             <div class="driver">
               <div class="status">
-                <span id="status" role="status">Waiting for the first frame…</span>
-                <span class="typing" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span id="status" role="status">Connecting to browser…</span>
               </div>
               <div class="meta">
                 <span class="chip" id="elapsed"></span>
                 <span class="chip" id="fresh"></span>
               </div>
             </div>
-            <button id="take" type="button" aria-label="Take over in Oya (opens new tab)">
-              Take over
+            <button id="take" type="button" hidden aria-label="Watch live (opens new tab)">
+              Watch live
               <svg viewBox="0 0 12 12" aria-hidden="true">
                 <path
                   d="M4 2h6v6M10 2 3 9"
@@ -660,7 +530,7 @@
               </svg>
             </button>
           </div>
-          <div class="link" id="link" hidden></div>
+          <div class="link" id="link" role="status" hidden></div>
         </div>
       </div>
     </div>
@@ -680,13 +550,15 @@
         const $ = (id) => document.getElementById(id);
         const state = {
           id: '',
-          live: '',
+          opening: false,
+          refreshing: false,
           timer: 0,
           failures: 0,
           missing: 0,
           lastFrame: 0,
           firstFrame: 0,
-          visible: true,
+          intersecting: !('IntersectionObserver' in window),
+          retryPaused: false,
           ended: false,
           said: '',
           front: 'img',
@@ -711,7 +583,13 @@
         function say(words, mode, badge) {
           $('card').className = 'card-state ' + (mode || '');
           $('badge-text').textContent = badge;
+          if (!state.opening) actionLabel(mode === 'stalled' ? 'Reconnect' : 'Watch live');
           if (state.said !== words) $('status').textContent = state.said = words;
+        }
+        /** Keep the accessible and visible labels in sync through retry and open states. */
+        function actionLabel(label) {
+          $('take').firstChild.textContent = label + ' ';
+          $('take').setAttribute('aria-label', label === 'Watch live' ? 'Watch live (opens new tab)' : label);
         }
         /** Light or dark, as the host says. */
         const theme = (ctx) => ctx && ctx.theme && document.documentElement.setAttribute('data-theme', ctx.theme);
@@ -724,32 +602,47 @@
           theme(result && result.hostContext);
         }
 
-        /** The browser this card shows, from start_browser's result. */
+        /** The browser this card shows, from show_browser’s result. */
         function onResult(result) {
           const card = result && result.structuredContent;
+          if (result?.isError) return stop();
           if (!card || typeof card.browserId !== 'string') return;
           state.id = card.browserId;
-          state.live = typeof card.liveUrl === 'string' && /^https?:\/\//.test(card.liveUrl) ? card.liveUrl : '';
           if (card.name) $('name').textContent = card.name;
-          $('take').hidden = !state.live;
+          $('take').hidden = Boolean(card.pending);
           schedule(0);
         }
 
         /** Asks again in `ms`, while the card is on screen and its browser runs. */
         function schedule(ms) {
           clearTimeout(state.timer);
-          if (state.id && state.visible && !state.ended) state.timer = setTimeout(refresh, ms);
+          if (canRefresh()) state.timer = setTimeout(refresh, ms);
+        }
+
+        /** Both the document and this card must be visible to request another snapshot. */
+        function canRefresh() {
+          return (
+            state.id &&
+            state.intersecting &&
+            document.visibilityState === 'visible' &&
+            !state.retryPaused &&
+            !state.ended
+          );
         }
 
         /** One snapshot through the host's MCP connection. */
         async function refresh() {
+          if (state.refreshing || !canRefresh()) return;
+          state.refreshing = true;
           try {
             const result = await request('tools/call', { name: 'view_browser', arguments: { browser_id: state.id } });
             show((result && result.structuredContent) || { state: 'failed' });
           } catch {
             show({ state: 'failed' });
+          } finally {
+            state.refreshing = false;
+            schedule(EVERY_MS);
           }
-          schedule(EVERY_MS);
         }
 
         /** The card for one answer: live, held by a person, gone, or failing. */
@@ -757,52 +650,57 @@
           if (view.state === 'live') return showLive(view);
           if (view.state === 'held') return held();
           if (view.state === 'unavailable') return unreachable();
-          if (++state.failures < STALL_AFTER) return;
+          state.missing = 0;
+          if (++state.failures >= RECONNECT_TRIES) {
+            state.retryPaused = true;
+            $('take').hidden = false;
+            return say('Couldn’t refresh the browser. Select Reconnect to try again.', 'stalled', 'Disconnected');
+          }
+          if (state.failures < STALL_AFTER) return;
           const ago = state.lastFrame ? Math.round((Date.now() - state.lastFrame) / 1000) : 0;
-          if (!state.lastFrame) return say('Waiting for the first frame…', '', 'Starting');
+          if (!state.lastFrame) return say('Connecting to browser…', '', 'Starting');
           say('⚠ Last frame ' + ago + 's ago. Retrying…', 'stalled', 'Retrying');
         }
 
         /** A person has taken over in the live page: the agent is paused until they hand it back. */
         function held() {
+          state.failures = state.missing = 0;
+          $('take').hidden = false;
           $('veil').textContent = 'A person is driving';
-          $('take').firstChild.textContent = 'Open live page ';
           say('A person has control.', 'held', 'Paused');
         }
 
         /** A fresh picture, faded in over the last one, with the browser's name and address. */
         function showLive(view) {
+          $('take').hidden = false;
           if (typeof view.image === 'string' && view.image.startsWith('data:image/')) crossfade(view.image);
           if (view.name) $('name').textContent = view.name;
           $('url').textContent = view.url || 'about:blank';
           $('url').title = view.url || '';
-          $('take').firstChild.textContent = 'Take over ';
           state.failures = 0;
           state.missing = 0;
-          say(state.driver + ' is driving', 'live', 'Live');
+          say(state.driver + ' has control', 'live', 'Live');
           tick();
         }
 
-        /** Loads the new frame behind the shown one, then swaps them and sweeps the scan line, so a refresh never flashes. */
+        /** Unchanged snapshots update freshness without touching either visible image. */
         function crossfade(src) {
+          state.lastFrame = Date.now();
+          state.firstFrame = state.firstFrame || state.lastFrame;
+          if ($(state.front).getAttribute('src') === src) return;
           const back = $(state.front === 'img' ? 'img2' : 'img');
           back.onload = () => {
             back.classList.add('on');
             $(state.front).classList.remove('on');
             state.front = back.id;
             $('shot').classList.add('has');
-            const scan = $('scan');
-            scan.classList.remove('go');
-            void scan.offsetWidth;
-            scan.classList.add('go');
           };
           back.src = src;
-          state.lastFrame = Date.now();
-          state.firstFrame = state.firstFrame || state.lastFrame;
         }
 
         /** The server cannot reach the browser: still booting, reconnecting, or stopped once it has been gone long enough. */
         function unreachable() {
+          state.failures = 0;
           if (++state.missing >= (state.lastFrame ? RECONNECT_TRIES : BOOT_TRIES)) return stop();
           if (!state.lastFrame) return say('Waiting for the browser to start…', '', 'Starting');
           say('⚠ Reconnecting to the browser…', 'stalled', 'Reconnecting');
@@ -837,14 +735,32 @@
         }
         setInterval(tick, 1000);
 
-        /** Opens the live page; a host that cannot shows the link to copy instead. */
-        $('take').addEventListener('click', () => {
-          if (!state.live) return;
-          request('ui/open-link', { url: state.live }).catch(() => {
-            $('take').hidden = true;
-            $('link').textContent = state.live;
+        /** Only a click requests a scoped URL; its credential never appears as copyable text. */
+        $('take').addEventListener('click', async () => {
+          if (!state.id || state.ended || state.opening) return;
+          if ($('card').classList.contains('stalled')) {
+            state.failures = 0;
+            state.retryPaused = false;
+            return schedule(0);
+          }
+          state.opening = true;
+          $('take').setAttribute('aria-disabled', 'true');
+          actionLabel('Opening…');
+          $('link').hidden = true;
+          try {
+            const reply = await request('tools/call', { name: 'watch_browser', arguments: { browser_id: state.id } });
+            const url = reply?._meta?.watchUrl;
+            if (!url || state.ended) throw new Error();
+            const opened = await request('ui/open-link', { url });
+            if (opened?.isError) throw new Error();
+          } catch {
+            $('link').textContent = 'Couldn’t open live view. Select Watch live to retry.';
             $('link').hidden = false;
-          });
+          } finally {
+            state.opening = false;
+            $('take').removeAttribute('aria-disabled');
+            actionLabel($('card').classList.contains('stalled') ? 'Reconnect' : 'Watch live');
+          }
         });
 
         /** Messages from the host: answers, the tool result, theme changes. Anything else is not ours. */
@@ -863,14 +779,10 @@
         });
 
         /** Snapshots only while someone can see the card. */
-        const watch = () => {
-          state.visible = document.visibilityState === 'visible';
-          schedule(0);
-        };
-        document.addEventListener('visibilitychange', watch);
+        document.addEventListener('visibilitychange', () => schedule(0));
         if ('IntersectionObserver' in window)
           new IntersectionObserver((entries) => {
-            state.visible = entries.some((e) => e.isIntersecting) && document.visibilityState === 'visible';
+            state.intersecting = entries.some((e) => e.isIntersecting);
             schedule(0);
           }).observe($('card'));
 

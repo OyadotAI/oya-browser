@@ -10,7 +10,7 @@ import { getAll as getAllCookies } from '../../personas/cookies.ts';
 import { releaseBrowser } from './release.ts';
 import { HANDLERS, type Connection } from './handlers/index.ts';
 import { admit, claimRegistered, hijack, takePersona, Rejection, type Admitted } from './admission.ts';
-import { adopt, enlist, list, providerOf, type Registration } from './registration.ts';
+import { adopt, checkEnrolment, enlist, list, providerOf, type Registration } from './registration.ts';
 import { identityFor, welcomeMessage } from './identity.ts';
 import { Heartbeat } from './heartbeat.ts';
 import { AUTH_DEADLINE_MS, CloseCode } from './constants.ts';
@@ -31,6 +31,8 @@ export class BrowserConnection implements Connection {
   apiKey: string | null = null;
   /** The persona it runs as; its concurrency slot is held while connected. */
   persona: any = null;
+  /** Whether admission verified a server-issued cloud worker enrollment. */
+  cloudVerified = false;
   /** Whether it uses the operator's metered residential gateway. */
   residentialProxy = false;
   /** A desktop control handoff is in progress. */
@@ -133,7 +135,7 @@ export class BrowserConnection implements Connection {
   /** Adopts and lists the session; false if the socket closed or was replaced meanwhile. */
   private async register(msg, provider: string) {
     const reg = this.registration(msg.api_key);
-    await adopt(reg, provider, msg.enrollment_token);
+    await adopt(reg, provider);
     if (!stillLive(this)) return false;
     enlist(reg, provider, msg);
     unclaimed.delete(this.browserId);
@@ -143,7 +145,8 @@ export class BrowserConnection implements Connection {
 
   /** What registration needs, from this connection. */
   private registration(authToken: string): Registration {
-    return { apiKey: this.apiKey, browserId: this.browserId, persona: this.persona, ws: this.ws, authToken };
+    const { cloudVerified, apiKey, browserId, persona, ws } = this;
+    return { cloudVerified, apiKey, browserId, persona, ws, authToken };
   }
 
   /** Sends the identity and the cookie jar, then opens message routing and the heartbeat. */
@@ -173,6 +176,7 @@ const unclaimed = new Map<string, BrowserConnection>();
 /** Resolves the browser's key and persona slot while the socket stays open. */
 async function acquireAdmission(conn: BrowserConnection, msg) {
   const admitted = await admit(msg);
+  conn.cloudVerified = await checkEnrolment(admitted.browserId, msg.enrollment_token);
   if (!conn.isOpen()) return false;
   claimSlot(conn, admitted, msg);
   return true;

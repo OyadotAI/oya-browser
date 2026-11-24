@@ -111,6 +111,11 @@ describe('BrowserConnection', () => {
     assert.deepEqual([b.apiKey, b.name, b.clientType, b.ws], ['k-conn', 'Mine', 'oya', ws]);
   });
 
+  it('an ordinary connection claiming a cloud provider stays outside remote MCP', async () => {
+    await connect(auth({ provider: 'oya-cloud' }));
+    assert.equal(registry.get(B).cloudVerified, false);
+  });
+
   it('tells the ops channel about a first desktop with its platform from a fixed list, never the text the client sent', async () => {
     process.env.SLACK_OPS_WEBHOOK_EVENTS = 'https://hooks.example.test/events';
     keyConfig.reset();

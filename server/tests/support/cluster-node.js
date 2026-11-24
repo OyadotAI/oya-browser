@@ -57,7 +57,8 @@ process.on('message', async (msg) => {
       apiKey: 'cluster-owner',
       name: 'Cluster fixture',
       clientType: 'cdp',
-      provider: 'cdp',
+      provider: 'steel',
+      cloudVerified: true,
       engine: {
         wsUrl: url.replace('http:', 'ws:') + '/fixture',
         send: async () => ({ ok: true, data: { owner: instanceId } }),

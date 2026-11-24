@@ -69,8 +69,9 @@ function envFor(config, browser) {
 }
 
 /** Where to enrol and as what. */
-function enrolment(config, { apiKey, name, browserId }) {
+function enrolment(config, { apiKey, name, browserId, enrollment }) {
   return {
+    OYA_ENROLLMENT_TOKEN: enrollment,
     OYA_SERVER_URL: config.wsUrl,
     OYA_API_KEY: apiKey,
     OYA_BROWSER_ID: browserId,

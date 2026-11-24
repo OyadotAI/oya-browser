@@ -7,6 +7,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerBrowserCard, viewBrowser, CARD_META } from '../../../src/mcp/browser-card.ts';
+import { awaitBrowser, letGo } from '../../../src/mcp/pool-state.ts';
 import { CARD_MIME, CARD_URI } from '../../../src/mcp/constants.ts';
 import { registry } from '../../../src/modules/browsers/registry.ts';
 import { disconnectBrowser } from '../support/fakes.ts';
@@ -18,13 +19,14 @@ const B = 'b-card';
 const SHOT = 'data:image/jpeg;base64,AAAA';
 
 /** B, connected on KEY, answering screenshots with `answer`. */
-const browser = (answer = () => ({ ok: true, data: { screenshot: SHOT } })) => driveBrowser(B, answer, KEY);
+const browser = (answer = () => ({ ok: true, data: { screenshot: SHOT } })) => driveBrowser(B, answer, KEY, true);
 
 describe('browser card', () => {
   beforeEach(() => stubControl());
   afterEach(() => {
     mock.restoreAll();
     disconnectBrowser(B);
+    letGo(KEY, B);
   });
 
   it('serves its page as an MCP App with no credential in it', async () => {
@@ -43,6 +45,42 @@ describe('browser card', () => {
     registerBrowserCard(server as any, KEY);
     assert.deepEqual(server.tools.get('view_browser').meta, { ui: { visibility: ['app'] } });
     assert.equal(server.tools.get('view_browser').annotations.readOnlyHint, true);
+  });
+
+  it('presents an owned browser on successive calls and refuses missing or foreign browsers', async () => {
+    browser();
+    const server = new FakeMcpServer();
+    registerBrowserCard(server as any, KEY);
+    for (const turn of [1, 2]) {
+      const reply = await server.call('show_browser', { browser_id: B });
+      assert.equal(reply.structuredContent.browserId, B, `turn ${turn}`);
+    }
+    assert.equal((await server.call('show_browser', { browser_id: 'missing' })).isError, true);
+    registerBrowserCard(server as any, 'other');
+    assert.equal((await server.call('show_browser', { browser_id: B })).isError, true);
+  });
+
+  it('presents the reserved worker while waiting for its authenticated connection', async () => {
+    awaitBrowser(KEY, B);
+    const server = new FakeMcpServer();
+    registerBrowserCard(server as any, KEY);
+    const reply = await server.call('show_browser', { browser_id: B });
+    assert.equal(reply.structuredContent.pending, true);
+    assert.deepEqual((await viewBrowser(KEY, B)).structuredContent, { state: 'unavailable' });
+    registerBrowserCard(server as any, 'other');
+    assert.equal((await server.call('show_browser', { browser_id: B })).isError, true);
+  });
+
+  it('returns the watch credential only in component metadata', async () => {
+    const server = new FakeMcpServer();
+    const fetch = mock.method(globalThis, 'fetch', async () => Response.json({ token: 'temporary' }));
+    registerBrowserCard(server as any, KEY, { origin: 'http://localhost', authorization: 'Bearer caller' });
+    const reply = await server.call('watch_browser', { browser_id: B });
+    assert.equal(fetch.mock.calls[0].arguments[1].headers.Authorization, 'Bearer caller');
+    assert.equal(server.tools.get('watch_browser').meta.ui.visibility[0], 'app');
+    assert.deepEqual(reply.content, []);
+    assert.equal(reply.structuredContent, undefined);
+    assert.match(reply._meta.watchUrl, /#t=temporary$/);
   });
 
   it('shows the caller’s own browser live, with its picture', async () => {

@@ -1,14 +1,5 @@
 #!/usr/bin/env node
-/**
- * Native desktop MCP lifecycle: adopt a connected Oya fixture, drive it and
- * stop its control connection through the real public API. start_browser and
- * stop_browser replay the caller's own Authorization against the public API,
- * so this also runs the real admission, quota and persona path.
- *
- * The private fixture bridge supplies real native page operations; this tests
- * the inbound Oya control socket, not cloud provisioning or persona application.
- * Legacy outbound-provider lifecycle coverage remains a separate gated suite.
- */
+/** Remote MCP excludes an attached Oya desktop while REST retains native input and ownership gates. */
 
 import { spawn } from 'child_process';
 import { createServer } from 'http';
@@ -123,7 +114,7 @@ try {
   const empty = await call('analyze_page');
   assert(empty.error && /start_browser/.test(empty.text), 'with no browser, the error says to call start_browser');
 
-  // The real desktop is connected before start_browser borrows it; nothing provisions a CDP browser.
+  // A desktop on this key must stay outside the remote pool.
   socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   const authenticated = new Promise((resolve, reject) => {
     const deadline = setTimeout(() => reject(Error('Native control authentication timed out')), 10000);
@@ -163,29 +154,18 @@ try {
   );
   const identity = await authenticated;
   assert(identity.control.mode === 'agent', 'native socket is admitted under agent ownership');
-  console.log('\n2️⃣  The agent adopts its native desktop browser...');
+  console.log('Checking that remote MCP leaves the connected desktop alone...');
+  assert((await call('analyze_page')).error, 'remote pool cannot analyze the desktop');
+  assert(!(await call('pool_status')).text.includes('mcp-test'), 'remote status hides the desktop');
+  assert((await call('show_browser', { browser_id: 'native-mcp-fixture' })).error, 'remote card refuses desktop');
+  assert((await call('stop_browser', { browser_id: 'native-mcp-fixture' })).error, 'remote stop refuses desktop');
   const started = await call('start_browser', { name: 'mcp-test', url: siteUrl });
-  assert(
-    !started.error && /ready/.test(started.text),
-    `start_browser adopts the connected Oya (${started.text.slice(0, 90)})`,
-  );
-  const page = await call('analyze_page');
-  assert(
-    !page.error && /Hello agent/.test(page.text) && /Press me/.test(page.text),
-    'it navigated, and analyze_page reads the page',
-  );
-  const status = await call('pool_status');
-  assert(/★/.test(status.text) && /mcp-test/.test(status.text), 'pool_status shows it as the one being driven');
-
-  const clicked = await call('click', { element_id: 1 });
-  assert(!clicked.error, 'MCP click is dispatched through the native control socket');
-  assert(
-    (await browser.evaluateMain('document.title')) === 'Native click',
-    'trusted native click reached the real page',
-  );
-  assert((await browser.evaluateMain('window.trusted')) === true, 'the page receives a trusted native input event');
-  const unsupported = await call('type', { element_id: 1, text: 'not supported by this fixture' });
-  assert(unsupported.error, 'unannounced actions fail instead of using a CDP fallback');
+  assert(started.error, 'unconfigured cloud start fails without borrowing the desktop');
+  assert((await api('/browsers')).length === 1, 'desktop remains connected');
+  const act = (action, params = {}) => api('/browsers/native-mcp-fixture/command', { action, params });
+  await act('navigate', { url: siteUrl });
+  await act('click', { selector: 'button' });
+  assert((await browser.evaluateMain('window.trusted')) === true, 'trusted native input still works through REST');
   /** Match a desktop ownership reply before attempting the next agent action. */
   const handoff = (action) =>
     new Promise((resolve, reject) => {
@@ -205,11 +185,11 @@ try {
       socket.send(JSON.stringify({ type: 'desktop_control', id, action }));
     });
   assert((await handoff('acquire')).state?.mode === 'human', 'the human can take native browser ownership');
-  const paused = await call('click', { element_id: 1 });
-  assert(paused.error, 'MCP cannot act while the human owns the native browser');
+  const paused = await act('click', { selector: 'button' });
+  assert(paused.error, 'REST cannot act while the human owns the native browser');
   assert((await browser.evaluateMain('window.clicks')) === 1, 'the refused action never reaches the page');
   assert((await handoff('return')).state?.mode === 'agent', 'control returns to the agent');
-  assert(!(await call('click', { element_id: 1 })).error, 'MCP can act after explicit handback');
+  assert((await act('click', { selector: 'button' })).ok, 'REST can act after explicit handback');
   assert((await browser.evaluateMain('window.clicks')) === 2, 'the resumed action reaches the page exactly once');
   const other = new Client({ name: 'other-owner', version: '1.0.0' });
   try {
@@ -227,8 +207,7 @@ try {
     await other.close();
   }
   console.log('\n3️⃣  ...and stops its control connection.');
-  const stopped = await call('stop_browser');
-  assert(!stopped.error && /Stopped/.test(stopped.text), 'stop_browser stops it');
+  await api('/browsers/stop', { ids: ['native-mcp-fixture'] });
   const left = await api('/browsers');
   assert(Array.isArray(left) && left.length === 0, 'nothing is left running');
   const again = await call('analyze_page');

@@ -97,7 +97,12 @@ export function fakeRequest({
 }
 
 /** Registers a driven (CDP) browser whose driver answers every command with `answer`; returns the driver. */
-export function driveBrowser(browserId: string, answer: (action: string, params: any) => any, apiKey = 'key-a') {
+export function driveBrowser(
+  browserId: string,
+  answer: (action: string, params: any) => any,
+  apiKey = 'key-a',
+  cloudVerified = false,
+) {
   const driver = {
     sent: [] as { action: string; params: any; timeout: number }[],
     closed: false,
@@ -111,7 +116,14 @@ export function driveBrowser(browserId: string, answer: (action: string, params:
     },
     isAlive: () => driver.alive,
   };
-  registry.add(browserId, { apiKey, name: 'Driven', clientType: 'cdp', provider: 'cdp', engine: driver });
+  registry.add(browserId, {
+    apiKey,
+    cloudVerified,
+    name: 'Driven',
+    clientType: 'cdp',
+    provider: 'cdp',
+    engine: driver,
+  });
   return driver;
 }
 

@@ -87,6 +87,7 @@ async function enroll(spec, initialUrl) {
           JSON.stringify({
             type: 'auth',
             api_key: spec.env.OYA_API_KEY,
+            enrollment_token: spec.env.OYA_ENROLLMENT_TOKEN,
             browser_id: spec.env.OYA_BROWSER_ID,
             browser_name: spec.env.OYA_BROWSER_NAME,
             persona: spec.env.OYA_PERSONA,

@@ -106,8 +106,11 @@ export const TOOL_META: Record<string, ToolMeta> = {
   list_playbooks: reads('List Playbooks', false),
   pool_status: reads('Pool Status', false),
   // Only the chat card calls it (an app-only tool): a fresh snapshot of the browser the card shows.
+  show_browser: reads('Show Browser', false),
+  watch_browser: writes('Watch Browser', false),
   view_browser: reads('View Browser', false),
-  start_browser: writes('Start Browser', false),
+  // Open world: it can start a browser on a third-party provider and open any URL it is given.
+  start_browser: writes('Start Browser'),
   stop_browser: destroys('Stop Browser', false),
 };
 

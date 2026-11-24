@@ -204,13 +204,14 @@ const GROUPS: Group[] = [
   {
     id: 'pool-tools',
     title: 'Pool',
-    note: 'These three exist only on /mcp/pool.',
+    note: 'These four exist only on /mcp/pool.',
     rows: [
       tool(
         'start_browser',
         '[persona], [provider], [name], [url]',
         'Start a browser on your key and make it the one every other tool drives. Persona is an id, "auto" or "default". Billed until stopped.',
       ),
+      tool('show_browser', 'browser_id', 'Show the live browser after a browsing request.'),
       tool('stop_browser', '[browser_id]', 'Stop a browser and release its session. Defaults to the one being driven.'),
       tool('pool_status', '', 'Pool size and connected browsers.'),
     ],

@@ -21,3 +21,6 @@ export const INVITE_TTL_S = 604_800;
 export const MS_PER_SECOND = 1000;
 /** Lifetime of a console credential minted for a signed-in user. */
 export const CONSOLE_ACCESS_MS = 3_600_000;
+
+/** A ChatGPT watch link may open only this browser for ten minutes. */
+export const WATCH_SECONDS = 600;

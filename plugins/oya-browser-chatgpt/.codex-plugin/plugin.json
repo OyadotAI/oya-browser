@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "Oya Browser",
     "shortDescription": "Real browser you can take over",
-    "longDescription": "Oya Browser gives ChatGPT a real Chrome browser that you can watch and take over at any time.\n\nAsk ChatGPT to research a site, fill in a form, compare products, or check a web app you are building. It starts a browser in Oya Cloud, reads each page as numbered elements, and clicks, types, scrolls and waits like a person would. Every step runs in your own browser session on your own Oya account.\n\nYou stay in control. When a browser starts, a live card in the chat shows the page as it changes, and a Take over button opens the live view, where you can take control, sign in yourself, or stop the agent. Agent actions pause while you hold control.\n\nBrowsers keep a persistent profile, so a site you signed in to stays signed in next time. Steps you repeat can be saved as playbooks and replayed. Stop a browser when you are done; each running browser uses a session on your Oya plan.\n\nOya Browser is for working on sites and accounts you are allowed to use.",
+    "longDescription": "Oya Browser gives ChatGPT a real Chrome browser that you can watch and take over at any time.\n\nAsk ChatGPT to research a site, fill in a form, compare products, or check a web app you are building. It starts a browser in Oya Cloud, reads each page as numbered elements, and clicks, types, scrolls and waits like a person would. Every step runs in your own browser session on your own Oya account.\n\nYou stay in control. A live card after a browsing request shows the page as it changes. Watch live opens a temporary viewing link. You can take control separately from your Oya dashboard. Agent actions pause while you hold control.\n\nBrowsers keep a persistent profile, so a site you signed in to stays signed in next time. Steps you repeat can be saved as playbooks and replayed. Stop a browser when you are done; each running browser uses a session on your Oya plan.\n\nOya Browser is for working on sites and accounts you are allowed to use.",
     "developerName": "OyadotAI",
     "category": "Productivity",
     "capabilities": [
@@ -45,22 +45,22 @@
     "test_cases": [
       {
         "prompt": "Start a browser and open https://news.ycombinator.com, then list the top 5 story titles.",
-        "expected_tools": ["start_browser", "analyze_page"],
+        "expected_tools": ["start_browser", "analyze_page", "show_browser"],
         "expected_result": "A browser starts, the browser card shows Hacker News, and ChatGPT lists the five titles shown on the page."
       },
       {
         "prompt": "Go to https://en.wikipedia.org/wiki/Web_browser and tell me when the first graphical web browser was released.",
-        "expected_tools": ["start_browser", "navigate", "analyze_page"],
+        "expected_tools": ["start_browser", "navigate", "analyze_page", "show_browser"],
         "expected_result": "ChatGPT reads the article and answers with the date stated on the page, citing it."
       },
       {
         "prompt": "Open https://httpbin.org/forms/post, fill in the customer name 'Test Reviewer' and choose a medium pizza, but do not submit.",
-        "expected_tools": ["start_browser", "navigate", "analyze_page", "type", "click"],
+        "expected_tools": ["start_browser", "navigate", "analyze_page", "type", "click", "show_browser"],
         "expected_result": "The form fields are filled as asked and nothing is submitted; ChatGPT confirms it stopped before submitting."
       },
       {
         "prompt": "Take a screenshot of https://example.com.",
-        "expected_tools": ["start_browser", "navigate", "screenshot"],
+        "expected_tools": ["start_browser", "navigate", "screenshot", "show_browser"],
         "expected_result": "ChatGPT returns a screenshot of the example.com page."
       },
       {

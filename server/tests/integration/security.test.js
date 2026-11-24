@@ -263,12 +263,12 @@ try {
     });
     assert(crossTenant.status === 404, `Cross-tenant MCP returns 404 (got ${crossTenant.status})`);
 
-    // Owner succeeds
+    // Remote MCP excludes a desktop even for its owner.
     const owner = await request('POST', `/mcp/${a.browserId}`, {
       body: { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
       key: keyA,
     });
-    assert(owner.status === 200, `Owner MCP returns 200 (got ${owner.status})`);
+    assert(owner.status === 404, `Remote MCP excludes the owner’s desktop (got ${owner.status})`);
 
     a.ws.close();
     await wait(150);

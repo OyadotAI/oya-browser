@@ -105,6 +105,23 @@ describe('sessions routes', () => {
     }
   });
 
+  it('lets an operator open only their connected browser with a fixed viewer grant', async () => {
+    const operator = await control().credential(A, { role: 'operator' });
+    connectBrowser(id, A, true);
+    try {
+      const path = `/sessions/${id}/watch`;
+      const res = await call('POST', path, { control: true, expiresIn: 999999 }, operator.token);
+      assert.equal(res.status, 201);
+      const principal = await control().authenticate(res.body.token);
+      assert.deepEqual([principal.role, principal.sessionId], ['viewer', id]);
+      assert.equal((await call('POST', path, {}, B)).status, 404);
+      assert.equal((await call('POST', path, {}, res.body.token)).status, 403);
+      assert.equal((await call('POST', `/sessions/${id}/share`, {}, operator.token)).status, 403);
+    } finally {
+      disconnectBrowser(id);
+    }
+  });
+
   it('shares a live browser as a 201 credential bound to it', async () => {
     const res = await call('POST', `/sessions/${id}/share`, { control: true, expiresIn: 120 });
     assert.equal(res.status, 201);

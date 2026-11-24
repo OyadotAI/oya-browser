@@ -8,7 +8,7 @@ import { registerBrowserTools } from './browser-tools.ts';
 import { poolStats } from '../modules/browsers/pool.ts';
 import { authorize } from './auth.ts';
 import { answerFailure, serve } from './transport.ts';
-import { browserTag, pickFor } from './pool-state.ts';
+import { browserTag, pickFor, waitingMessage } from './pool-state.ts';
 import { registerLifecycleTools } from './pool-lifecycle.ts';
 import { registerBrowserCard } from './browser-card.ts';
 import type { Self } from './self-api.ts';
@@ -49,7 +49,17 @@ const POOL_TOOLS = [
 ];
 
 /** Every tool the pool endpoint serves: the per-browser subset plus its own three. */
-export const POOL_TOOL_NAMES = [...POOL_TOOLS, 'start_browser', 'stop_browser', 'pool_status'];
+export const POOL_TOOL_NAMES = [...POOL_TOOLS, 'start_browser', 'stop_browser', 'pool_status', 'show_browser'];
+
+/** Tool calls cannot detect conversation boundaries, so the host presents the final view. */
+const TURN_END =
+  'After each browsing turn, call show_browser once with the ID of the browser used, after all page actions and screenshots. Skip this when the browser was stopped.';
+
+/** Pool tool selection and its empty-state recovery. */
+const POOL_OPTIONS = {
+  only: POOL_TOOLS,
+  screenshotCard: true,
+};
 
 /** The pool-status resource's address. */
 const POOL_STATUS = 'browser://pool-status';
@@ -59,11 +69,11 @@ const POOL_STATUS = 'browser://pool-status';
  * Authorization header, which the lifecycle tools replay against the public API.
  */
 function createPoolMcpServer(apiKey, self: Self = {}) {
-  const server = new McpServer({ name: 'Oya Browser Pool', version: MCP_VERSION });
-  const noBrowser = 'no browser is running. Call start_browser first.';
-  registerBrowserTools(server, { pick: pickFor(apiKey), tag: browserTag, noBrowser, only: POOL_TOOLS });
+  const server = new McpServer({ name: 'Oya Browser Pool', version: MCP_VERSION }, { instructions: TURN_END });
+  const noBrowser = waitingMessage(apiKey) || 'No cloud browsers are running. Use start_browser to start one.';
+  registerBrowserTools(server, { ...POOL_OPTIONS, noBrowser, pick: pickFor(apiKey), tag: browserTag });
   registerLifecycleTools(server, { apiKey, self });
-  registerBrowserCard(server, apiKey);
+  registerBrowserCard(server, apiKey, self);
   const description = 'Pool size and browser list';
   server.resource('pool-status', POOL_STATUS, { description }, async () => poolStatusResource(apiKey));
   return server;
@@ -71,7 +81,7 @@ function createPoolMcpServer(apiKey, self: Self = {}) {
 
 /** The pool's stats as JSON. */
 function poolStatusResource(apiKey) {
-  const text = JSON.stringify(poolStats(apiKey), null, JSON_INDENT);
+  const text = JSON.stringify(poolStats(apiKey, true), null, JSON_INDENT);
   return { contents: [{ uri: POOL_STATUS, text, mimeType: 'application/json' }] };
 }
 

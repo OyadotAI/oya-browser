@@ -22,7 +22,7 @@ after(() => Object.entries(saved).forEach(([name, value]) => restoreEnv(name, va
 const sandbox = await import('../../../src/drivers/sandbox.ts');
 const { client } = await import('../../../src/drivers/sandbox/client.ts');
 const { ownerTag, PREFIX } = await import('../../../src/drivers/sandbox/config.ts');
-const { control } = await import('../../../src/modules/control/service.ts');
+const { control, hash } = await import('../../../src/modules/control/service.ts');
 const { WORKERS } = await import('../../../src/drivers/sandbox/worker.ts');
 
 /** A sandbox as the SDK returns one, with the entrypoint already running unless told otherwise. */
@@ -65,6 +65,8 @@ describe('createSandbox', () => {
       'oya-persona': 'p-1',
     });
     assert.equal(spec.envVars.OYA_API_KEY, 'user-key');
+    const reservation = await control().store.get('session', made.browserId);
+    assert.equal(reservation.enrollmentHash, hash(spec.envVars.OYA_ENROLLMENT_TOKEN));
     assert.equal(spec.envVars.OYA_SERVER_URL, 'wss://oya.example/ws');
     assert.equal(spec.envVars.OYA_PERSONA, 'p-1');
     assert.equal(spec.envVars.OYA_REMOTE_DEBUGGING_HOST, undefined, 'native relay needs no local listener');

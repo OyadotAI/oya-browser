@@ -22,6 +22,8 @@ interface HeaderProps {
   name: string;
   /** Whether an active credential is available. */
   authenticated: boolean;
+  /** Whether the server permits acquiring control. */
+  canControl: boolean;
   /** Current control action label. */
   controlLabel: string;
   /** Toggles human/agent control. */
@@ -31,7 +33,7 @@ interface HeaderProps {
 }
 
 /** Header with back link, browser name, and authenticated control buttons. */
-function LiveHeader({ name, authenticated, controlLabel, onToggleControl, onReconnect }: HeaderProps) {
+function LiveHeader({ name, authenticated, canControl, controlLabel, onToggleControl, onReconnect }: HeaderProps) {
   return (
     <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
       <div>
@@ -43,9 +45,11 @@ function LiveHeader({ name, authenticated, controlLabel, onToggleControl, onReco
       </div>
       {authenticated && (
         <div className="flex items-center gap-2">
-          <button className="btn-ghost" onClick={onToggleControl}>
-            {controlLabel}
-          </button>
+          {canControl && (
+            <button className="btn-ghost" onClick={onToggleControl}>
+              {controlLabel}
+            </button>
+          )}
           <button className="btn-ghost" onClick={onReconnect}>
             <RefreshCw className="h-4 w-4" />
             Reconnect
@@ -89,7 +93,7 @@ function LiveBody({ page }: { /** State returned by useLivePage. */ page: Return
         fps={live.fps}
         frameAgeMs={live.age}
         send={send}
-        interactive={control.mode === 'human'}
+        interactive={live.canControl && control.mode === 'human'}
         large
       />
     </>
@@ -105,6 +109,7 @@ export default function LiveBrowserPage() {
       <LiveHeader
         name={page.live.name}
         authenticated={Boolean(page.apiKey)}
+        canControl={page.live.canControl}
         controlLabel={page.control.label}
         onToggleControl={page.control.toggle}
         onReconnect={page.reconnect}

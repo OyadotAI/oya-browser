@@ -30,7 +30,9 @@ export const MAX_NAME = 100;
 export const JSON_INDENT = 2;
 
 /** The in-chat browser card's address: MCP Apps hosts render ui:// resources in a sandboxed frame. */
-export const CARD_URI = 'ui://oya/browser-card.html';
+export const CARD_URI = 'ui://oya/browser-card-v2.html';
+/** A fixed screenshot is rendered separately from the polling live card. */
+export const SCREENSHOT_URI = 'ui://oya/screenshot.html';
 /** The media type MCP Apps hosts render as an app (MCP Apps spec 2026-01-26). */
 export const CARD_MIME = 'text/html;profile=mcp-app';
 /** JPEG quality of the card's snapshots: a small picture every 2 seconds, not a full screenshot. */

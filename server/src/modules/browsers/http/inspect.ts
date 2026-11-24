@@ -16,14 +16,15 @@ export async function browserDetail(req, res) {
   const detail: any = registry.describe(browserId);
   const offersCdp = detail.clientType === 'cdp' || registry.get(browserId)?.cdp;
   if (offersCdp && req.principal?.role !== 'viewer') detail.cdpUrl = await browserCdpUrl(req, browserId);
-  res.json(detail);
+  res.json({ ...detail, canControl: req.principal?.role !== 'viewer' });
 }
 
 /** A browser not held here may still be the key's Oya Cloud sandbox; else 404. */
 async function cloudDetail(req, res, browserId) {
   const cloud = (await listSandboxBrowsers(getKey(req))).find((row) => row.id === browserId);
   // Not held here, so its app has not said what it does: the Oya list is what it will do once started.
-  if (cloud) return res.json({ ...cloud, actions: actionsFor('oya'), activity: [] });
+  const canControl = req.principal?.role !== 'viewer';
+  if (cloud) return res.json({ ...cloud, canControl, actions: actionsFor('oya'), activity: [] });
   return res.status(Status.NOT_FOUND).json({ error: `Browser ${browserId} not connected` });
 }
 
