@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.286](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.286) · 2026-11-24
+
 ### Fixed
 
 - The desktop browser no longer freezes with "Could not change control" until it is force-quit. A control change that hit an error left the takeover waiting forever and closed the server connection for good; the takeover now finishes, and only a failed sign-in ends the connection.
