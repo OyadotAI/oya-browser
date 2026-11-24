@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.291](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.291) · 2026-11-24
+
 ### Added
 
 - Remote MCP now selects verified cloud sessions. Desktop browsing uses local MCP.
