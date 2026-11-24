@@ -71,7 +71,16 @@ enterprise edition.
 
 ## Install for Claude Code or Codex
 
-**To use your desktop browser**, [download Oya Browser](https://oyabrowser.com/#download), open it, and finish the welcome screen. Click **Connect** next to **Claude Code** or **Codex**, confirm, and start a new agent session. Keep Oya open while you browse.
+**Paste this prompt into Claude Code or Codex on your Mac or Windows PC:**
+
+```text
+Install Oya Browser on this computer and connect it to this agent. Use the
+desktop installer command for my OS from https://oyabrowser.com/llms.txt.
+Run it with claude-code if you're Claude Code or codex if you're Codex.
+Tell me when to click Connect in Oya.
+```
+
+The installer opens Oya and requests the connection. Finish the welcome screen if prompted, then click **Connect**. Keep Oya open and start a new agent session. To verify the connection, ask: “Use my Oya desktop browser to open https://example.com and tell me the page title.” You can also [download the desktop app manually](https://oyabrowser.com/#download).
 
 **To use Oya Cloud**, follow the steps for your agent below.
 

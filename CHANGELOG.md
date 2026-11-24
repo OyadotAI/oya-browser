@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Documentation
+
+- Added a prompt users can paste into Claude Code or Codex to install Oya Browser on macOS or Windows and connect the desktop app to their agent.
+
 ## [1.0.292](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.292) · 2026-11-24
 
 ### Documentation
