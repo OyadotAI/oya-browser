@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.292](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.292) · 2026-11-24
+
 ### Documentation
 
 - Added desktop and cloud installation steps for Claude Code and Codex, including a prompt to verify the connection.
