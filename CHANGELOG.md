@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.294](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.294) · 2026-11-24
+
 ### Fixed
 
 - Fixed the release check for native desktop clicks. It now reads the page and uses the returned button reference to verify input before, during, and after human takeover.
