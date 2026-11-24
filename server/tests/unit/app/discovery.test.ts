@@ -113,8 +113,17 @@ describe('agent discovery manifests', () => {
     assert.match(plugin.description, /desktop app/i);
     assert.equal(plugin.mcpServers.oya.headers, undefined, 'the directory refuses a key read from the user machine');
     assert.match(plugin.privacyPolicyUrl, /^https:\/\/oyabrowser\.com\/privacy$/);
-    for (const kw of ['playwright', 'playbooks', 'coding-agent', 'claude-code', 'hipaa']) {
+    for (const kw of ['playwright', 'playbooks', 'coding-agent', 'claude-code']) {
       assert.ok(plugin.keywords.includes(kw), `plugin.json keywords omits ${kw}`);
     }
+  });
+
+  it('keeps the plugin listing to what the Claude directory accepts automatically', () => {
+    const plugin = JSON.parse(readFileSync(join(ROOT, 'plugins/oya-browser/.claude-plugin/plugin.json'), 'utf8'));
+    assert.equal(plugin.displayName, 'Oya Browser', 'the listing name, which the directory compares to the manifest');
+    // "Oya" and "Oya AI" were refused as too close to the listings "yoya", "yaai" and "rakkoma".
+    assert.equal(plugin.author.name, 'OyadotAI');
+    assert.equal(plugin.author.url, 'https://oyabrowser.com');
+    assert.doesNotMatch(`${plugin.description} ${plugin.keywords.join(' ')}`, /hipaa|soc ?2|certif|baa/i);
   });
 });
