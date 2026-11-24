@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.289](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.289) · 2026-11-24
+
 ### Fixed
 
 - The Claude Code plugin's author is now "OyadotAI", the GitHub organization's name: the Claude directory refused "Oya" and "Oya AI" as too close to other listings' names. Its author link is oyabrowser.com, not getoya.ai.
