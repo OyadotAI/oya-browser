@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.288](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.288) · 2026-11-24
+
 ### Fixed
 
 - Agents' `analyze_page`, `click` and `type` now reach every frame from another site, as Keel's read does: a frame nested inside another (an embedded checkout inside a portal) and two frames from the same site are each read and acted on, where before they were skipped. A frame that reloaded since the read, even at the same address, is refused rather than acted on blind. This reaches local agents and claude.ai or ChatGPT alike.
