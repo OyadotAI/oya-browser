@@ -90,6 +90,13 @@ describe('discoveryRouter', () => {
     }
   });
 
+  it('answers OpenAI’s domain challenge with only the token, as plain text', async () => {
+    const res = await fetch(`${baseUrl}/.well-known/openai-apps-challenge`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /^text\/plain/);
+    assert.match(await res.text(), /^[A-Za-z0-9_-]{20,}$/, 'the bare token: no newline, no markup');
+  });
+
   it('falls through on unknown /.well-known/* routes so OAuth discovery keeps working', async () => {
     const res = await fetch(`${baseUrl}/.well-known/oauth-authorization-server`);
     assert.equal(res.status, Status.OK);

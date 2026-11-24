@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Oya Browser is being submitted to the ChatGPT plugin directory: the package lives in plugins/oya-browser-chatgpt, and oyabrowser.com answers OpenAI's domain check at /.well-known/openai-apps-challenge.
+
 ## [1.0.290](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.290) · 2026-11-24
 
 ### Added

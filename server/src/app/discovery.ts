@@ -23,6 +23,10 @@ function sendDiscovery(res: express.Response, root: string, fileName: string, co
 /** Mounts /.well-known static files and the A2A agent-card alias, falling through on miss for OAuth. */
 function mountWellKnown(router: express.Router, publicDir: string): void {
   const wellKnownDir = join(publicDir, '.well-known');
+  /** OpenAI's plugin directory proves we own the domain by fetching this token, which must come back as plain text. */
+  router.get('/.well-known/openai-apps-challenge', (_req, res) =>
+    sendDiscovery(res, wellKnownDir, 'openai-apps-challenge', 'text/plain'),
+  );
   /** Serves static /.well-known discovery files (e.g. agent.json) and falls through on miss. */
   router.use('/.well-known', express.static(wellKnownDir, { maxAge: WELL_KNOWN_MAX_AGE_MS }));
   /** Serves the A2A agent card under its renamed path. */

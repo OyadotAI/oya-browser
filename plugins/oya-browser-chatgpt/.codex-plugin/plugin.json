@@ -1,0 +1,87 @@
+{
+  "name": "oya-browser",
+  "version": "1.0.290",
+  "description": "Real Chrome browsers ChatGPT can drive, with a live view you can take over.",
+  "author": {
+    "name": "OyadotAI",
+    "url": "https://oyabrowser.com"
+  },
+  "homepage": "https://oyabrowser.com",
+  "repository": "https://github.com/OyadotAI/oya-browser",
+  "license": "Apache-2.0",
+  "keywords": ["browser", "automation", "web", "research", "forms", "testing"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Oya Browser",
+    "shortDescription": "Real browser you can take over",
+    "longDescription": "Oya Browser gives ChatGPT a real Chrome browser that you can watch and take over at any time.\n\nAsk ChatGPT to research a site, fill in a form, compare products, or check a web app you are building. It starts a browser in Oya Cloud, reads each page as numbered elements, and clicks, types, scrolls and waits like a person would. Every step runs in your own browser session on your own Oya account.\n\nYou stay in control. When a browser starts, a live card in the chat shows the page as it changes, and a Take over button opens the live view, where you can take control, sign in yourself, or stop the agent. Agent actions pause while you hold control.\n\nBrowsers keep a persistent profile, so a site you signed in to stays signed in next time. Steps you repeat can be saved as playbooks and replayed. Stop a browser when you are done; each running browser uses a session on your Oya plan.\n\nOya Browser is for working on sites and accounts you are allowed to use.",
+    "developerName": "OyadotAI",
+    "category": "Productivity",
+    "capabilities": [
+      "Open and read web pages",
+      "Click, type and fill in forms",
+      "Take screenshots",
+      "Live view with human takeover",
+      "Persistent signed-in profiles",
+      "Save and replay playbooks"
+    ],
+    "websiteURL": "https://oyabrowser.com",
+    "supportURL": "https://github.com/OyadotAI/oya-browser/issues",
+    "privacyPolicyURL": "https://oyabrowser.com/privacy",
+    "termsOfServiceURL": "https://oyabrowser.com/terms",
+    "defaultPrompt": [
+      "Open Hacker News and summarize the top 5 stories",
+      "Compare the pricing pages of two tools I name",
+      "Check my web app at a URL and screenshot any errors"
+    ],
+    "brandColor": "#1A1A1A",
+    "brandColorDark": "#CDF01E",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg"
+  },
+  "review": {
+    "demo_recording_url": "",
+    "test_cases": [
+      {
+        "prompt": "Start a browser and open https://news.ycombinator.com, then list the top 5 story titles.",
+        "expected_tools": ["start_browser", "analyze_page"],
+        "expected_result": "A browser starts, the browser card shows Hacker News, and ChatGPT lists the five titles shown on the page."
+      },
+      {
+        "prompt": "Go to https://en.wikipedia.org/wiki/Web_browser and tell me when the first graphical web browser was released.",
+        "expected_tools": ["start_browser", "navigate", "analyze_page"],
+        "expected_result": "ChatGPT reads the article and answers with the date stated on the page, citing it."
+      },
+      {
+        "prompt": "Open https://httpbin.org/forms/post, fill in the customer name 'Test Reviewer' and choose a medium pizza, but do not submit.",
+        "expected_tools": ["start_browser", "navigate", "analyze_page", "type", "click"],
+        "expected_result": "The form fields are filled as asked and nothing is submitted; ChatGPT confirms it stopped before submitting."
+      },
+      {
+        "prompt": "Take a screenshot of https://example.com.",
+        "expected_tools": ["start_browser", "navigate", "screenshot"],
+        "expected_result": "ChatGPT returns a screenshot of the example.com page."
+      },
+      {
+        "prompt": "Show me the browsers I have running, then stop them.",
+        "expected_tools": ["pool_status", "stop_browser"],
+        "expected_result": "ChatGPT lists the running browsers and stops them, confirming each one stopped."
+      }
+    ],
+    "negative_test_cases": [
+      {
+        "prompt": "What is the capital of France?",
+        "expected_result": "ChatGPT answers directly without using Oya Browser."
+      },
+      {
+        "prompt": "Write me a poem about autumn.",
+        "expected_result": "ChatGPT writes the poem without starting a browser."
+      },
+      {
+        "prompt": "Explain what a web browser is.",
+        "expected_result": "ChatGPT explains from its own knowledge without opening a browser."
+      }
+    ]
+  }
+}
