@@ -28,6 +28,8 @@ interface ToolReply {
   content: Array<Record<string, string>>;
   /** Set when the call failed, so the agent reads the text as the reason. */
   isError?: boolean;
+  /** Browser diagnostics retain native identity and valid JSON separately from readable text. */
+  structuredContent?: Record<string, unknown>;
 }
 
 /**
@@ -76,7 +78,23 @@ async function callTool(params: Record<string, unknown> | undefined, run: RunCom
   if (!Object.hasOwn(LOCAL_TOOLS, name)) return failed(`Unknown tool: ${name}`);
   const args = (params?.arguments ?? {}) as ToolArgs;
   const [action, commandParams] = LOCAL_TOOLS[name].command(args);
-  return toolReply(await run(action, commandParams));
+  const result = await run(action, commandParams);
+  return action === 'browser_debug' ? diagnosticReply(result) : toolReply(result);
+}
+
+/** Browser-only reply wrappers cannot be supplied by ordinary page-returned JSON. */
+interface DiagnosticEnvelope {
+  /** Fixed native diagnostic result. */ browserReply?: Record<string, unknown>;
+}
+/** Only the fixed diagnostic command can supply this envelope; page-returned objects cannot impersonate it. */
+function diagnosticReply(result: LocalResult): ToolReply {
+  const reply = (result.data as DiagnosticEnvelope | null)?.browserReply;
+  if (!reply || !result.ok) return failed(result.error || 'The browser diagnostic adapter did not answer');
+  return {
+    content: [{ type: 'text', text: String(reply.text ?? '') }],
+    isError: reply.ok !== true,
+    structuredContent: reply,
+  };
 }
 
 /** What initialize answers. */

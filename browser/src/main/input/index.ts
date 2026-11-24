@@ -8,3 +8,5 @@ export { nativeChord, type NativeChord } from './chords.ts';
 export { pressNativeChord, editNativeText } from './editing.ts';
 export { keyDef } from './keyboard.ts';
 export { nativeKeyName } from './native-keyboard.ts';
+
+export { isNativePointerFocus, withNativePointerFocus, installPointerFocusFence } from './native-pointer-focus.ts';

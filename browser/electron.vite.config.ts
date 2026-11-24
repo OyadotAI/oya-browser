@@ -24,8 +24,11 @@ const COMMONJS = { include: [/\.c?js$/], strictRequires: true, ignoreDynamicRequ
 const OUTPUT = { dynamicImportInCjs: false };
 
 /** Bundled entries, each written to `<outDir>/<name>.js`. */
-const entry = (input: Record<string, string>, outDir: string) => ({
-  define: { __OYA_WEBAUTHN_GROUP__: JSON.stringify(configuredAccessGroup()) },
+const entry = (input: Record<string, string>, outDir: string, semanticsOnly = false) => ({
+  define: {
+    __OYA_WEBAUTHN_GROUP__: JSON.stringify(configuredAccessGroup()),
+    __OYA_ANALYZER_SEMANTICS_ONLY__: JSON.stringify(semanticsOnly),
+  },
   build: { outDir, commonjsOptions: COMMONJS, rollupOptions: { input, output: OUTPUT } },
 });
 
@@ -56,6 +59,7 @@ export default defineConfig({
       'share-picker': 'src/preload/share-picker.ts',
     },
     'out/preload',
+    true,
   ),
   renderer,
 });

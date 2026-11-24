@@ -36,6 +36,8 @@ export interface DriverTab extends TabView {
 
 /** the composition root's (src/main/main.ts) tab state (read through getters) and the helpers that act on it, as the composition root hands them over. */
 export interface PageDriverDeps extends FormatSettings {
+  /** Recheck native lane/control ownership before diagnostic input. */
+  diagnosticGuard?(view: PageView): void;
   /** Goes to an address the way the address bar does: search, cookies and recording included. */
   navigate(url: string): Promise<unknown>;
   /** The view of the active tab, or null when there is none. */

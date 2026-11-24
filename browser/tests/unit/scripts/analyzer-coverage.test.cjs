@@ -24,7 +24,7 @@ function fixture(
     contains: (node) => node === el.child,
   };
   el.child = {};
-  const context = { window: {}, document: el.ownerDocument };
+  const context = { window: {}, document: el.ownerDocument, semanticsOnly: false };
   vm.runInNewContext(source.slice(start, end), context);
   return { point: () => context.window.__acReachablePoint(el), el, win, root, context };
 }

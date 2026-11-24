@@ -334,7 +334,14 @@ function fakeElectron() {
     },
     webContents: { getAllWebContents: () => [] },
     session: {
-      fromPartition: (name) => ({ name, on() {}, cookies: { flushStore: async () => {} }, flushStorageData() {} }),
+      fromPartition: (name) => ({
+        name,
+        getStoragePath: () => `/fixture/${name}`,
+        isPersistent: () => true,
+        on() {},
+        cookies: { flushStore: async () => {} },
+        flushStorageData() {},
+      }),
     },
     app: Object.assign(new EventEmitter(), {
       quit() {

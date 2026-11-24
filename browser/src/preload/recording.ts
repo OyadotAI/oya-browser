@@ -4,6 +4,8 @@ import { NATIVE_RECORDING } from '../shared/native-recording.ts';
 import { frameOwnerToken, type FrameOwnerLookup } from './frame-owner.ts';
 import { sendRecording } from './recording-bridge.ts';
 import { STOCK_PERSONA } from '../shared/stock-persona.ts';
+import { installBrowserDebug } from './browser-debug.ts';
+installBrowserDebug();
 /** Stock Electron (desktop): run the persona source in the main world before the page's own scripts. */
 const personaSource: unknown =
   process.argv.includes(STOCK_PERSONA.ARGUMENT) && ipcRenderer.sendSync(STOCK_PERSONA.CHANNEL);

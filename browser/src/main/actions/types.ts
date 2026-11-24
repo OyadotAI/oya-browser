@@ -11,6 +11,16 @@ export type CommandId = string | number;
  * optional: each command reads the few it needs and checks them itself.
  */
 export interface CommandParams {
+  /** Fixed local diagnostic operation, never arbitrary host code. */
+  kind?: string;
+  /** Opaque native document reference from framed reads. */
+  frame?: string;
+  /** Published diagnostic element number. */
+  element?: number;
+  /** Whether the element belongs to the framed-read registry. */
+  framed?: boolean;
+  /** Include descendant diagnostic frames. */
+  frames?: boolean;
   /** The address to load. */
   url?: string;
   /** Fixed CSS width, kept independently of the native window. */

@@ -38,6 +38,44 @@ const byId = (id: unknown) => `[data-ac-id="${Number(id)}"]`;
 
 /** The page tools: read, move, act. */
 const PAGE_TOOLS: Record<string, LocalTool> = {
+  browser_identity: {
+    description: 'Read this owned tab’s native browser version, immutable profile identity and measured DPR.',
+    inputSchema: object(),
+    command: () => ['browser_debug', { kind: 'identity' }],
+  },
+  browser_read_frames: {
+    description:
+      'Read every native descendant frame, including cross-origin frames, with unique actionable element numbers and document references.',
+    inputSchema: object({ frames: { type: 'boolean' } }),
+    command: ({ frames }) => ['browser_debug', given({ kind: 'read', frames })],
+  },
+  browser_eval: {
+    description:
+      'Evaluate a synchronous JavaScript expression in the owned page world or an exact document reference. This can mutate the page; errors are never replayed.',
+    inputSchema: object({ expression: { type: 'string', maxLength: 32768 }, frame: { type: 'string' } }, [
+      'expression',
+    ]),
+    command: ({ expression, frame }) => ['browser_debug', given({ kind: 'eval', expression, frame })],
+  },
+  browser_hit_test: {
+    description:
+      'Report the actual hit at top-level CSS viewport coordinates, through exact native frame owners; partial traversal is explicit.',
+    inputSchema: object({ x: { type: 'number', minimum: 0 }, y: { type: 'number', minimum: 0 } }, ['x', 'y']),
+    command: ({ x, y }) => ['browser_debug', { kind: 'hit_test', x, y }],
+  },
+  browser_native_click: {
+    description: 'Send native mouse move/down/up to an owned numbered element. Never substitute DOM click/focus.',
+    inputSchema: object({ element: { type: 'integer', minimum: 1 }, framed: { type: 'boolean' } }, ['element']),
+    command: ({ element, framed }) => ['browser_debug', { kind: 'click', element, framed }],
+  },
+  browser_frame_type: {
+    description: 'Fill an exact document-bound field number from browser_read_frames, preserving its frame ownership.',
+    inputSchema: object(
+      { element: { type: 'integer', minimum: 1 }, text: { type: 'string' }, submit: { type: 'boolean' } },
+      ['element', 'text'],
+    ),
+    command: ({ element, text, submit }) => ['browser_debug', given({ kind: 'type', element, text, submit })],
+  },
   analyze_page: {
     description:
       'Read the current page: its content and every interactive element, numbered for click and type. format: toon (default, fewest tokens), markdown or jsonl.',

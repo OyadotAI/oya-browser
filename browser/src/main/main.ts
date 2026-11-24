@@ -59,6 +59,12 @@ import {
 } from './app/constants.ts';
 import { DesktopDialogs, dialogPresenter } from './dialogs/index.ts';
 import { World, useFramePages, useStockWorld } from './native/index.ts';
+import {
+  useDebugChannel,
+  useDebugApplication,
+  useNativeMouse,
+  inspectDebugMouseSurface,
+} from './browser-debug/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
 import { Translator } from './translate/index.ts';
@@ -200,6 +206,25 @@ electron.ipcMain.on(STOCK_PERSONA.CHANNEL, (event) => {
 });
 useFramePages((frame) => electron.webContents.fromFrame(frame as Electron.WebFrameMain) ?? undefined);
 useStockWorld(electron.ipcMain);
+useDebugChannel(electron.ipcMain);
+useDebugApplication({
+  name: () => electron.app.getName(),
+  version: () => electron.app.getVersion(),
+  engine: () => process.versions.electron,
+});
+useNativeMouse(
+  (view) => {
+    const window = electron.BrowserWindow.fromWebContents(view.webContents);
+    if (!window || window.isDestroyed()) throw Error('The owned Oya window is no longer available.');
+    return {
+      window,
+      ...inspectDebugMouseSurface(window, view, ctx.shield?.view ?? null),
+      activate: () => electron.app.focus({ steal: true }),
+    };
+  },
+  path.resolve(__dirname, '../native/owned-pointer.node'),
+);
+
 ctx.workers = new WorkerCoverage(ctx, () => app.getPath('userData'));
 ctx.persona = new Persona(ctx);
 app.once('will-quit', () => ctx.persona.disposeStorage());
@@ -292,6 +317,10 @@ ctx.actions = new PageDriver({
   navigate: (url) => ctx.tabs.navigateActive(url),
   // The agent's own tab while control is scoped to it; the active one otherwise.
   getActiveView: () => ctx.agentTab.view(),
+  diagnosticGuard: (view) => {
+    if (ctx.agentTab.view() !== view || ctx.control.snapshot().interactive)
+      throw Error('Browser lane or control ownership changed');
+  },
   pullCookiesFor: (url) => ctx.cookies.pullCookiesFor(url),
   injectScripts: (view) => ctx.protection.injectScripts(view),
   worldEval: <T>(view: Parameters<World['evaluate']>[0], expression: string, frame?: WebFrameMain) =>

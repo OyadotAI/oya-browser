@@ -50,7 +50,7 @@
     "test:analyzer": "node tests/integration/analyzer-dom.mjs",
     "test:frames": "node tests/integration/frame-read.mjs",
     "test:recorder": "node tests/integration/recorder-dom.mjs",
-    "build": "electron-vite build",
+    "build": "node build/owned-pointer.cjs && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test:native-contexts": "node tests/integration/native-contexts.mjs",
     "test:native-storage": "node tests/integration/native-storage.mjs",
@@ -101,6 +101,9 @@
   },
   "build": {
     "appId": "ai.oya.browser",
+    "asarUnpack": [
+      "out/native/*.node"
+    ],
     "beforePack": "build/webauthn.cjs",
     "productName": "Oya Browser",
     "artifactName": "Oya.Browser-${version}-${arch}.${ext}",

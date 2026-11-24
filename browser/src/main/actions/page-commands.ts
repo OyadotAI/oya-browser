@@ -13,6 +13,7 @@ import * as s from './scripts.ts';
 import * as c from './constants.ts';
 import { INTERACTION_COMMANDS } from './interaction-commands.ts';
 import { POINTER_COMMANDS } from './pointer-commands.ts';
+import { browserDiagnostic } from '../browser-debug/index.ts';
 import { HISTORY_COMMANDS } from './history-commands.ts';
 import * as queries from '../../page/queries.ts';
 import { isDateInput, dateInputValue, unreadableDate } from '../../page/date-value.ts';
@@ -254,6 +255,11 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     const viewport = await viewportInfo(driver, view);
     const screenshot = await screenshotPage(view, format, quality);
     driver.deps.sendResult(id, true, { screenshot, viewport });
+  },
+
+  /** Local MCP diagnostics preserve native identity even when their operation fails. */
+  async browser_debug(driver, id, params, view) {
+    driver.deps.sendResult(id, true, { browserReply: await browserDiagnostic(driver, view, params || {}) });
   },
 
   /** Clicks an unobscured element with native input and follows any navigation it starts. */

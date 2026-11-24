@@ -3,11 +3,16 @@
  * but callable directly as analyzePage() without chrome.runtime messaging.
  */
 
+/* global __OYA_ANALYZER_SEMANTICS_ONLY__ */
 (function () {
   'use strict';
 
-  if (window.__acAnalyzerLoaded) return;
-  window.__acAnalyzerLoaded = true;
+  const semanticsOnly = typeof __OYA_ANALYZER_SEMANTICS_ONLY__ !== 'undefined' && __OYA_ANALYZER_SEMANTICS_ONLY__;
+  if (semanticsOnly && window.__acDiagnosticSemantics) return;
+  if (!semanticsOnly) {
+    if (window.__acAnalyzerLoaded) return;
+    window.__acAnalyzerLoaded = true;
+  }
 
   // Attribute used to tag indexed elements. The loader substitutes a random
   // name per document: a constant blooming across the DOM is visible to any
@@ -156,7 +161,7 @@
   let elementMap = [];
   const elementRefs = new Map(); // id → DOM node (survives React re-renders)
 
-  window.analyzePage = function (options = {}) {
+  if (!semanticsOnly) window.analyzePage = function (options = {}) {
     // Bypass ClientRects noise from fingerprint spoofing during analysis
     // Runs in an isolated world, so the page's patched getBoundingClientRect
     // does not apply here and measurements are already unnoised.
@@ -406,7 +411,7 @@
     }
     return null;
   }
-  window.__acReachablePoint = reachablePoint;
+  if (!semanticsOnly) window.__acReachablePoint = reachablePoint;
 
   /** Whether an element sits in a fixed or sticky strip across the top of the viewport. */
   function isStickyHeader(el) {
@@ -1649,6 +1654,21 @@
     return { x, y };
   }
   // Action targeting uses the same ancestry calculation as analysis and highlights.
+  // Diagnostics reuse semantics in an isolated world, before any canonical IDs, observers or recorder wiring.
+  if (semanticsOnly) {
+    Object.defineProperty(window, '__acDiagnosticSemantics', { value: Object.freeze({
+      type: getInteractiveType, name: getLabel, control: node => hiddenControl(node) || node,
+      checked: isChecked, choice: choiceOf, state: ariaState, facts: fieldEntry,
+      begin: () => { analyzing = true; analysisTextMatches = null; },
+      finish: () => {
+        analyzing = false; analysisTextMatches = null;
+        pinnedCache.clear(); clipCache.clear(); pageBoxCache.clear(); frameOffsetCache.clear();
+        rootChain.clear(); analysisRoot = null;
+      },
+    }), configurable: false, writable: false });
+    return;
+  }
+
   window.__acFrameOffset = getIframeOffset;
 
   function queryShadow(selector, root = document) {

@@ -24,6 +24,8 @@ const PAGE_SIDE = ['scripts/analyzer.js', 'anonymity/stealth.js', 'anonymity/fin
  * compares them), so it keeps that file's shape and numbers, and skips type checks.
  */
 const HOST_RULES = 'src/main/identity/host-rules.ts';
+// Principal-approved: diagnostic signatures and response maps keep admission and cleanup adjacent.
+const MAX_DEBUG_FUNCTION_LINES = 20;
 
 export default [
   { ignores: ['node_modules', 'dist', 'build', 'coverage', 'out'] },
@@ -78,6 +80,12 @@ export default [
         'error',
         { paths: [{ name: 'electron', message: 'Take it from your deps.', allowTypeImports: true }] },
       ],
+    },
+  },
+  {
+    files: ['src/main/browser-debug/**/*.ts', 'src/preload/debug*.ts'],
+    rules: {
+      'max-lines-per-function': ['error', { max: MAX_DEBUG_FUNCTION_LINES, skipBlankLines: true, skipComments: true }],
     },
   },
   prettier,

@@ -10,6 +10,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 - The desktop browser no longer freezes with "Could not change control" until it is force-quit. A control change that hit an error left the takeover waiting forever and closed the server connection for good; the takeover now finishes, and only a failed sign-in ends the connection.
 
+### Added
+
+- Added owned-frame page evaluation, native hit testing, actionable cross-origin frame reads and verified browser/profile/DPR identity for Keel diagnostics. Native click paths report their actual input method; shielded macOS input returns an explicit capability error before scrolling or focus, preserving the browser control fence. Native clicking beneath that shield remains unavailable.
+
 ## [1.0.285](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.285) · 2026-11-24
 
 ### Fixed

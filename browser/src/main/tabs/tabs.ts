@@ -13,6 +13,7 @@ import type {
   WebContents,
 } from 'electron';
 import type { AppServices } from '../app/services.ts';
+import { rememberDebugProfile } from '../browser-debug/index.ts';
 import { TabEvents, type TabEventsDeps } from './tab-events.ts';
 import { AddressBar } from './navigation.ts';
 import { HOME_URL, PAGE_BACKGROUND, ERR_ABORTED } from './constants.ts';
@@ -233,9 +234,19 @@ function reloadOrStop(tabs: TabManager, tab: Tab): void {
 function createPageView(deps: Deps, session?: Session, contents?: WebContents): BrowserView {
   const owner = contents?.session ?? session ?? deps.persona.session();
   deps.protection.assertSession(owner);
+  rememberDebugProfile(owner, String(deps.persona.active?.name || 'Default profile'));
   const webPreferences = session
     ? sessionPreferences(deps.appDir, owner)
     : tabPreferences(deps.persona.partitionName(), deps.appDir, owner);
+  return finishPageView(deps, webPreferences, contents);
+}
+
+/** Construct the native page only after session admission and immutable profile association. */
+function finishPageView(
+  deps: Deps,
+  webPreferences: PageViewOptions['webPreferences'],
+  contents?: WebContents,
+): BrowserView {
   const view = new deps.electron.BrowserView({ webPreferences, webContents: contents } as PageViewOptions);
   view.setBackgroundColor(PAGE_BACKGROUND);
   return view;
