@@ -6,10 +6,25 @@ description: "This skill should be used when opening a website, researching curr
 # Oya Browser
 
 Inside Keel, use its `browser_*` tools on server `keel`. The session selects Inside Keel or the
-person's local Oya Browser; tool descriptions identify the effective browser and profile. Open an
+person's local Oya Browser; each result identifies the observed browser version, profile and DPR. Compare this identity after a lane change and read again before using element numbers. Open an
 owned tab and preserve personal tabs. Use `browser_viewport` to set CSS dimensions or reset automatic sizing and `browser_screenshot`
 for a viewport image. Read the available schemas: native capture and DPR support vary by backend;
 mobile/touch emulation can be unsupported. Report capability failures without switching browsers.
+
+For a page that misbehaves, inspect the available diagnostic schemas. `browser_read({frames:true})`
+adds URL-labelled frame sections and opaque document references, including cross-origin frames.
+Use those element numbers for click/type and the frame reference for `browser_eval`; an expression
+runs in the page world and can mutate the page. Return synchronous JSON properties rather than
+DOM nodes, promises or functions. A timeout may mean the expression ran: inspect before retrying.
+Use `browser_hit_test(x,y)` at top-level viewport CSS coordinates to name an intercepting element.
+`browser_click` reports native events dispatched; verify the resulting page state before claiming
+activation. Stale or blocked targets and unsupported native capabilities are explicit failures,
+not permission to switch browsers. On stock macOS Oya, the browser control shield can make native
+click delivery unavailable; diagnostics and disclosed DOM-value typing remain available. A
+viewport reset does not resolve that limitation. Embedded hidden or fixed-size snapshot pages
+also refuse native clicks; follow their explicit show/reset/reread recovery, which changes the
+layout and does not verify phone-width interaction. Older Oya versions may require an update
+for these tools.
 
 Use the connected `oya_browser` MCP tools for all browser work. Never use browser-use, another
 browser provider, Playwright, Puppeteer, Selenium, a headless harness, or a separately launched
