@@ -31,6 +31,7 @@ the CLI, and the SDKs: [TypeScript on npm](https://www.npmjs.com/package/@oya-ai
 enterprise edition.
 
 - [Features](#features)
+- [Install for Claude Code or Codex](#install-for-claude-code-or-codex)
 - [Requirements](#requirements)
 - [Quickstart](#quickstart)
 - [Usage](#usage)
@@ -67,6 +68,33 @@ enterprise edition.
   <img src="assets/prior-auth.gif" alt="An agent completes a prior authorization in a mock payer portal" width="100%">
 </p>
 <p align="center"><sub>An agent session in the Oya desktop app, accelerated. The portal and patient data are fictional.</sub></p>
+
+## Install for Claude Code or Codex
+
+**To use your desktop browser**, [download Oya Browser](https://oyabrowser.com/#download), open it, and finish the welcome screen. Click **Connect** next to **Claude Code** or **Codex**, confirm, and start a new agent session. Keep Oya open while you browse.
+
+**To use Oya Cloud**, follow the steps for your agent below.
+
+### Claude Code
+
+Install the Oya Cloud plugin from your terminal:
+
+```bash
+claude plugin marketplace add OyadotAI/oya-browser
+claude plugin install oya-browser@oya
+```
+
+Start a new Claude Code session, run `/mcp`, select the Oya server, and follow the sign-in prompt.
+
+### Codex
+
+Create an API key in the [Oya dashboard](https://oyabrowser.com/dashboard). Set `OYA_API_KEY` in the environment where you run Codex, then register the cloud server once:
+
+```bash
+codex mcp add oya-cloud --url https://oyabrowser.com/mcp/pool --bearer-token-env-var OYA_API_KEY
+```
+
+Start a new Codex session with that environment variable set. To verify either installation, ask your agent to open `https://example.com` with Oya and report the page title.
 
 ## Requirements
 
