@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.290](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.290) · 2026-11-24
+
 ### Added
 
 - In Claude, and other chat apps that show MCP Apps, starting a browser now shows a card in the conversation: the browser's page, refreshed every two seconds while you can see it, with its name and address, and a Take over button that opens the live page. The card gets its pictures through the chat app's own connection, so no sign-in token ever reaches it. Every chat app also gets a "Watch or take over" link in the start reply.
