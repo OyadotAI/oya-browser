@@ -28,3 +28,12 @@ export const SELF_API_TIMEOUT_MS = 150_000;
 export const MAX_NAME = 100;
 /** Indentation of the pool-status resource's JSON. */
 export const JSON_INDENT = 2;
+
+/** The in-chat browser card's address: MCP Apps hosts render ui:// resources in a sandboxed frame. */
+export const CARD_URI = 'ui://oya/browser-card.html';
+/** The media type MCP Apps hosts render as an app (MCP Apps spec 2026-01-26). */
+export const CARD_MIME = 'text/html;profile=mcp-app';
+/** JPEG quality of the card's snapshots: a small picture every 2 seconds, not a full screenshot. */
+export const CARD_QUALITY = 55;
+/** How long one card snapshot may take before the card counts it as failed. */
+export const CARD_TIMEOUT_MS = 10_000;

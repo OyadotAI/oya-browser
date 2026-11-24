@@ -10,6 +10,7 @@ import { authorize } from './auth.ts';
 import { answerFailure, serve } from './transport.ts';
 import { browserTag, pickFor } from './pool-state.ts';
 import { registerLifecycleTools } from './pool-lifecycle.ts';
+import { registerBrowserCard } from './browser-card.ts';
 import type { Self } from './self-api.ts';
 import { JSON_INDENT, MCP_VERSION, PUBLIC_METHODS } from './constants.ts';
 
@@ -62,6 +63,7 @@ function createPoolMcpServer(apiKey, self: Self = {}) {
   const noBrowser = 'no browser is running. Call start_browser first.';
   registerBrowserTools(server, { pick: pickFor(apiKey), tag: browserTag, noBrowser, only: POOL_TOOLS });
   registerLifecycleTools(server, { apiKey, self });
+  registerBrowserCard(server, apiKey);
   const description = 'Pool size and browser list';
   server.resource('pool-status', POOL_STATUS, { description }, async () => poolStatusResource(apiKey));
   return server;

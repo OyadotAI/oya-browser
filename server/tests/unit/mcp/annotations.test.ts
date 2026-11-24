@@ -10,10 +10,11 @@ import { z } from 'zod';
 import { TOOL_META, toolConfig } from '../../../src/mcp/annotations.ts';
 import { BROWSER_TOOL_NAMES } from '../../../src/mcp/browser-tools.ts';
 import { POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
+import { APP_ONLY_TOOLS } from '../../../src/mcp/browser-card.ts';
 
 describe('tool annotations', () => {
   it('names every registered tool and nothing else', () => {
-    const registered = [...new Set([...BROWSER_TOOL_NAMES, ...POOL_TOOL_NAMES])].sort();
+    const registered = [...new Set([...BROWSER_TOOL_NAMES, ...POOL_TOOL_NAMES, ...APP_ONLY_TOOLS])].sort();
     assert.deepEqual(Object.keys(TOOL_META).sort(), registered);
   });
 

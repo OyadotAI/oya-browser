@@ -7,7 +7,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerLifecycleTools } from '../../../src/mcp/pool-lifecycle.ts';
 import { poolPinned, poolSticky } from '../../../src/mcp/pool-state.ts';
-import { START_POLL_MS, START_WAIT_MS } from '../../../src/mcp/constants.ts';
+import { CARD_URI, START_POLL_MS, START_WAIT_MS } from '../../../src/mcp/constants.ts';
 import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
 import { FakeMcpServer, driveBrowser, stubControl } from '../support/browsers.ts';
 
@@ -79,8 +79,39 @@ describe('pool lifecycle tools', () => {
       await new Promise((r) => setImmediate(r));
       mock.timers.tick(START_POLL_MS);
     }
-    assert.match(textOf(await pending), /still booting/);
+    const reply = await pending;
+    assert.match(textOf(reply), /still booting/);
     assert.equal(poolSticky.has(KEY), false);
+    assert.equal(reply.structuredContent.browserId, B, 'the card can follow a browser that is still booting');
+  });
+
+  it('points MCP Apps hosts at the browser card', () => {
+    const { server } = lifecycle(started);
+    assert.deepEqual(server.tools.get('start_browser').meta, { ui: { resourceUri: CARD_URI } });
+  });
+
+  it('gives every host the live page’s link, and the card only the browser’s id, name and that link', async () => {
+    connectBrowser(B, KEY);
+    const { server } = lifecycle(() =>
+      Response.json({ id: B, provider: 'cdp', persona: 'p-1', name: 'Shop' }, { status: 201 }),
+    );
+    const reply = await server.call('start_browser', {});
+    const link = reply.content.at(-1).text;
+    assert.match(link, new RegExp(`^Watch or take over: https?://\\S+/live/${B}$`));
+    assert.deepEqual(Object.keys(reply.structuredContent).sort(), ['browserId', 'liveUrl', 'name']);
+    assert.deepEqual(reply.structuredContent, {
+      browserId: B,
+      name: 'Shop',
+      liveUrl: link.slice('Watch or take over: '.length),
+    });
+  });
+
+  it('gives a failed start no card and no link', async () => {
+    driveBrowser(B, () => ({ ok: false, error: 'DNS' }), KEY);
+    const { server } = lifecycle(started);
+    const reply = await server.call('start_browser', { url: 'https://a.test' });
+    assert.equal(reply.structuredContent, undefined);
+    assert.equal(reply.content.length, 1);
   });
 
   it('stops the browser the tools are driving and lets go of it', async () => {

@@ -127,6 +127,8 @@ type Registered = {
   schema: unknown;
   /** Its handler. */
   handler: (args?: any) => Promise<any>;
+  /** Its _meta, where an MCP Apps tool names its card or says only the card may call it. */
+  meta?: Record<string, any>;
 };
 
 /** An McpServer stand-in: keeps each tool and resource by name so a test can call it. */
@@ -138,8 +140,13 @@ export class FakeMcpServer {
 
   /** Registers a tool, as McpServer.registerTool does; the config's title and hints are kept for the tests that check them. */
   registerTool(name: string, config: any, handler: (args?: any) => Promise<any>) {
-    const { title, description, inputSchema: schema, annotations } = config;
-    this.tools.set(name, { title, description, schema, annotations, handler });
+    const { title, description, inputSchema: schema, annotations, _meta: meta } = config;
+    this.tools.set(name, { title, description, schema, annotations, handler, meta });
+  }
+
+  /** Registers a resource, as McpServer.registerResource does. */
+  registerResource(name: string, uri: string, _metadata: unknown, read: () => Promise<any>) {
+    this.resources.set(name, { uri, read });
   }
 
   /** Registers a resource, as McpServer.resource does. */

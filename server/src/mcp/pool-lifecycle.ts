@@ -11,6 +11,7 @@ import { selfApi, type Self } from './self-api.ts';
 import { attempt, fail, text } from './replies.ts';
 import { MAX_NAME, NAVIGATE_TIMEOUT_MS, START_POLL_MS, START_WAIT_MS } from './constants.ts';
 import { toolConfig } from './annotations.ts';
+import { CARD_META, cardContent, liveUrl } from './browser-card.ts';
 
 /** Whose pool the tools act on, and how they reach the public API. */
 type Pool = {
@@ -37,7 +38,8 @@ const START_DESCRIPTION =
 
 /** Registers start_browser, stop_browser and pool_status. */
 export function registerLifecycleTools(server: McpServer, pool: Pool) {
-  const start = toolConfig('start_browser', START_DESCRIPTION, START_SCHEMA);
+  // MCP Apps hosts show the browser card beside the result; the rest read the link in its text.
+  const start = { ...toolConfig('start_browser', START_DESCRIPTION, START_SCHEMA), _meta: CARD_META };
   server.registerTool('start_browser', start, (args) => startBrowserTool(pool, args));
   const stopDescription = 'Stop a browser and release its session. Defaults to the browser the tools are driving.';
   const stop = toolConfig('stop_browser', stopDescription, { browser_id: z.string().optional() });
@@ -51,10 +53,41 @@ async function startBrowserTool(pool: Pool, { persona, provider, name, url }) {
   const outcome = await attempt(() => selfApi(pool.self, '/browsers/start', { profile: persona, provider, name }));
   if ('error' in outcome) return fail(outcome.error.message);
   const started = outcome.value;
-  if (!(await connects(started.id)))
-    return text(`Started ${started.id} on ${started.provider}; it is still booting. Check pool_status, then retry.`);
+  if (!(await connects(started.id))) return booting(started);
   hold(pool.apiKey, started.id);
-  return startedAt(started.id, started, url);
+  const ready = await startedAt(started.id, started, url);
+  // A browser that started but could not reach `url` answers the failure alone.
+  return (ready as Reply).isError ? ready : withCard(ready, started);
+}
+
+/** A tool reply that may be a failure. */
+interface Reply {
+  /** True for a failed call. */
+  isError?: boolean;
+}
+
+/** A browser the start API answered with. */
+interface Started {
+  /** Its id. */
+  id: string;
+  /** Its name, when it was given one. */
+  name?: string;
+  /** Where it runs. */
+  provider?: string;
+}
+
+/** A browser that has not dialled in yet: the card can still follow it. */
+const booting = (started: Started) =>
+  withCard(
+    text(`Started ${started.id} on ${started.provider}; it is still booting. Check pool_status, then retry.`),
+    started,
+  );
+
+/** A start reply with the live page's link for every host, and the browser card's data for hosts that show it. */
+function withCard(reply: ReturnType<typeof text>, started: Started) {
+  const line = `Watch or take over: ${liveUrl(started.id)}`;
+  const content = [...reply.content, { type: 'text' as const, text: line }];
+  return { ...reply, content, structuredContent: cardContent(started.id, started.name) };
 }
 
 /** Cloud browsers dial in after they boot; the tools need it connected. */

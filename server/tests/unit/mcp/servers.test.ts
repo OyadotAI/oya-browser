@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { handleMcpRequest, handlePoolMcpRequest } from '../../../src/mcp/server.ts';
 import { POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
+import { APP_ONLY_TOOLS } from '../../../src/mcp/browser-card.ts';
 import { answerFailure } from '../../../src/mcp/transport.ts';
 import { registry } from '../../../src/modules/browsers/registry.ts';
 import { connectBrowser, disconnectBrowser } from '../support/fakes.ts';
@@ -136,7 +137,7 @@ describe('pool MCP endpoint', () => {
     operatorOn('k-pool');
     const keyed = resultOf(await call(handlePoolMcpRequest)).tools.map((t) => t.name);
     assert.deepEqual(keyless, keyed);
-    assert.deepEqual([...keyless].sort(), [...POOL_TOOL_NAMES].sort());
+    assert.deepEqual([...keyless].sort(), [...POOL_TOOL_NAMES, ...APP_ONLY_TOOLS].sort());
   });
 
   it('answers initialize and ping without a key', async () => {
@@ -171,6 +172,37 @@ describe('pool MCP endpoint', () => {
   it('gives every pool tool a title and read-only and destructive hints', async () => {
     operatorOn('k-pool');
     for (const tool of resultOf(await call(handlePoolMcpRequest)).tools) assertAnnotated(tool);
+  });
+
+  it('points MCP Apps hosts at the browser card from start_browser alone, through the real SDK', async () => {
+    operatorOn('k-pool');
+    const tools = resultOf(await call(handlePoolMcpRequest)).tools;
+    const withCard = tools.filter((t) => t._meta?.ui?.resourceUri);
+    assert.deepEqual(
+      withCard.map((t) => t.name),
+      ['start_browser'],
+    );
+    assert.equal(withCard[0]._meta.ui.resourceUri, 'ui://oya/browser-card.html');
+    const view = tools.find((t) => t.name === 'view_browser');
+    assert.deepEqual(view?._meta?.ui?.visibility, ['app'], 'only the card may call view_browser');
+  });
+
+  it('serves the browser card as an MCP App page, with no credential in it', async () => {
+    operatorOn('k-pool');
+    const res = await call(handlePoolMcpRequest, {
+      method: 'resources/read',
+      params: { uri: 'ui://oya/browser-card.html' },
+    });
+    const page = resultOf(res).contents[0];
+    assert.equal(page.mimeType, 'text/html;profile=mcp-app');
+    assert.doesNotMatch(page.text, /oya_op|Bearer/);
+  });
+
+  it('keeps the card and its tool off a single browser’s endpoint', async () => {
+    operatorOn('k-mine');
+    connectBrowser(B, 'k-mine');
+    const tools = resultOf(await call(handleMcpRequest)).tools;
+    assert.ok(!tools.some((t) => t.name === 'view_browser' || t._meta?.ui));
   });
 
   it('reads the pool’s status as a JSON resource', async () => {

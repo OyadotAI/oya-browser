@@ -105,6 +105,8 @@ export const TOOL_META: Record<string, ToolMeta> = {
   list_saved_logins: reads('List Saved Logins', false),
   list_playbooks: reads('List Playbooks', false),
   pool_status: reads('Pool Status', false),
+  // Only the chat card calls it (an app-only tool): a fresh snapshot of the browser the card shows.
+  view_browser: reads('View Browser', false),
   start_browser: writes('Start Browser', false),
   stop_browser: destroys('Stop Browser', false),
 };

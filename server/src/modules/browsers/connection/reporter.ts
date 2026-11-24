@@ -30,9 +30,20 @@ export interface Call {
  */
 const HIDDEN_ACTIONS = new Set(['evaluate_raw', 'record']);
 
+/**
+ * Marks a snapshot the server itself sends (the chat card's, every 2 seconds) so the live page's
+ * activity log is not flooded with it. A Symbol, never a params field: no JSON body, tool argument
+ * or recorded step can carry one, so no agent can use it to hide what it does from the person.
+ */
+export const QUIET = Symbol('quiet');
+
+/** The only command a server-sent QUIET mark can hide: a read-only snapshot. */
+const QUIET_ACTIONS = new Set(['screenshot']);
+
 /** Describes a command for sending and reporting. */
 export function describeCall(browserId: string, action: string, params: object, timeout: number): Call {
-  const visible = !HIDDEN_ACTIONS.has(action);
+  const quiet = QUIET_ACTIONS.has(action) && (params as Record<symbol, unknown>)[QUIET] === true;
+  const visible = !HIDDEN_ACTIONS.has(action) && !quiet;
   return { browserId, action, params, timeout, visible, summary: summarise(action, params), lane: currentLane() };
 }
 
