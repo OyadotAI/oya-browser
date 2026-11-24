@@ -1,6 +1,7 @@
 {
   "name": "oya-browser",
-  "description": "Real Chrome browsers for agents, with HIPAA-compliant Oya Cloud for healthcare. MCP tools and a browsing skill. Cloud signs in with your Oya account; the free desktop app needs none.",
+  "displayName": "Oya Browser",
+  "description": "Real Chrome browsers for agents: MCP tools and a browsing skill. Oya Cloud signs in with your Oya account; the free desktop app needs none.",
   "version": "1.0.287",
   "author": {
     "name": "Oya",
@@ -18,7 +19,6 @@
     "playbooks",
     "coding-agent",
     "claude-code",
-    "hipaa",
     "scraping",
     "captcha"
   ],

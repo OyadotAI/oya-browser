@@ -5,7 +5,9 @@
  * one "[iframe: src]" row with nothing inside, and the agent could neither read nor click
  * anything there. Each such frame is now read in its own isolated world (the tab preload
  * reaches every frame, so the page never sees it), its elements get ids from a range of
- * their own, and an action on one of those ids runs in the frame that owns it.
+ * their own, and an action on one of those ids runs in the frame that owns it. Frames are
+ * found at any depth and reached through their exact owner <iframe>, as Keel's read does, so
+ * a frame nested in another and two frames from one site are each read and acted on.
  */
 import type { WebFrameMain } from 'electron';
 import type { NativePage as PageView } from '../native/index.ts';
@@ -14,6 +16,7 @@ import type { Mouse } from '../input/mouse.ts';
 import type { Keyboard } from '../input/keyboard.ts';
 import type { PageDriver } from './driver.ts';
 import type { CommandParams, ScriptResult } from './types.ts';
+import { debugRegistry, debugFrames, linkedDocument, topPoint } from '../browser-debug/index.ts';
 import {
   FRAME_ID_STRIDE,
   FRAME_GONE_ERROR,
@@ -32,6 +35,8 @@ interface Slots {
   next: number;
   /** The address each slot's frame had when it was last read: a frame that moved on has other elements. */
   readAt: Map<number, string>;
+  /** The document generation each slot's frame had when read: a same-address reload is another document too. */
+  generation: Map<number, string>;
 }
 
 /** Each view's slots; a closed view takes its slots with it. */
@@ -40,7 +45,11 @@ const views = new WeakMap<PageView, Slots>();
 /** The view's slots, made on first use. */
 function slotsOf(view: PageView): Slots {
   let slots = views.get(view);
-  if (!slots) views.set(view, (slots = { bySlot: new Map(), byFrame: new WeakMap(), next: 1, readAt: new Map() }));
+  if (!slots)
+    views.set(
+      view,
+      (slots = { bySlot: new Map(), byFrame: new WeakMap(), next: 1, readAt: new Map(), generation: new Map() }),
+    );
   return slots;
 }
 
@@ -66,31 +75,65 @@ const originOf = (url: string): string => URL.parse(url)?.origin ?? '';
 const CHALLENGE =
   /^https:\/\/([^/]+\.)?(recaptcha\.net|hcaptcha\.com|challenges\.cloudflare\.com)\/|^https:\/\/(www\.)?google\.com\/recaptcha\//;
 
-/** The page's direct child frames on another web origin than the page; same-origin ones the analyzer reads itself. */
-export function crossOriginChildren(view: PageView): WebFrameMain[] {
-  const main = view.webContents?.mainFrame;
-  if (!main?.frames) return []; // a view being torn down, or one with no frame tree
-  const page = originOf(main.url);
-  return main.frames.filter(
-    (f) => !f.detached && /^https?:/.test(f.url) && originOf(f.url) !== page && !CHALLENGE.test(f.url),
-  );
+/**
+ * How frames are found and reached: every frame in the tab's tree, each frame document's
+ * generation, and a frame point moved up through each exact owner <iframe> to the page.
+ * The same native owner links Keel's browser_read uses, so nested frames and two frames
+ * from one site are each found and reached; tests pass their own.
+ */
+export interface FrameLinks {
+  /** Every live frame under the page, nested ones included. */
+  frames(view: PageView): WebFrameMain[];
+  /** The frame's current document generation. */
+  generation(view: PageView, frame: WebFrameMain): Promise<string>;
+  /** A frame point in page pixels, refused when anything covers its owner there; scrolls and focuses each owner. */
+  toTop(view: PageView, frame: WebFrameMain, x: number, y: number): Promise<PagePoint>;
 }
 
-/** What an iframe row resolves to: its one live frame, a reason none can be chosen, or null when it is not a cross-origin frame. */
-type Match = WebFrameMain | string | null;
+/** A point in the page's own viewport pixels. */
+interface PagePoint {
+  /** Pixels from the left. */
+  x: number;
+  /** Pixels from the top. */
+  y: number;
+}
+
+/** The browser's own links, through the browser-debug facade. */
+const NATIVE_LINKS: FrameLinks = {
+  frames: (view) => debugFrames(debugRegistry(view)),
+  generation: async (view, frame) => (await debugRegistry(view).document(frame)).document,
+  toTop: async (view, frame, x, y) => {
+    const registry = debugRegistry(view);
+    return topPoint(registry, await linkedDocument(registry, frame), { x, y }, true, false, true);
+  },
+};
+
+/** The driver's frame links: a test's, or the browser's. */
+const linksOf = (driver: PageDriver): FrameLinks => driver.deps.frameLinks ?? NATIVE_LINKS;
+
+/** Whether the frame or any frame above it is a CAPTCHA challenge, never read or entered. */
+function underChallenge(frame: WebFrameMain | null): boolean {
+  for (let f = frame; f; f = f.parent) if (CHALLENGE.test(f.url)) return true;
+  return false;
+}
 
 /**
- * The live frame an iframe row shows. Stock Electron cannot ask the renderer which frame
- * an <iframe> element owns (only Oya's engine can), so a row is matched only when it is
- * the one row and the one frame from its origin: anything less certain stays a row with
- * a reason, and its frame is not read, so an action can never land in the wrong frame.
+ * Every frame the page's own read cannot reach: a web frame, at any depth, on another origin
+ * than the frame that holds it (a same-origin child is read inside its parent).
  */
-function matchOf(row: Block, rows: Block[], frames: WebFrameMain[]): Match {
-  const origin = originOf(String(row.target ?? ''));
-  const live = frames.filter((f) => originOf(f.url) === origin);
-  if (!live.length) return null;
-  const shown = rows.filter((r) => originOf(String(r.target ?? '')) === origin);
-  return live.length === 1 && shown.length === 1 ? live[0] : 'several frames from this site, not read';
+export function crossOriginFrames(driver: PageDriver, view: PageView): WebFrameMain[] {
+  if (!view.webContents?.mainFrame) return []; // a view being torn down
+  return linksOf(driver)
+    .frames(view)
+    .filter((f) => f.parent && !f.detached && /^https?:/.test(f.url) && !underChallenge(f))
+    .filter((f) => originOf(f.url) !== originOf(f.parent!.url));
+}
+
+/** How many frames up `frame` sits from the page. */
+function depthOf(frame: WebFrameMain): number {
+  let depth = 0;
+  for (let f = frame.parent; f; f = f.parent) depth++;
+  return depth;
 }
 
 /** A read item that may carry an element id. */
@@ -123,24 +166,86 @@ function splice(data: Analysis, row: Block, child: ReturnType<typeof shifted>): 
   data.elements = [...(data.elements ?? []), ...child.elements];
 }
 
-/** A matched frame's own read, or why there is none. */
-async function readOf(driver: PageDriver, view: PageView, match: Match, script: string) {
-  if (!match || typeof match === 'string') return match;
-  const read = await driver.deps.worldEval<ScriptResult<Analysis>>(view, script, match).catch((e: Error) => e);
+/** One frame's own read and document generation, or why it could not be read; a frame that loaded another document mid-read is not read. */
+async function readOf(driver: PageDriver, view: PageView, frame: WebFrameMain, script: string) {
+  const generation = await generationOf(driver, view, frame);
+  const read = await driver.deps.worldEval<ScriptResult<Analysis>>(view, script, frame).catch((e: Error) => e);
   if (read instanceof Error) return `not readable: ${read.message}`;
-  return read?.data?.blocks ? { frame: match, data: read.data } : 'not readable: no answer';
+  if (!read?.data?.blocks) return 'not readable: no answer';
+  const after = generation && (await generationOf(driver, view, frame));
+  return after === generation ? { data: read.data, generation } : 'not readable: it changed while being read';
+}
+
+/** The frame's document generation, or '' when it cannot be learned (the address check then stands alone). */
+const generationOf = (driver: PageDriver, view: PageView, frame: WebFrameMain): Promise<string> =>
+  linksOf(driver)
+    .generation(view, frame)
+    .catch(() => '');
+
+/** A frame's read: its analysis and generation, or why there is none. */
+type FrameRead = Awaited<ReturnType<typeof readOf>>;
+
+/** Which read document each row came from: 0 for the page, else the frame's slot. */
+type Owners = WeakMap<Block, number>;
+
+/** The nearest frame above `frame` whose rows are in the read (the page, or a frame read on its own). */
+function holderOf(view: PageView, frame: WebFrameMain, read: Set<WebFrameMain>): number {
+  for (let f = frame.parent; f; f = f.parent) if (read.has(f)) return slotOf(view, f);
+  return 0;
+}
+
+/** The merge's shared state: the read so far, who owns each row, and the frames being read. */
+interface Merge {
+  /** The page's read, frames merged in as they come. */
+  data: Analysis;
+  /** Each row's document. */
+  owners: Owners;
+  /** The frames being read. */
+  frames: WebFrameMain[];
+}
+
+/**
+ * The row a frame's read goes under: its holder's one iframe row from its origin, when its
+ * holder has exactly one frame from that origin; otherwise a new row naming the frame. Rows
+ * only place the read for the agent's eyes: actions find the frame by its slot, never its row.
+ */
+function rowFor(view: PageView, m: Merge, frame: WebFrameMain): Block {
+  const [rows, siblings] = sameOrigin(view, m, frame);
+  if (rows.length === 1 && siblings.length === 1) return rows[0];
+  const row = { kind: 'iframe', target: frame.url, region: 'iframe' } as Block;
+  m.data.blocks = [...(m.data.blocks ?? []), row];
+  return row;
+}
+
+/** The iframe rows, and the frames being read, from `frame`'s origin in the same document as `frame`. */
+function sameOrigin(view: PageView, m: Merge, frame: WebFrameMain): [Block[], WebFrameMain[]] {
+  const read = new Set(m.frames);
+  const holder = holderOf(view, frame, read);
+  const same = (url: unknown) => originOf(String(url ?? '')) === originOf(frame.url);
+  const mine = (b: Block) => b.kind === 'iframe' && (m.owners.get(b) ?? 0) === holder && same(b.target);
+  return [
+    (m.data.blocks ?? []).filter(mine),
+    m.frames.filter((f) => holderOf(view, f, read) === holder && same(f.url)),
+  ];
 }
 
 /** Puts one frame's read under its row, or says on the row why it could not be read. */
-function mergeOne(view: PageView, data: Analysis, row: Block, read: Awaited<ReturnType<typeof readOf>>): void {
-  if (read === null) return;
+function mergeOne(view: PageView, m: Merge, frame: WebFrameMain, read: FrameRead): void {
+  const row = rowFor(view, m, frame);
   if (typeof read === 'string') return void (row.target = `${row.target} (${read})`);
-  const slot = slotOf(view, read.frame as WebFrameMain);
-  slotsOf(view).readAt.set(slot, (read.frame as WebFrameMain).url);
-  const child = shifted(read.data, slot * FRAME_ID_STRIDE);
-  // A frame row is on screen only where its frame is: the frame judged it by its own viewport.
-  for (const b of child.blocks) b.screen = !!(b.screen && row.screen);
-  splice(data, row, child);
+  const slot = slotOf(view, frame);
+  slotsOf(view).readAt.set(slot, frame.url);
+  slotsOf(view).generation.set(slot, read.generation);
+  splice(m.data, row, adopted(m, shifted(read.data, slot * FRAME_ID_STRIDE), slot, row));
+}
+
+/** The frame's rows marked as its own, and on screen only where its row is: the frame judged them by its own viewport. */
+function adopted(m: Merge, child: ReturnType<typeof shifted>, slot: number, row: Block): ReturnType<typeof shifted> {
+  for (const b of child.blocks) {
+    m.owners.set(b, slot);
+    b.screen = !!(b.screen && row.screen);
+  }
+  return child;
 }
 
 /**
@@ -157,30 +262,32 @@ function renumber(data: Analysis, before: number): void {
 }
 
 /**
- * Reads every iframe row's frame at once, not in turn, so a silent frame waits out its
- * deadline without holding the others, then merges each read under its row.
+ * Reads every frame at once, not in turn, so a silent frame waits out its deadline without
+ * holding the others, then merges outer frames before inner ones, so a nested frame's row
+ * is already in the read when its own read goes under it.
  */
-async function readAll(driver: PageDriver, view: PageView, data: Analysis, rows: Block[], ctx: ReadContext) {
-  const reads = await Promise.all(rows.map((row) => readOf(driver, view, matchOf(row, rows, ctx.frames), ctx.script)));
-  rows.forEach((row, i) => mergeOne(view, data, row, reads[i]));
+async function readAll(driver: PageDriver, view: PageView, m: Merge, script: string) {
+  const reads = await Promise.all(m.frames.map((f) => readOf(driver, view, f, script)));
+  const order = m.frames.map((f, i) => [f, reads[i]] as const).sort(([a], [b]) => depthOf(a) - depthOf(b));
+  for (const [frame, read] of order) mergeOne(view, m, frame, read);
 }
 
-/** What a frame read needs besides the rows: the live frames to match and the analyze script. */
-interface ReadContext {
-  /** The page's cross-origin child frames. */
-  frames: WebFrameMain[];
-  /** The analyze script. */
-  script: string;
+/** The frames to read, or none when the tab's frame tree is too large or deep to walk. */
+function framesOf(driver: PageDriver, view: PageView): WebFrameMain[] {
+  try {
+    return crossOriginFrames(driver, view);
+  } catch {
+    return []; // the page's own read still answers; its iframe rows stay as they are
+  }
 }
 
-/** The page's read with every cross-origin iframe it can match read in place; `script` is the analyze script. */
+/** The page's read with every cross-origin frame, at any depth, read in place; `script` is the analyze script. */
 export async function withFrames(driver: PageDriver, view: PageView, raw: unknown, script: string): Promise<unknown> {
   const data = (raw as ScriptResult<Analysis> | null)?.data;
-  const frames = crossOriginChildren(view);
+  const frames = data?.blocks ? framesOf(driver, view) : [];
   if (!data?.blocks || !frames.length) return raw;
-  const rows = data.blocks.filter((b) => b.kind === 'iframe');
   const before = data.blocks.length;
-  await readAll(driver, view, data, rows, { frames, script });
+  await readAll(driver, view, { data, owners: new WeakMap(), frames }, script);
   if (data.blocks.length !== before) renumber(data, before);
   return raw;
 }
@@ -223,19 +330,68 @@ export function frameTarget(view: PageView, selector: unknown): FrameTarget | st
   return { frame, selector: `[data-ac-id="${id % FRAME_ID_STRIDE}"]` };
 }
 
-/** In the page, the origin of the <iframe> that has focus (through open shadow roots), or ''. */
-const FOCUSED_ORIGIN_JS = `(() => {
-  let at = document.activeElement;
-  while (at && at.shadowRoot && at.shadowRoot.activeElement) at = at.shadowRoot.activeElement;
-  if (!at || !at.matches('iframe,frame')) return '';
-  try { return new URL(at.src, location.href).origin; } catch { return ''; }
+/**
+ * In a document: whether its focused element is a field of its own (not the body, not an
+ * <iframe>), and the origin of the <iframe> it has focused, if any. A document keeps its focused
+ * element while the window is in the background, so this holds when an agent drives an
+ * unfocused Oya, where document.hasFocus() is false everywhere.
+ */
+const FOCUS_JS = `(() => {
+  let a = document.activeElement;
+  while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+  const iframe = !!a && a.matches('iframe,frame');
+  let origin = '';
+  if (iframe) try { origin = new URL(a.src, location.href).origin; } catch {}
+  return { leaf: !!a && a !== document.body && a !== document.documentElement && !iframe, origin };
 })()`;
 
-/** The cross-origin frame that has focus, when exactly one live frame comes from its origin. */
+/** One document's focus: whether it holds a field, and which origin's <iframe> it has focused. */
+interface FocusState {
+  /** Its focused element is a field of its own. */
+  leaf: boolean;
+  /** The origin of the <iframe> it focused, or ''. */
+  origin: string;
+}
+
+/** Every web frame's focus state, the page's under the main frame; a frame that cannot answer holds none. */
+async function focusStates(driver: PageDriver, view: PageView): Promise<Map<WebFrameMain, FocusState>> {
+  const main = view.webContents.mainFrame;
+  const frames = webFrames(driver, view);
+  const ask = (f?: WebFrameMain) => driver.deps.worldEval<FocusState>(view, FOCUS_JS, f).catch(() => null);
+  const states = await Promise.all([ask(), ...frames.map((f) => ask(f))]);
+  return new Map([main, ...frames].map((f, i) => [f, states[i] ?? { leaf: false, origin: '' }]));
+}
+
+/** Every live web frame under the page outside a CAPTCHA challenge; none when the tree is too large or deep to walk. */
+function webFrames(driver: PageDriver, view: PageView): WebFrameMain[] {
+  try {
+    return linksOf(driver)
+      .frames(view)
+      .filter((f) => !f.detached && /^https?:/.test(f.url) && !underChallenge(f));
+  } catch {
+    return [];
+  }
+}
+
+/** Whether focus runs from the page down to `frame`: each holder has focused an <iframe> from the next frame's origin. */
+function onFocusPath(frame: WebFrameMain, states: Map<WebFrameMain, FocusState>): boolean {
+  for (let f = frame; f.parent; f = f.parent) if (states.get(f.parent)?.origin !== originOf(f.url)) return false;
+  return true;
+}
+
+/** Whether a frame sits behind another site's boundary, where native keys sent to the page never arrive; a same-site frame takes them. */
+function crossesSite(frame: WebFrameMain): boolean {
+  for (let f = frame; f.parent; f = f.parent) if (originOf(f.url) !== originOf(f.parent.url)) return true;
+  return false;
+}
+
+/** The frame, at any depth, whose own field has the focus, where native keys cannot reach; null when the page holds it, or it cannot be told. */
 async function focusedFrame(driver: PageDriver, view: PageView): Promise<WebFrameMain | null> {
-  const origin = await driver.deps.worldEval<string>(view, FOCUSED_ORIGIN_JS).catch(() => '');
-  const live = origin ? crossOriginChildren(view).filter((f) => originOf(f.url) === origin) : [];
-  return live.length === 1 ? live[0] : null;
+  if (!view.webContents?.mainFrame) return null; // a view being torn down: the page keeps its keys
+  const states = await focusStates(driver, view);
+  const main = view.webContents.mainFrame;
+  const focused = [...states].filter(([f, st]) => f !== main && st.leaf && onFocusPath(f, states) && crossesSite(f));
+  return focused.length === 1 ? focused[0][0] : null;
 }
 
 /**
@@ -250,50 +406,11 @@ export async function targetOf(driver: PageDriver, view: PageView, action: strin
   return frame ? { frame, selector: '' } : null;
 }
 
-/** Where a subframe's content box sits in the page's viewport, and its size. */
-interface Box {
-  /** Whether the frame's <iframe> was found, once, in the page. */
-  ok: boolean;
-  /** Left edge of its content, in page viewport pixels. */
-  x: number;
-  /** Top edge of its content. */
-  y: number;
-  /** Content width. */
-  w: number;
-  /** Content height. */
-  h: number;
-}
-
-/** In the page, the one <iframe> from `origin` (light and open shadow DOM), scrolled into view. */
-const IFRAME_OF = (origin: string) => `const O = ${JSON.stringify(origin)};
-  const roots = [document], found = [];
-  for (let i = 0; i < roots.length; i++) for (const n of roots[i].querySelectorAll('*')) {
-    if (n.shadowRoot) roots.push(n.shadowRoot);
-    if (n.matches('iframe,frame')) { try { if (new URL(n.src, location.href).origin === O) found.push(n); } catch {} }
-  }
-  const f = found.length === 1 ? found[0] : null;`;
-
-/** The frame's content box, read in the page after scrolling its <iframe> into view. */
-const BOX_JS = (origin: string) => `(() => { ${IFRAME_OF(origin)}
-  if (!f) return { ok: false };
-  f.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
-  const r = f.getBoundingClientRect(), s = getComputedStyle(f);
-  return { ok: true, x: r.left + f.clientLeft + parseFloat(s.paddingLeft), y: r.top + f.clientTop + parseFloat(s.paddingTop), w: f.clientWidth, h: f.clientHeight };
-})()`;
-
-/** Whether the page point (x, y) lands on the frame's <iframe> itself, not an overlay drawn over it. */
-const HITS_JS = (origin: string, x: number, y: number) => `(() => { ${IFRAME_OF(origin)}
-  let at = document.elementFromPoint(${x}, ${y});
-  while (at && at.shadowRoot && at !== f) { const inner = at.shadowRoot.elementFromPoint(${x}, ${y}); if (!inner || inner === at) break; at = inner; }
-  return !!f && at === f;
-})()`;
-
-/** A frame point checked against the frame's box, so a frame cannot steer input outside itself; answers it in page coordinates. */
-function toPage(box: Box, x: unknown, y: unknown): [number, number] {
+/** A frame point as numbers, refused when it is not a finite point inside the frame's own pixels. */
+function framePoint(x: unknown, y: unknown): [number, number] {
   const [fx, fy] = [Number(x), Number(y)]; // the point came from the frame: never let it be anything but a number
-  if (![fx, fy].every(Number.isFinite) || fx < 0 || fy < 0 || fx > box.w || fy > box.h)
-    throw new Error(FRAME_OUTSIDE_ERROR);
-  return [box.x + fx, box.y + fy];
+  if (![fx, fy].every(Number.isFinite) || fx < 0 || fy < 0) throw new Error(FRAME_OUTSIDE_ERROR);
+  return [fx, fy];
 }
 
 /** A function source called with its arguments JSON-encoded, so no value is ever spliced into code. */
@@ -321,14 +438,18 @@ const HOVER_AT = `(x, y) => {
   return !!el;
 }`;
 
-/** A click at a frame point: the <iframe> is focused from the page, then the element inside is pressed, unless an overlay covers it. */
-function frameClick(driver: PageDriver, view: PageView, box: Box, frame: WebFrameMain) {
-  const origin = originOf(frame.url);
+/**
+ * A click at a frame point: it is moved up through each exact owner <iframe> to the page,
+ * which scrolls each owner into view, refuses a point any overlay covers (or that falls
+ * outside the frame) and focuses each owner, then the element inside is pressed.
+ */
+function frameClick(driver: PageDriver, view: PageView, frame: WebFrameMain) {
   return async (_v: PageView, x: number, y: number): Promise<void> => {
-    const [px, py] = toPage(box, x, y);
-    if (!(await driver.deps.worldEval<boolean>(view, HITS_JS(origin, px, py)))) throw new Error(COVERED_TARGET_ERROR);
-    await driver.deps.worldEval(view, `(() => { ${IFRAME_OF(origin)} f?.focus(); })()`);
-    if (!(await driver.deps.worldEval<boolean>(view, call(CLICK_AT, x, y), frame)))
+    const [fx, fy] = framePoint(x, y);
+    await linksOf(driver)
+      .toTop(view, frame, fx, fy)
+      .catch((e: Error) => Promise.reject(/covered/i.test(String(e?.message)) ? new Error(COVERED_TARGET_ERROR) : e));
+    if (!(await driver.deps.worldEval<boolean>(view, call(CLICK_AT, fx, fy), frame)))
       throw new Error(COVERED_TARGET_ERROR);
   };
 }
@@ -339,13 +460,12 @@ function frameClick(driver: PageDriver, view: PageView, box: Box, frame: WebFram
  * the frame focus but landed at the page's coordinates inside it, on whatever sat there.
  * So the frame's element is pressed from inside the frame, at the point the read found it.
  */
-function frameMouse(driver: PageDriver, view: PageView, box: Box, frame: WebFrameMain): Mouse {
+function frameMouse(driver: PageDriver, view: PageView, frame: WebFrameMain): Mouse {
   const inFrame = (code: string) => driver.deps.worldEval(view, code, frame);
-  const move = async (_v: PageView, x: number, y: number) =>
-    void (toPage(box, x, y), await inFrame(call(HOVER_AT, x, y)));
+  const move = async (_v: PageView, x: number, y: number) => void (await inFrame(call(HOVER_AT, ...framePoint(x, y))));
   const scroll = async (_v: PageView, x: number, y: number, dx: number, dy: number) =>
-    void (toPage(box, x, y), await inFrame(call(`(x, y) => window.scrollBy(x, y)`, Number(dx) || 0, Number(dy) || 0)));
-  const click = frameClick(driver, view, box, frame);
+    void (framePoint(x, y), await inFrame(call(`(x, y) => window.scrollBy(x, y)`, Number(dx) || 0, Number(dy) || 0)));
+  const click = frameClick(driver, view, frame);
   return Object.assign(Object.create(driver.mouse), { click, move, scroll }) as Mouse;
 }
 
@@ -408,17 +528,31 @@ function frameDeps(driver: PageDriver, frame: WebFrameMain): PageDriver['deps'] 
  * (isTrusted false); the page's own elements keep trusted native input. Ownership and Human
  * Mode were checked before the command reached the driver.
  */
-export async function frameDriver(driver: PageDriver, view: PageView, frame: WebFrameMain): Promise<PageDriver> {
-  const box = await frameBox(driver, view, frame);
-  const deps = frameDeps(driver, frame);
-  const mouse = frameMouse(driver, view, box, frame);
-  const keyboard = frameKeyboard(driver, view, frame);
-  return Object.assign(Object.create(driver), { deps, mouse, keyboard }) as PageDriver;
+export async function frameDriver(
+  driver: PageDriver,
+  view: PageView,
+  frame: WebFrameMain,
+  named = true,
+): Promise<PageDriver> {
+  // A key sent to whichever frame has focus names no element from a read, so no read's document is required.
+  await (named ? requireSameDocument(driver, view, frame) : requireLive(frame));
+  const scoped = { deps: frameDeps(driver, frame), mouse: frameMouse(driver, view, frame) };
+  return Object.assign(Object.create(driver), scoped, { keyboard: frameKeyboard(driver, view, frame) }) as PageDriver;
 }
 
-/** The frame's content box in the page, its <iframe> scrolled into view; refused when that <iframe> is gone. */
-async function frameBox(driver: PageDriver, view: PageView, frame: WebFrameMain): Promise<Box> {
-  const box = await driver.deps.worldEval<Box>(view, BOX_JS(originOf(frame.url)));
-  if (!box?.ok) throw new Error(FRAME_GONE_ERROR);
-  return box;
+/** Refuses a frame that is gone. */
+async function requireLive(frame: WebFrameMain): Promise<void> {
+  if (frame.detached) throw new Error(FRAME_GONE_ERROR);
+}
+
+/** Refuses a frame that is gone, or that loaded another document (even at the same address) since it was read. */
+async function requireSameDocument(driver: PageDriver, view: PageView, frame: WebFrameMain): Promise<void> {
+  if (frame.detached) throw new Error(FRAME_GONE_ERROR);
+  const slot = slotsOf(view).byFrame.get(frame);
+  const read = slot === undefined ? '' : (slotsOf(view).generation.get(slot) ?? '');
+  if (!read) return; // focus routing, or a read that could not learn the generation: the address check stands
+  const now = await linksOf(driver)
+    .generation(view, frame)
+    .catch(() => '');
+  if (now !== read) throw new Error(FRAME_GONE_ERROR);
 }

@@ -161,6 +161,9 @@
   let elementMap = [];
   const elementRefs = new Map(); // id → DOM node (survives React re-renders)
 
+  /** The last analysis's elements, unchanged, so the shield can outline them again without renumbering ids an agent holds; null before any. */
+  if (!semanticsOnly) window.__acLastElements = () => (elementMap.length ? { ok: true, data: { elements: elementMap } } : null);
+
   if (!semanticsOnly) window.analyzePage = function (options = {}) {
     // Bypass ClientRects noise from fingerprint spoofing during analysis
     // Runs in an isolated world, so the page's patched getBoundingClientRect

@@ -14,6 +14,7 @@ import * as c from './constants.ts';
 import { INTERACTION_COMMANDS } from './interaction-commands.ts';
 import { POINTER_COMMANDS } from './pointer-commands.ts';
 import { browserDiagnostic } from '../browser-debug/index.ts';
+import { currentLane } from '../control/agent-tab.ts';
 import { HISTORY_COMMANDS } from './history-commands.ts';
 import * as queries from '../../page/queries.ts';
 import { isDateInput, dateInputValue, unreadableDate } from '../../page/date-value.ts';
@@ -257,8 +258,13 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
     driver.deps.sendResult(id, true, { screenshot, viewport });
   },
 
-  /** Local MCP diagnostics preserve native identity even when their operation fails. */
+  /**
+   * Local MCP diagnostics preserve native identity even when their operation fails. They show
+   * on the shield as analyze_page and the classic actions do: without this, an agent reading
+   * and clicking through them (Keel) drove the page with no scan, outlines or narration.
+   */
   async browser_debug(driver, id, params, view) {
+    showDiagnostic(driver, view, params || {});
     driver.deps.sendResult(id, true, { browserReply: await browserDiagnostic(driver, view, params || {}) });
   },
 
@@ -345,4 +351,36 @@ export const PAGE_COMMANDS: Readonly<Record<string, PageHandler>> = {
 async function pressAndSettle(driver: PageDriver, view: PageView, key: string): Promise<void> {
   if (key !== 'Enter') return driver.keyboard.press(view, key);
   if (await actionNavigation(view, () => driver.keyboard.press(view, key))) await driver.deps.injectScripts(view);
+}
+
+/** The classic action each diagnostic input is narrated as on the shield. */
+const DIAGNOSTIC_ACTIONS: Readonly<Record<string, string>> = { click: 'click', type: 'type' };
+
+/** Shows a diagnostic on the shield: a read scans and outlines the page, an input is narrated; neither delays the answer. */
+function showDiagnostic(driver: PageDriver, view: PageView, params: CommandParams): void {
+  if (!currentLane().startsWith('mcp-')) return; // the diagnostic itself refuses any other lane
+  if (params.kind === 'read') return void scanForShield(driver, view);
+  const kind = String(params.kind ?? '');
+  if (Object.hasOwn(DIAGNOSTIC_ACTIONS, kind)) driver.deps.narrate?.(view, DIAGNOSTIC_ACTIONS[kind], {});
+}
+
+/**
+ * The page's elements for the shield to outline: the last analysis as it stands, so an agent's
+ * analyze_page ids keep naming the same elements, or a first analysis when there is none.
+ */
+const SHIELD_SCAN_JS = `(window.__acLastElements && window.__acLastElements()) || (${s.actionScript('analyze', {})})`;
+
+/**
+ * The shield's scan for a diagnostic read, as analyze_page shows it: the animation starts at
+ * once and the outlines follow. The diagnostic's numbering is its own, so the outlines come
+ * from the analyzer's elements; a failure only ends the animation.
+ */
+async function scanForShield(driver: PageDriver, view: PageView): Promise<void> {
+  driver.deps.analysisStarted(view);
+  try {
+    await driver.deps.injectScripts(view);
+    driver.deps.analysisFinished(view, await driver.deps.worldEval(view, SHIELD_SCAN_JS));
+  } catch {
+    driver.deps.analysisFinished(view, null);
+  }
 }

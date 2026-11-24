@@ -135,6 +135,8 @@ export class DebugDocument {
     const hit = p.inverse === true ? debugHit(Number(p.x), Number(p.y)) : debugHit(point.x, point.y);
     if (p.geometry !== true && hit !== owner)
       throw Error('Frame is covered at the requested point. No click was sent.');
+    // An agent click inside a frame first gives the frame focus from its parent, as a person's press would.
+    if (p.focus === true) owner.focus({ preventScroll: true });
     return point;
   }
 }

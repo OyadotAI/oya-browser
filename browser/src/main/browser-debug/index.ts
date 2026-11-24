@@ -12,6 +12,9 @@ export { useDebugChannel } from './channel.ts';
 export { useDebugApplication, rememberDebugProfile } from './identity.ts';
 export { useNativeMouse } from './native-input.ts';
 export { inspectDebugMouseSurface } from './surface.ts';
+// The agent's default page read and frame actions find frames and their owners the same way.
+export { debugRegistry } from './registry.ts';
+export { debugFrames, linkedDocument, topPoint } from './frames.ts';
 /** Native main receives these after local MCP ownership/control admission. */
 export interface DebugParams {
   /** Fixed operation. */ kind?: string;

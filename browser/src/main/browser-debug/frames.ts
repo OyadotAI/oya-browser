@@ -44,26 +44,32 @@ export async function topPoint(
   point: DebugPoint,
   scroll = false,
   geometry = false,
+  focus = false,
 ): Promise<DebugPoint> {
   for (let depth = 0; doc.owner; depth++) {
     if (depth >= C.MAX_DEPTH) throw Error('Frame nesting exceeds 16 levels');
-    point = await projectDebugParent(registry, doc, point, scroll, geometry);
+    point = await projectDebugParent(registry, doc, point, { scroll, geometry, focus });
     doc = doc.owner.parent;
   }
   return point;
 }
 
+/** How a projection treats each owner: scroll it into view, measure only, give it focus. */
+interface ProjectFlags {
+  /** Scroll the owner into view first. */ scroll: boolean;
+  /** Measure only, without the covered check. */ geometry: boolean;
+  /** Focus the owner once the point is known to reach it. */ focus: boolean;
+}
 /** Recheck the native relation immediately around exact owner projection. */
 async function projectDebugParent(
   registry: DebugRegistry,
   doc: DebugDocument,
   point: DebugPoint,
-  scroll: boolean,
-  geometry: boolean,
+  flags: ProjectFlags,
 ): Promise<DebugPoint> {
   const { parent, node } = doc.owner!;
   if (doc.frame.parent !== parent.frame) throw Error('Frame topology changed');
-  const next = await registry.run<DebugPoint>(parent, 'project', { ...point, owner: node, scroll, geometry });
+  const next = await registry.run<DebugPoint>(parent, 'project', { ...point, owner: node, ...flags });
   await registry.run(doc, 'metadata');
   return next;
 }

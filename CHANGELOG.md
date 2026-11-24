@@ -6,6 +6,12 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- Agents' `analyze_page`, `click` and `type` now reach every frame from another site, as Keel's read does: a frame nested inside another (an embedded checkout inside a portal) and two frames from the same site are each read and acted on, where before they were skipped. A frame that reloaded since the read, even at the same address, is refused rather than acted on blind. This reaches local agents and claude.ai or ChatGPT alike.
+- The Claude Code plugin's manifest names itself "Oya Browser" to match its directory listing, and its description no longer carries compliance wording, which the directory could not accept automatically.
+- Keel's page reads now show the scan animation and the outlines on the page, and its clicks and typing are narrated on the shield, as other agents' actions are.
+
 ## [1.0.287](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.287) · 2026-11-24
 
 ### Fixed

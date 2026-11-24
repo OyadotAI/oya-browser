@@ -12,6 +12,7 @@ import { findElementJs, actionScript } from './scripts.ts';
 import { renderedAnalysis, type FormatSettings } from './page-format.ts';
 import { TAB_READY_TIMEOUT_MS, LOAD_TIMEOUT_MS, EMPTY_ANALYSIS_RETRY_MS } from './constants.ts';
 import { PAGE_COMMANDS } from './page-commands.ts';
+import type { FrameLinks } from './frame-scope.ts';
 import { frameDriver, frameRefusal, targetOf, withFrames, type FrameTarget } from './frame-scope.ts';
 import { DEV_COMMANDS, UNGUARDED_DEV_COMMANDS } from './dev-commands.ts';
 import type { AnalysisData, CommandId, CommandParams, Located, ScriptResult } from './types.ts';
@@ -66,6 +67,8 @@ export interface PageDriverDeps extends FormatSettings {
   tabs(): DriverTab[];
   /** The active tab's number, or null when there is none. */
   activeTabId(): number | null;
+  /** How frames are found and reached; the browser's own links when left out (tests pass theirs). */
+  frameLinks?: FrameLinks;
 }
 
 /** Everything a PageDriver is built from: the composition root's (src/main/main.ts) helpers, and the human-like input devices. */
@@ -188,7 +191,8 @@ export class PageDriver {
     const refused = frameRefusal(target, action);
     if (refused) return this.deps.sendResult(id, false, null, ...refused);
     const { frame, selector } = target as FrameTarget;
-    await PAGE_COMMANDS[action](await frameDriver(this, view, frame), id, { ...params, selector }, view);
+    const scoped = await frameDriver(this, view, frame, selector !== '');
+    await PAGE_COMMANDS[action](scoped, id, { ...params, selector }, view);
   }
 
   /**
