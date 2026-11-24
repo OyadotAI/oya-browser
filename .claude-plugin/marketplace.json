@@ -3,7 +3,7 @@
   "description": "Oya Cloud plugins for Claude Code. For local desktop browsing, use Connect in the Oya app.",
   "owner": {
     "name": "Oya",
-    "url": "https://getoya.ai"
+    "url": "https://oyabrowser.com"
   },
   "plugins": [
     {
