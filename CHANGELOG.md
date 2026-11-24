@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Fixed
+
+- The agent's page scan and its on-page outlines now agree on common form patterns. A field under its own floating label is no longer reported as covered and gets its outline; a hidden "I agree" checkbox is seen and outlined through its label; controls inside a fully transparent banner are no longer reported as visible.
+
 ## [1.0.286](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.286) · 2026-11-24
 
 ### Fixed

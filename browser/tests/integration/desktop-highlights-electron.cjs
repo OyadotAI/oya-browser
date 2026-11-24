@@ -43,6 +43,40 @@ iframe{position:absolute;left:400px;top:100px;width:300px;height:200px;border:10
 <iframe id="frame" srcdoc="<body style='margin:0'><button id='inner' style='position:absolute;left:30px;top:40px;width:120px;height:40px'>Frame button</button></body>"></iframe><div id="host"></div><div id="cover"></div>
 <script>document.getElementById('host').attachShadow({mode:'open'}).innerHTML='<button id="shadow" style="width:140px;height:40px">Shadow button</button>';</script>`;
 
+/** Common form patterns where the scan and the outlines used to disagree with what a person sees. */
+const AGREEMENT = `<!doctype html><style>body{margin:0;font:16px system-ui}.f{position:relative;width:240px;margin:20px}
+.f label{position:absolute;inset:0;padding:10px;color:#777}.f input{width:100%;padding:10px;box-sizing:border-box}</style>
+<div class="f"><input id="email"><label for="email">Email</label></div>
+<label style="display:inline-flex;margin:20px"><input type="checkbox" id="agree" style="opacity:0;width:0;height:0;margin:0"><span style="width:20px;height:20px;border:1px solid"></span> Agree</label>
+<div style="opacity:0;position:fixed;right:0;top:0;width:200px;height:60px"><button id="faded">Accept all</button></div>
+<div style="position:fixed;left:0;top:300px;width:400px;height:80px;background:#ddd;z-index:5"></div><input id="under" style="position:absolute;left:20px;top:320px">`;
+/** The scan and the outlines agree on floating labels, hidden toggles, faded banners and real overlays. */
+async function scanMatchesOutlines(win) {
+  const file = path.join(profile, 'agreement.html');
+  fs.writeFileSync(file, AGREEMENT);
+  const page = new BrowserView({ webPreferences: { sandbox: true, contextIsolation: true } });
+  win.addBrowserView(page);
+  page.setBounds({ x: 0, y: 0, width: 1080, height: 800 });
+  await page.webContents.loadFile(file);
+  const elements = (await world.evaluate(page, 'analyzePage({highlight:false})')).data.elements;
+  const by = (text) => elements.find((e) => e.text === text);
+  const outlined = new Set(
+    (await world.evaluate(page, highlightMeasureJs(elements, 'capture', 'agree'))).map((b) => b.id),
+  );
+  const email = by('Email');
+  assert.ok(email?.visible && !email.covered, 'A floating label over its own field does not cover it');
+  assert.ok(outlined.has(email.id), 'A field under its own floating label is outlined');
+  const agree = by('Agree');
+  assert.ok(
+    agree?.visible && outlined.has(agree.id),
+    'A hidden checkbox is seen and outlined through its visible label',
+  );
+  assert.equal(by('Accept all')?.visible, false, 'A control inside a fully transparent banner is not visible');
+  const under = by('');
+  assert.ok(under?.covered && !outlined.has(under.id), 'A real overlay still covers the field beneath it');
+  win.removeBrowserView(page);
+}
+
 /** Bounded polling for native layout and renderer readiness. */
 async function until(read, message) {
   for (let n = 0; n < 150; n++) {
@@ -227,6 +261,7 @@ async function run() {
   await pause(80);
   const refreshed = (await world.evaluate(page, 'analyzePage({highlight:false})')).data.elements;
   await rendered(win, page, refreshed);
+  await scanMatchesOutlines(win);
   console.log(
     'PASS Oya highlights: clipping, scaled iframe, shadow DOM, exact-node tracking, rotation refusal, live movement, occlusion and navigation reset',
   );

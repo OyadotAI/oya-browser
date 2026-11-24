@@ -241,6 +241,7 @@
     textLast = null;
     pinnedCache = new Map();
     clipCache = new Map();
+    opacityCache = new Map();
     const top = { region: '' };
     walk(root, top);
     flush(top);
@@ -248,10 +249,12 @@
     const onScreenIds = new Set();
     for (const el of elementMap) {
       const ref = elementRefs.get(el.id);
-      const dom = ref?.isConnected ? ref : queryShadow(el.selector);
+      const found = ref?.isConnected ? ref : queryShadow(el.selector);
+      // A styled toggle hides its real input and draws its label: the label is where it is seen and clicked.
+      const dom = found && shownToggleLabel(found);
       if (dom) {
         const rect = dom.getBoundingClientRect();
-        el.visible = inViewport(rect, getIframeOffset(dom));
+        el.visible = inViewport(rect, getIframeOffset(dom)) && !transparentAncestor(dom);
         if (el.visible && !pinnedAt(dom) && rectOnScreen(rect, dom)) onScreenIds.add(el.id);
         if (el.visible && isCovered(dom)) {
           el.covered = true;
@@ -375,6 +378,31 @@
     return onScreen && reachablePoint(dom) === null;
   }
 
+  /** A zero-size checkbox or radio is seen through its label; any other element is itself. */
+  function shownToggleLabel(dom) {
+    if (dom.tagName !== 'INPUT' || !/^(checkbox|radio)$/.test(dom.type)) return dom;
+    const r = dom.getBoundingClientRect();
+    if (r.width && r.height) return dom;
+    const label = [...(dom.labels || [])].find((l) => l.getBoundingClientRect().width > 0);
+    return label || dom;
+  }
+
+  /** Whether a parent is fully transparent (a banner faded out): nothing inside it can be seen. The element's own opacity is not counted, since transparent file and toggle inputs sit over what they draw. */
+  function transparentAncestor(dom) {
+    for (let n = dom.parentElement || dom.getRootNode()?.host; n; n = n.parentElement || n.getRootNode()?.host) {
+      if (!opacityCache.has(n)) opacityCache.set(n, getComputedStyle(n).opacity === '0');
+      if (opacityCache.get(n)) return true;
+    }
+    return false;
+  }
+
+  /** Whether `hit` is `target` itself, inside it, or its own label (a floating label over a field focuses that field). */
+  function hitReaches(hit, target) {
+    if (hit === target || target.contains(hit)) return true;
+    const label = hit.closest?.('label');
+    return !!label && label.control === target;
+  }
+
   /** A reachable client-rect centre, clipped to its own viewport and checked through every frame. */
   function reachablePoint(dom) {
     const win = dom.ownerDocument.defaultView;
@@ -396,7 +424,7 @@
     for (let target = dom; target;) {
       const root = target.getRootNode();
       const hit = root.elementFromPoint?.(x, y);
-      if (!hit || (hit !== target && !target.contains(hit))) return null;
+      if (!hit || !hitReaches(hit, target)) return null;
       if (root.host) {
         target = root.host;
         continue;
@@ -509,6 +537,7 @@
   let textLast = null;
   let pinnedCache = new Map(); // per analysis: whether an element sits in a pinned box
   let clipCache = new Map(); // per analysis: the ancestor boxes that clip an element's content
+  let opacityCache = new Map(); // per analysis: whether each ancestor is fully transparent
   const pageBoxCache = new Map(); // per analysis: a clipping box in top-level page coordinates
   const frameOffsetCache = new Map(); // per analysis: an element's offset within the top-level page
   const rootChain = new Set(); // the analysis root and its ancestors: they never pin the rows inside
