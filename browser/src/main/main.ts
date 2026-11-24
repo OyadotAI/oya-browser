@@ -236,20 +236,32 @@ ctx.agentTab = new AgentTab(ctx, () => {
     scope.tabs.sendTabList();
   });
 });
+/**
+ * Runs each control-change step on its own. One that threw (a tab gone mid-update) used to skip the
+ * shield after it and fail the server message that carried the change, which ended the session.
+ */
+function eachAlone(steps: Array<() => void>): void {
+  for (const step of steps) {
+    try {
+      step();
+    } catch (error) {
+      console.error('[control] a control-change step failed:', error);
+    }
+  }
+}
 /** Keeps each chat in flight in its tab across a dropped socket. */
 const chatTabs = new ChatTabs(ctx);
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
-  changed: (state) => {
-    chatTabs.note();
-    ctx.agentTab.sync(state);
-    chatTabs.restore();
-    ctx.passkeys.sync();
-    void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
-    ctx.dialogs.controlChanged();
-    ctx.shield.controlChanged(state);
-    ctx.windows?.each((scope) => scope.findBar.sync());
-  },
+  changed: (state) =>
+    eachAlone([
+      () => (chatTabs.note(), ctx.agentTab.sync(state), chatTabs.restore()),
+      () => ctx.passkeys.sync(),
+      () => void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required')),
+      () => ctx.dialogs.controlChanged(),
+      () => ctx.shield.controlChanged(state),
+      () => ctx.windows?.each((scope) => scope.findBar.sync()),
+    ]),
 });
 ctx.cookies = new CookieSync({
   mark: cookieSyncMark(ctx),

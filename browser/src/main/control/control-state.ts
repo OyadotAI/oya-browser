@@ -148,7 +148,12 @@ class ControlState {
 
   /** Tells the listener. */
   protected publish(): void {
-    this.changed(this.snapshot());
+    // A listener that throws must not strand a handoff: result() has already taken its request, so it would never settle and busy would stay set.
+    try {
+      this.changed(this.snapshot());
+    } catch (error) {
+      console.error('[control] a control-change listener failed:', error);
+    }
   }
 
   /** A state from the server; an older revision than the current one is ignored. */

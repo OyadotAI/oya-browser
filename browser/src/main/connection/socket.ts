@@ -123,9 +123,14 @@ export function authMessage(config: AuthConfig, id: string | null, native: numbe
   return { ...identity, persona: config.persona, ...offer };
 }
 
-/** Report setup failure only for the current connection selected by the ordered message queue. */
+/**
+ * A server message the current connection could not handle. Only a failed auth_ok ends the session:
+ * any other handler (a control change whose listener threw, say) closing it for good left the desktop
+ * stuck in agent mode with no server and no reconnect, until the person force-quit Oya.
+ */
 function messageSetupFailed(owner: ControlSocket, socket: SocketLike, msg: ServerMessage, err: unknown): void {
   console.error(`[oya] Could not handle "${msg.type}" from the server:`, (err as Error | undefined)?.stack || err);
+  if (msg.type !== 'auth_ok') return;
   owner.connectionFailure = 'Session setup failed. Restart Oya to retry; if it persists, contact support.';
   socket.close(CloseCode.REJECTED, 'Session setup failed');
 }

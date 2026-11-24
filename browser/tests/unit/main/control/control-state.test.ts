@@ -94,6 +94,14 @@ describe('DesktopControl', () => {
     assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().localClients], ['offline', 0]);
   });
 
+  it('settles a takeover and clears busy even when a change listener throws', async () => {
+    ctx.snapshots.push = () => {
+      throw new Error('a listener threw');
+    };
+    await holdConnected(ctx);
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().busy], ['human', false]);
+  });
+
   it('shows a running local command as agent control', async () => {
     const finish = await ctx.control.beginLocalCommand();
     assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().mine], ['agent', false]);
