@@ -251,16 +251,21 @@ ctx.routines = new Routines(ctx);
 ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.tabs.sendTabList()));
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () => {
+  ctx.screenPicker.sync();
   ctx.passkeys.sync();
   ctx.dialogs.controlChanged();
   // A claim takes the tab from the person: its translation is undone before the agent reads it.
   void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
+  syncWindowChrome();
+});
+/** Redraws what each window shows about control after a claim: the shield, the find bar and the tab list. */
+function syncWindowChrome(): void {
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.findBar.sync();
     scope.tabs.sendTabList();
   });
-});
+}
 /**
  * Runs each control-change step on its own. One that threw (a tab gone mid-update) used to skip the
  * shield after it and fail the server message that carried the change, which ended the session.
@@ -281,6 +286,7 @@ ctx.control = new DesktopControl({
   changed: (state) =>
     eachAlone([
       () => (chatTabs.note(), ctx.agentTab.sync(state), chatTabs.restore()),
+      () => ctx.screenPicker.sync(),
       () => ctx.passkeys.sync(),
       () => void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required')),
       () => ctx.dialogs.controlChanged(),

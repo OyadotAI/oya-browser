@@ -1,7 +1,7 @@
 /** Native Oya picker QA: real windows, preload IPC and trusted pointer input; no browser automation provider. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { BrowserWindow, BrowserView, session } = require('electron');
+const { app, BrowserWindow, BrowserView, session } = require('electron');
 const { ShareSheet } = require('../../src/main/screen-share/window.ts');
 const { ScreenPicker, ShareIndicator } = require('../../src/main/screen-share/index.ts');
 
@@ -76,6 +76,13 @@ async function installPicker(deps, window) {
     { id: 1, title: 'Project notes', url: window.webContents.getURL(), view: { webContents: window.webContents } },
     ...(await backgroundTabs(window)),
   ];
+  deps.electron.app = app;
+  deps.tabs.find = (id) => deps.tabs.list.find((tab) => tab.id === id);
+  deps.windows = {
+    ownerOfContents: (contents) => (deps.tabs.list.some((tab) => tab.view.webContents === contents) ? deps : undefined),
+    fromContents: (contents) => (contents === window.webContents ? deps : undefined),
+    tabEvents: { subscribe: () => () => {} },
+  };
   deps.screenPicker = new ScreenPicker(deps);
   return sources;
 }

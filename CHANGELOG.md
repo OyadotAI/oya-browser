@@ -6,6 +6,10 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Added
+
+- Added optional macOS on-screen window selection with a separate Oya confirmation before capture. The existing window list remains available, and closed windows or changed requesting tabs cannot inherit a pending choice.
+
 ## [1.0.295](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.295) · 2026-11-25
 
 ### Changed
