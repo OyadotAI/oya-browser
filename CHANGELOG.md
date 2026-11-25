@@ -6,6 +6,8 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+## [1.0.295](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.295) · 2026-11-25
+
 ### Changed
 
 - claude.ai and ChatGPT connectors on `/mcp/pool` now work like the desktop app's MCP: ten tools, and one cloud browser that starts itself the first time a page is opened. There is no start, stop or pool tool to call. Only six tools act on a page, so there are fewer approvals to give. API keys keep the full pool tool set, unchanged.
