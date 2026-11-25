@@ -31,7 +31,6 @@ export default tseslint.config(
       'k8s',
       'supabase',
       'docs',
-      'mars',
     ],
   },
   js.configs.recommended,

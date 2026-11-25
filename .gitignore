@@ -40,9 +40,6 @@ lcov.info
 /strip-claude-oya-browser.sh
 qa.zip
 
-# Preserve the earlier running preview while Mars owns all Rust source.
-/native/target/
-
 # tasteskill: deal history, gate state and a headless Chrome profile
 .taste-skill/
 

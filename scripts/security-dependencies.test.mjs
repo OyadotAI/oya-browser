@@ -35,14 +35,3 @@ for (const directory of directories) {
     }
   });
 }
-
-test('every Mars TLS consumer and the actual vendor package use patched Rustls', () => {
-  for (const file of ['Cargo.toml', 'crates/relay/Cargo.toml', 'crates/link/Cargo.toml']) {
-    const manifest = readFileSync(new URL(`../mars/${file}`, import.meta.url), 'utf8');
-    assert.match(manifest, /rustls = \{ version = "=0\.23\.46"/);
-  }
-  const vendor = readFileSync(new URL('../mars/vendor/rustls/Cargo.toml', import.meta.url), 'utf8');
-  const lock = readFileSync(new URL('../mars/Cargo.lock', import.meta.url), 'utf8');
-  assert.match(vendor, /name = "rustls"\nversion = "0\.23\.46"/);
-  assert.match(lock, /name = "rustls"\nversion = "0\.23\.46"/);
-});
