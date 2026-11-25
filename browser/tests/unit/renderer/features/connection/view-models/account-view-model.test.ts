@@ -100,11 +100,45 @@ describe('the account card', () => {
     assert.equal(accountCard(app.account.state).title, 'Ada Lovelace');
   });
 
-  it('does not ask for the account while the page is closed', async () => {
-    const app = build({ getConfig: CONFIG, getAccount: null });
+  it('asks again on a new connection, so a pairing as someone else shows them', async () => {
+    let account: unknown = ACCOUNT;
+    const app = await accountPage({ getAccount: () => account });
+    account = { ...ACCOUNT, name: '', email: 'grace@example.com' };
+    app.fake.emit('onWsStatus', { connected: false });
+    app.fake.emit('onWsStatus', { connected: true });
+    await settle();
+    assert.equal(accountCard(app.account.state).title, 'grace@example.com');
+  });
+
+  it('learns the account on connecting while the page is closed, for the toolbar avatar and profile menu', async () => {
+    let account: unknown = null;
+    const app = build({ getConfig: CONFIG, getAccount: () => account });
+    await settle();
+    account = ACCOUNT;
+    app.fake.emit('onWsStatus', { connected: true });
+    await settle();
+    assert.equal(accountCard(app.account.state).title, 'Ada Lovelace');
+  });
+
+  it('names the remembered account from launch, before the server can be reached', async () => {
+    const app = build({ getConfig: CONFIG, getAccount: ACCOUNT, getStatus: { connected: false } });
+    await settle();
+    assert.equal(accountCard(app.account.state).title, 'Ada Lovelace');
+    assert.equal(accountCard(app.account.state).connection, 'reconnecting');
+  });
+
+  it('shows the latest answer when an earlier, slower one arrives after it', async () => {
+    const answers: Array<(account: unknown) => void> = [];
+    const app = build({ getConfig: CONFIG, getAccount: () => new Promise((resolve) => answers.push(resolve)) });
     await settle();
     app.fake.emit('onWsStatus', { connected: true });
-    assert.equal(app.fake.called('getAccount').length, 0);
+    app.fake.emit('onWsStatus', { connected: false });
+    app.fake.emit('onWsStatus', { connected: true });
+    await settle();
+    answers.at(-1)?.({ ...ACCOUNT, name: 'Grace Hopper' });
+    for (const answer of answers.slice(0, -1)) answer(ACCOUNT);
+    await settle();
+    assert.equal(accountCard(app.account.state).title, 'Grace Hopper');
   });
 
   it('shows no account when asking for it fails', async () => {

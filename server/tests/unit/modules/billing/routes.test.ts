@@ -17,7 +17,13 @@ function fakeBilling() {
     portal: async (id) => (asked.push(['portal', id]), { url: 'p' }),
     applyEvent: async (e) => void asked.push(['event', e.type]),
   };
-  return { billing: { subscriptions } as any, asked };
+  const licenses = {
+    view: async (id) => (asked.push(['license', id]), { enabled: true, license: null }),
+    checkout: async (id, n, interval) => (asked.push(['license-checkout', id, n, interval]), { url: 'lc' }),
+    portal: async (id) => (asked.push(['license-portal', id]), { url: 'lp' }),
+    applyEvent: async (e) => void asked.push(['license-event', e.type]),
+  };
+  return { billing: { subscriptions, licenses } as any, asked };
 }
 
 /** The handler behind a route, past its sign-in middleware. */
@@ -67,12 +73,34 @@ describe('billing routes', () => {
     ]);
   });
 
+  it('answers the person’s self-hosted license, opens its Checkout with the count and period asked, and its Portal', async () => {
+    const { billing, asked } = fakeBilling();
+    assert.deepEqual((await call(billing, 'get', '/billing/license')).body, { enabled: true, license: null });
+    const body = { browsers: 12, interval: 'year' };
+    assert.deepEqual((await call(billing, 'post', '/billing/license/checkout', body)).body, { url: 'lc' });
+    assert.deepEqual((await call(billing, 'post', '/billing/license/portal')).body, { url: 'lp' });
+    assert.deepEqual(asked, [
+      ['license', 'u1'],
+      ['license-checkout', 'u1', 12, 'year'],
+      ['license-portal', 'u1'],
+    ]);
+  });
+
+  it('says a self-hosted server sells no licenses itself', async () => {
+    delete process.env.STRIPE_SECRET_KEY;
+    const { billing } = fakeBilling();
+    assert.deepEqual((await call(billing, 'get', '/billing/license')).body, { enabled: false });
+  });
+
   it('applies an event Stripe signed', async () => {
     const { billing, asked } = fakeBilling();
     const res = new FakeResponse();
     await billingWebhook(billing)(webhook({ type: 'customer.subscription.updated' }), res);
     assert.deepEqual(res.body, { received: true });
-    assert.deepEqual(asked, [['event', 'customer.subscription.updated']]);
+    assert.deepEqual(asked, [
+      ['event', 'customer.subscription.updated'],
+      ['license-event', 'customer.subscription.updated'],
+    ]);
   });
 
   it('refuses an event anyone else signed, so nobody can grant themselves a plan', async () => {
@@ -83,9 +111,18 @@ describe('billing routes', () => {
     assert.deepEqual(asked, []);
   });
 
-  it('takes no webhook on a self-hosted server', async () => {
-    delete process.env.STRIPE_SECRET_KEY;
+  it('takes no webhook on a self-hosted server, or with a missing or non-JSON body', async () => {
     const { billing, asked } = fakeBilling();
+    const missing = new FakeResponse();
+    await billingWebhook(billing)({ body: undefined, headers: { 'stripe-signature': 't=1,v1=deadbeef' } }, missing);
+    assert.equal(missing.statusCode, 400);
+    const badJson = new FakeResponse();
+    const raw = Buffer.from('not-json');
+    const t = Math.floor(Date.now() / 1000);
+    const sig = createHmac('sha256', 'whsec_test').update(`${t}.`).update(raw).digest('hex');
+    await billingWebhook(billing)({ body: raw, headers: { 'stripe-signature': `t=${t},v1=${sig}` } }, badJson);
+    assert.equal(badJson.statusCode, 400);
+    delete process.env.STRIPE_SECRET_KEY;
     const res = new FakeResponse();
     await billingWebhook(billing)(webhook({ type: 'customer.subscription.created' }), res);
     assert.equal(res.statusCode, 400);

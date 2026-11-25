@@ -1,5 +1,11 @@
 # Change review
 
+For a focused CI review, inspect the changed code directly. Use preceding evidence as an
+investigation index when provided; no preceding stage is required. Independently confirm relevant claims in code and check correctness against the ask.
+Use gathered evidence for both standards and requested-behavior passes; revisit architecture
+when contrary evidence or a concrete risk needs it. Preserve required coverage, including
+truncated portions of the change, and state what remains unverified.
+
 Read the requested diff, including staged work and relevant untracked files when in scope.
 Follow callers, types, protocol consumers, cleanup paths, and existing tests around each change.
 Compare behavior to the actual request and acceptance criteria.

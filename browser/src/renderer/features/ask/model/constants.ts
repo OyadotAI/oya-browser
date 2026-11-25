@@ -25,6 +25,8 @@ export const ASK_TEXT = {
   errorPrefix: 'Error: ',
   /** The live line before any step is known. */
   thinking: 'Thinking…',
+  /** The live line while a run's dropped connection is being picked up again. */
+  reconnecting: 'Reconnecting…',
   /** The verdicts above a report. */
   done: 'Done',
   failed: 'Could not finish',

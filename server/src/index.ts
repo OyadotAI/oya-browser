@@ -41,7 +41,6 @@ process.on('unhandledRejection', (reason: any) => {
 import express from 'express';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import { join } from 'path';
 import cors from 'cors';
 import { router as apiRouter } from './app/api.ts';
 import { slackActionsRouter } from './modules/slack/service.ts';
@@ -69,15 +68,19 @@ import { validateApiKey, authReady } from './modules/auth/service.ts';
 import { registry } from './modules/browsers/registry.ts';
 import { pool } from './modules/gateway/routing.ts';
 import { PUBLIC_DIR, DOWNLOADS_DIR } from './platform/paths.ts';
+import { downloadRoutes } from './modules/downloads/index.ts';
 import { Status } from './platform/http-status.ts';
 import { answerBodyErrors } from './app/body-errors.ts';
-import { apiKeyHeader } from './app/http.ts';
+import { discoveryRouter } from './app/discovery.ts';
+import { apiKeyHeader, upgradeUrl } from './app/http.ts';
 import { DECIMAL, DEFAULT_PORT, INVALID_KEY_CLOSE_CODE } from './app/constants.ts';
 import { CORS_ORIGIN, HEADERS_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from './app/constants.ts';
 import { billingWebhook, startReporting } from './modules/billing/index.ts';
 import * as license from './platform/license/index.ts';
 import { drainDownloads } from './modules/admin/index.ts';
 import { RELEASE_VERSION } from './platform/version.ts';
+import { FULFILLMENT_PATH, marketplaceCallback, marketplaceConfig } from './modules/marketplace/index.ts';
+import { consoleUrl } from './modules/slack/service.ts';
 
 // Not yet layered: reads the persona service from the composition root.
 const { personas } = container;
@@ -153,18 +156,7 @@ app.use((req, res, next) => {
 const publicDir = PUBLIC_DIR;
 
 // ── Discovery & docs (root level) ──
-app.use('/.well-known', express.static(join(publicDir, '.well-known')));
-// The A2A spec renamed agent.json to agent-card.json; agents look for either.
-app.get('/.well-known/agent-card.json', (req, res) =>
-  res.sendFile(join(publicDir, '.well-known', 'agent.json'), { dotfiles: 'allow' }),
-);
-// One file, several names. Crawlers look for different ones and a second copy
-// would only drift from this. /llms-full.txt is not one of them: the UI serves
-// it as the whole docs site in Markdown, next to /docs.md and /docs/<slug>.md.
-for (const path of ['/llms.txt', '/docs.txt']) {
-  app.get(path, (req, res) => res.type('text/plain').sendFile(join(publicDir, 'llms.txt')));
-}
-app.get('/openapi.json', (req, res) => res.type('application/json').sendFile(join(publicDir, 'openapi.json')));
+app.use(discoveryRouter(publicDir));
 
 // ── REST API under /api ──
 // CDP discovery. Playwright, Puppeteer, Stagehand and browser-use fetch these
@@ -212,6 +204,8 @@ app.get(['/health', '/metrics'], apiRouter);
 app.get(['/downloads', '/downloads/'], (req, res) => res.redirect(Status.FOUND, '/#download'));
 // Counted on the way out (installers, update checks, updates), then served as plain files.
 app.use('/downloads', trackDownloads, express.static(DOWNLOADS_DIR));
+// Version-free addresses agents install from; each redirects to the newest file above.
+app.use('/download', downloadRoutes());
 
 // Sign in with ChatGPT returns here, on the loopback address (config/chatgpt.ts).
 app.get(CHATGPT_CALLBACK_PATH, chatgptCallback);
@@ -230,6 +224,11 @@ app.get('/mcp/:browserId', handleMcpRequest);
 app.delete('/mcp/:browserId', handleMcpRequest);
 
 // ── Next.js runtime (optional for API-only hosts) ──
+// AWS posts before Next receives a clean GET; no global URL-encoded parser is added.
+app.use(
+  FULFILLMENT_PATH,
+  marketplaceCallback(container.marketplace, () => marketplaceConfig(consoleUrl())),
+);
 const frontend = startFrontend();
 if (frontend) app.use((req, res) => frontend.handle(req, res));
 else
@@ -255,13 +254,12 @@ const wss = new WebSocketServer({
 
 // One upgrade router: /ws is the Oya client protocol, /connect is raw CDP.
 server.on('upgrade', (req, socket, head) => {
-  const { pathname } = new URL(req.url, `http://${req.headers.host}`);
-  if (pathname === '/ws') {
-    return wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-  }
-  if (pathname === '/connect') return upgradeGateway(req, socket, head);
+  const url = upgradeUrl(req);
+  if (!url) return socket.destroy();
+  if (url.pathname === '/ws') return wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  if (url.pathname === '/connect') return upgradeGateway(req, socket, head);
   if (frontend?.upgrade(req, socket, head)) return;
-  console.warn(`[ws] ✗ upgrade to unknown path ${pathname}, use /ws (Oya client) or /connect (CDP)`);
+  console.warn(`[ws] ✗ upgrade to unknown path ${url.pathname}, use /ws (Oya client) or /connect (CDP)`);
   socket.destroy();
 });
 
@@ -276,8 +274,7 @@ function upgradeGateway(req, socket, head) {
 }
 
 wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const apiKey = url.searchParams.get('key');
+  const apiKey = upgradeUrl(req)?.searchParams.get('key');
   // A key in the URL lands in access logs; the client sends it in its first
   // message instead. The old form is refused unless OYA_ALLOW_LEGACY_QUERY_KEYS=true,
   // the same switch /connect?token= obeys.

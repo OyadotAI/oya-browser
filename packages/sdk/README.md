@@ -25,21 +25,30 @@ import { Oya } from '@oya-ai/browser';
 
 const browser = await new Oya().browser.start();
 await browser.goto('https://news.ycombinator.com');
-console.log(await browser.ask('What are the top 3 stories?'));
+console.log(await browser.ask('What are the top 3 stories and their points?'));
+await browser.stop();
 ```
 
-Two things to have first: an API key from [oyabrowser.com](https://oyabrowser.com)
-(or your own deployment) in `OYA_API_KEY`, and a browser to drive.
+The one thing to have first is an API key from [oyabrowser.com](https://oyabrowser.com)
+(or your own deployment) in `OYA_API_KEY`.
 
-**The fastest browser to have is one you already have.** Open the
-[Oya desktop browser](https://oyabrowser.com) and sign in with the same key: `start()`
-hands over the browser that is already connected when no provider is configured, so the
-five lines above work with nothing else set up. `stop()` leaves a browser you borrowed
-alone, because you did not start it.
+**Which browser `start()` gives you**, when no provider is configured: the
+[Oya desktop browser](https://oyabrowser.com) if it is open and signed in with the same
+key, else a new one in Oya Cloud. `stop()` leaves a browser you borrowed alone, because
+you did not start it. To run browsers somewhere else (your own Docker, Browserbase,
+Steel, Anchor, Browser Use, or a Chrome of your own over CDP), pass `{ provider }` or set
+a default with `npx @oya-ai/cli init`. Your code does not change.
 
-When you would rather it start one for you, run `npx @oya-ai/cli init` and pick where
-browsers run: Oya Cloud, your own Docker, Browserbase, Steel, Anchor, Browser Use, or a
-Chrome of your own over CDP. Your code does not change.
+**Which model `ask()` uses:** the key's saved one, or Oya's when it has none. Pick one in
+code, for this client only and never saved to the key:
+
+```js
+const oya = new Oya({
+  model: { provider: 'anthropic', name: 'claude-sonnet-5', apiKey: process.env.ANTHROPIC_API_KEY },
+});
+```
+
+Without `apiKey`, `name` runs on the credential your key already uses, which must be the same provider.
 
 **Where the key comes from**, in order: `new Oya({ apiKey })`, then `OYA_API_KEY`, then the
 file `oya login` wrote (`~/.oya/config.json`, or `OYA_CONFIG_HOME`), which is read on Node
@@ -50,10 +59,13 @@ Node.js 20 or newer; the examples are ES modules. `OYA_BASE_URL` points at a sel
 control plane. On Node.js 24+, `await using browser = await oya.browser.start()` stops it
 when the scope exits, errors included.
 
-
 ## For AI agents
 
-No key yet? Get your own, and use your person's own browser with their logins:
+For desktop browsing without an Oya account or API key, use the app's Connect
+action and start a new agent session. See [Oya for coding agents](https://oyabrowser.com/browser-for-claude-code).
+
+The optional **SDK desktop pairing** path below uses an SDK key. It is separate
+from local MCP setup:
 
 ```js
 await Oya.signup({ email: 'person@example.com' }); // saved to ~/.oya/config.json
@@ -61,10 +73,13 @@ const browser = await new Oya().desktop.connect(); // pairs the Oya desktop app
 ```
 
 Written for agents: [oyabrowser.com/llms.txt](https://oyabrowser.com/llms.txt).
+On a server or CI runner without a desktop, use an authenticated Oya Cloud key,
+call `oya.browser.start()` and stop the browser in `finally`. A signup key must
+be claimed before cloud browsers are enabled.
 
 ## Portal automation: record once, replay with new inputs
 
-This example adapts the portal-automation project's workflow: reuse a persona, attach to an existing browser or start one, run a prompt the first time, then replay its saved playbook. The portal, workflow names, and request values below are fictional. Supply your own test portal and credentials through environment variables; adapt the task to its actual pages.
+Reuse a persona, attach to an existing browser or start one, run a prompt the first time, then replay its saved playbook. The portal, workflow names, and request values below are fictional. Supply your own test portal and credentials through environment variables; adapt the task to its actual pages.
 
 Save as `portal.mjs` and run `node portal.mjs` after setting `OYA_API_KEY`, `PORTAL_URL`, `PORTAL_USERNAME`, and `PORTAL_PASSWORD`. Set `OYA_BROWSER_ID` only to reuse an already running browser.
 
@@ -110,6 +125,8 @@ if (existingId) {
   const persona =
     (await oya.personas.list()).find((p) => p.name === 'portal-demo') ??
     (await oya.personas.create({ name: 'portal-demo' }));
+  // The login lives on the persona, sealed: every run and replay as it signs in on its own.
+  await oya.personas.setCredentials(persona.id, { domain: new URL(portalUrl).hostname, ...secrets });
   browser = await oya.browser.start({ persona: persona.id, captcha: 'auto' });
 }
 
@@ -156,7 +173,9 @@ try {
 }
 ```
 
-`submit()` starts a background run and returns a `Run` handle. The SDK polls every two seconds by default (`pollMs` overrides this). `run.done` resolves with the result or rejects with an error; `run.status()` reads the run record. Attention reasons are `captcha`, `mfa`, `agent`, and `heal_failed`. A run waits up to 30 minutes for `request.respond()` or `run.respond()`. Run records are held in server memory for one hour after completion; they do not survive a server restart.
+**Signing in.** A login saved on the persona (`oya.personas.setCredentials`) is the one to use for portals: every run and replay as that persona signs in with it on its own, before the agent starts, and a second factor set with `setMfa` is answered the same way. A run that brings its login in `secrets` instead (here, when you attach with `OYA_BROWSER_ID`) types it itself, through the placeholders in the prompt.
+
+`submit()` starts a background run and returns a `Run` handle. The SDK polls every two seconds by default (`pollMs` overrides this). `run.done` resolves with the result or rejects with an error; `run.status()` reads the run record. Attention reasons are `captcha`, `login`, `mfa`, `agent`, and `heal_failed`. `login` comes from the run's own sign-in check: a page asks for a login and the profile has none saved (`oya.personas.setCredentials`). A run waits up to 30 minutes for `request.respond()` or `run.respond()`. Run records are held in server memory for one hour after completion; they do not survive a server restart.
 
 ### Data, secrets, and reusable placeholders
 
@@ -184,7 +203,7 @@ A string argument is a path on disk (Node only); a `Blob`, a `File`, or a `Uint8
 parse prose:
 
 ```ts
-const { title, price } = await browser.extract('What is the product on this page?', {
+const { title, price } = await browser.extract<{ title: string; price: string }>('What is the product on this page?', {
   type: 'object',
   properties: { title: { type: 'string' }, price: { type: 'string' } },
   required: ['title', 'price'],
@@ -216,7 +235,7 @@ A field the agent wrote itself (a comment, the reason for a request, a question'
 ### Move a playbook to another environment
 
 ```js
-const doc = await oya.playbooks.export('new-request');   // JSON: steps, defaults, secret names (never values)
+const doc = await oya.playbooks.export('new-request'); // JSON: steps, defaults, secret names (never values)
 await prodOya.playbooks.import(doc, { name: 'new-request', overwrite: false });
 ```
 
@@ -224,7 +243,7 @@ The CLI does the same with `oya playbooks export <name> --out file.json` and `oy
 
 ## Use your own model key
 
-As in the portal-automation project's model setup script, configure the model on your Oya API key once for subsequent agent runs:
+Configure the model on your Oya API key once, for every agent run after it:
 
 ```js
 import { Oya } from '@oya-ai/browser';
@@ -339,8 +358,8 @@ const oya = new Oya();
 await using browser = await oya.browser.start();
 await browser.goto('https://github.com/trending');
 
-// Analyze page: returns markdown and visible numbered elements
-const { markdown, elements } = await browser.analyze();
+// Analyze page: the page as markdown (TOON in `page` by default) and its numbered elements
+const { markdown, elements } = await browser.analyze({ format: 'markdown' });
 console.log((markdown ?? '').slice(0, 300));
 
 // Interact using numbered element IDs:
@@ -368,7 +387,8 @@ await oya.personas.setMfa(persona.id, {
 
 await using browser = await oya.browser.start({ persona: persona.id });
 
-// 2. Clear CAPTCHAs automatically (uses vendor solver or CapSolver/2Captcha fallback)
+// 2. Clear CAPTCHAs: a provider that solves natively, else the solver set on your key
+//    (oya.config.set({ captcha_solver: 'capsolver', captcha_api_key: '...' }))
 await browser.goto('https://www.google.com/recaptcha/api2/demo');
 const captcha = await browser.solveCaptcha();
 console.log('CAPTCHA Solved:', captcha.solved, 'via', captcha.method);
@@ -395,7 +415,8 @@ import { Oya } from '@oya-ai/browser';
 
 const oya = new Oya();
 
-// Run on any underlying provider: browserbase, steel, anchor, browseruse, or oya-cloud
+// Run on any underlying provider: browserbase, steel, anchor, browseruse, or oya-cloud.
+// A vendor needs its key on your Oya key first, e.g. oya.config.set({ browserbase_api_key: '...' }).
 await using browser = await oya.browser.start({ provider: 'browserbase' });
 
 // Connect Playwright directly over Oya's gateway
@@ -459,7 +480,7 @@ const oya = new Oya({
 | `ask(prompt, { data?, secrets? }?)`             | `Promise<string>`                            | Natural-language AI driving using key's configured model |
 | `extract(prompt, schema, { data?, secrets? }?)` | `Promise<T>`                                 | The same, answered as data in the shape of a JSON schema |
 | `analyze()`                                     | `Promise<Analysis>`                          | Returns markdown representation and numbered elements    |
-| `elements()`                                    | `Promise<Element[]>`                         | Returns only visible interactable elements               |
+| `elements()`                                    | `Promise<Element[]>`                         | Only the elements in view now; scroll to reach the rest  |
 | `click(elementId)`                              | `Promise<void>`                              | Click element by numeric ID from `analyze()`             |
 | `type(elementId, text)`                         | `Promise<{ suggestions_visible?: boolean }>` | Type text into specified element                         |
 | `pressKey(key)`                                 | `Promise<void>`                              | Dispatch keyboard key event (e.g. `'Enter'`)             |

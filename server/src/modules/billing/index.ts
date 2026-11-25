@@ -11,6 +11,10 @@ import { UsageReporter } from './reporter.ts';
 import { Invoices } from './invoices.ts';
 import { REPORT_INTERVAL_MS, BILLING_PATH } from './constants.ts';
 import * as repository from './repository.ts';
+import * as licenseRepository from './license-repository.ts';
+import { LicenseSales } from './licenses.ts';
+import { mint } from '../../platform/license/index.ts';
+import { sealText, openText } from '../../platform/secrets.ts';
 
 export { hosted, stripeKey } from './config.ts';
 export { llmCost } from './cost.ts';
@@ -19,7 +23,8 @@ export { Entitlements, type EntitlementDeps } from './entitlements.ts';
 export { Subscriptions } from './subscriptions.ts';
 export { UsageReporter } from './reporter.ts';
 export { Invoices } from './invoices.ts';
-export { PLANS, SALES_EMAIL } from './constants.ts';
+export { LicenseSales } from './licenses.ts';
+export { PLANS } from './constants.ts';
 export { billingRoutes, billingWebhook } from './routes.ts';
 
 /** What the server hands billing: who owns what, what runs, and the console's address. */
@@ -28,17 +33,22 @@ export type BillingWiring = Omit<EntitlementDeps, 'find' | 'usageSince' | 'upgra
   consoleUrl(): string;
 };
 
-/** Builds billing's three parts over the subscriptions table and Stripe. */
+/** Builds billing's parts over the subscriptions and licenses tables and Stripe. */
 export function createBilling(wiring: BillingWiring, fetchFn: typeof fetch = fetch) {
   const back = () => `${wiring.consoleUrl()}${BILLING_PATH}`;
   const shared = { ...repository, now: () => Date.now(), stripe: stripeClient(stripeKey, fetchFn) };
-  return {
-    entitlements: new Entitlements({ ...wiring, ...shared, upgradeUrl: back }),
-    subscriptions: new Subscriptions({ ...shared, returnUrl: back }),
-    reporter: new UsageReporter(shared),
-    invoices: new Invoices(shared),
-  };
+  const subscriptions = new Subscriptions({ ...shared, returnUrl: back });
+  const entitlements = new Entitlements({ ...wiring, ...shared, upgradeUrl: back });
+  const licenses = licenseSales(shared, subscriptions, back);
+  return { entitlements, subscriptions, reporter: new UsageReporter(shared), invoices: new Invoices(shared), licenses };
 }
+
+/** Self-hosted license sales, opening Checkout the way plans do. */
+const licenseSales = (shared, subscriptions: Subscriptions, back: () => string) =>
+  new LicenseSales({
+    ...{ ...licenseRepository, stripe: shared.stripe, now: shared.now, returnUrl: back, mint },
+    ...{ openCheckout: (params) => subscriptions.openCheckout(params), seal: sealText, open: openText },
+  });
 
 /** Billing as the container provides it. */
 export type Billing = ReturnType<typeof createBilling>;

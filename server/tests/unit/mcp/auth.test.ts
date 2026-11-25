@@ -26,6 +26,18 @@ describe('authorize', () => {
     assert.deepEqual((await check('oya_operator')).caller, { key: 'k-op' });
   });
 
+  it('gives a chat connector its credential as a seat of its own', async () => {
+    const connector = { key: 'k-op', role: 'operator', credentialId: 'cred-1', connector: true };
+    stubControl({ authenticate: async () => connector });
+    assert.deepEqual((await check('oya_connector')).caller, { key: 'k-op', seat: 'cred-1' });
+  });
+
+  it('gives a service credential no seat: it keeps the pool', async () => {
+    const service = { key: 'k-op', role: 'operator', credentialId: 'cred-2', connector: false };
+    stubControl({ authenticate: async () => service });
+    assert.deepEqual((await check('oya_service')).caller, { key: 'k-op' });
+  });
+
   it('refuses a viewer with 403', async () => {
     stubControl({ authenticate: async () => ({ key: 'k-view', role: 'viewer' }) });
     const { caller, res } = await check('oya_viewer');
@@ -35,7 +47,7 @@ describe('authorize', () => {
 
   it('confines a share link to its own browser, never the pool', async () => {
     stubControl({ authenticate: async () => ({ key: 'k-op', role: 'operator', sessionId: 'b-1' }) });
-    assert.deepEqual((await check('oya_share', { browserId: 'b-1' })).caller, { key: 'k-op' });
+    assert.deepEqual((await check('oya_share', { browserId: 'b-1' })).caller, { key: 'k-op', share: true });
     for (const params of [{}, { browserId: 'b-2' }]) {
       const { caller, res } = await check('oya_share', params);
       assert.equal(caller, null);

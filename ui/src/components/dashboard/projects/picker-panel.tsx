@@ -72,7 +72,7 @@ export default function PickerPanel({ c }: PanelProps) {
       aria-label={titleOf(c.ui)}
       aria-busy={busy}
       onKeyDown={(e) => onPickerKeyDown(c, e)}
-      className="fixed left-3 right-3 top-[58px] z-50 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-xl border border-border bg-bg-card shadow-[0_16px_48px_-12px_rgba(0,0,0,0.45)] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[360px]"
+      className="fixed left-3 right-3 top-[58px] z-50 max-h-[calc(100dvh-76px)] overflow-y-auto rounded-xl border border-border bg-bg-card shadow-elevated sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[360px]"
     >
       <Heading c={c} />
       <Alert c={c} />

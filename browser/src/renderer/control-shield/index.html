@@ -7,14 +7,22 @@
 <script src="../first-paint.js"></script>
 <link rel="stylesheet" href="../shell-motion.css" />
 <style>
-  /* Oya's own tokens (ui/src/app/globals.css), and one light the whole show is lit by: green into mint, white and a cold cyan. */
+  /*
+   * Oya's five colours (core/tokens.css), which this page cannot load, and the one light the whole
+   * show is lit by: lime into pale lime and paper. Everything else here is a mix of these.
+   */
   :root {
-    --oya: #39ed35;
-    --mint: #a6ffc9;
-    --cyan: #5ef3ff;
-    --paper: #f4f3ef;
-    --ink: #0c0c0a;
-    --light: #39ed35, #a6ffc9, #ffffff, #5ef3ff, #39ed35;
+    --ink: #1a1a1a;
+    --paper: #f7f5f0;
+    --lime: #cdf01e;
+    --amber: #f5b14c;
+    --oya: var(--lime);
+    --mint: color-mix(in srgb, var(--lime) 45%, var(--paper));
+    --cyan: color-mix(in srgb, var(--lime) 25%, var(--paper));
+    --raised: color-mix(in srgb, var(--paper) 10%, var(--ink));
+    --muted: color-mix(in srgb, var(--paper) 62%, var(--ink));
+    --soft: color-mix(in srgb, var(--paper) 75%, var(--ink));
+    --light: var(--lime), var(--mint), var(--paper), var(--cyan), var(--lime);
     /* A soft spring, sampled: it settles without a bounce you can see. */
     --spring: linear(
       0,
@@ -49,7 +57,7 @@
   }
   /* Watch-only, said quietly: a hairline, nothing more. */
   body {
-    box-shadow: inset 0 0 0 1px #39ed3521;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--oya) 13%, transparent);
     box-sizing: border-box;
   }
 
@@ -148,8 +156,8 @@
     width: 34px;
     height: 34px;
     pointer-events: none;
-    border: 0 solid #c9ffdccc;
-    filter: drop-shadow(0 0 5px #39ed3599);
+    border: 0 solid color-mix(in srgb, var(--mint) 80%, transparent);
+    filter: drop-shadow(0 0 5px color-mix(in srgb, var(--oya) 60%, transparent));
     opacity: 0;
     transform: translate(var(--hx), var(--hy)) scale(1.2);
     transition:
@@ -209,7 +217,13 @@
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, transparent 10%, #5ef3ff0d 50%, #39ed3524 88%, #a6ffc94d);
+    background: linear-gradient(
+      180deg,
+      transparent 10%,
+      color-mix(in srgb, var(--cyan) 5%, transparent) 50%,
+      color-mix(in srgb, var(--oya) 14%, transparent) 88%,
+      color-mix(in srgb, var(--mint) 30%, transparent)
+    );
   }
   /* The line: a white hairline inside a wide, soft mint glow, brightest in the middle. */
   .beam::after {
@@ -219,11 +233,11 @@
     right: 0;
     bottom: 0;
     height: 2px;
-    background: linear-gradient(90deg, transparent, #a6ffc9 12%, #ffffff 50%, #a6ffc9 88%, transparent);
+    background: linear-gradient(90deg, transparent, var(--mint) 12%, var(--paper) 50%, var(--mint) 88%, transparent);
     box-shadow:
-      0 0 6px 1px #ffffffcc,
-      0 0 22px 4px #39ed35a6,
-      0 0 80px 16px #5ef3ff40;
+      0 0 6px 1px color-mix(in srgb, var(--paper) 80%, transparent),
+      0 0 22px 4px color-mix(in srgb, var(--oya) 65%, transparent),
+      0 0 80px 16px color-mix(in srgb, var(--cyan) 25%, transparent);
   }
   .beam i {
     position: absolute;
@@ -231,7 +245,8 @@
     right: 0;
     top: 0;
     height: 100vh;
-    background: radial-gradient(circle, #c9ffdc66 0.7px, transparent 1.2px) 0 0 / 12px 12px;
+    background: radial-gradient(circle, color-mix(in srgb, var(--mint) 40%, transparent) 0.7px, transparent 1.2px) 0 0 /
+      12px 12px;
     will-change: transform;
   }
   /*
@@ -344,14 +359,14 @@
   .box.quiet b {
     display: none;
   }
-  /* The rim: a one-pixel ring of light, white where the light strikes it and cyan where it leaves. */
+  /* The rim: a one-pixel ring of light, paper where the light strikes it and pale lime where it leaves. */
   .box::before {
     content: '';
     position: absolute;
     inset: -3px;
     padding: 1px;
     border-radius: 8px;
-    background: linear-gradient(135deg, #ffffff, var(--c) 30%, var(--c) 70%, var(--cyan));
+    background: linear-gradient(135deg, var(--paper), var(--c) 30%, var(--c) 70%, var(--cyan));
     mask:
       linear-gradient(#000 0 0) content-box exclude,
       linear-gradient(#000 0 0);
@@ -410,12 +425,12 @@
     padding: 0 4px;
     box-sizing: border-box;
     border-radius: 4px;
-    background: #070b09e6;
+    background: color-mix(in srgb, var(--ink) 90%, transparent);
     box-shadow:
       inset 0 0 0 0.5px color-mix(in srgb, var(--c) 80%, transparent),
       0 0 10px color-mix(in srgb, var(--c) 40%, transparent),
-      0 2px 6px #00000059;
-    color: #e8fff0;
+      0 2px 6px color-mix(in srgb, var(--ink) 35%, transparent);
+    color: var(--paper);
     font: 600 10px/16px var(--mono);
     font-variant-numeric: tabular-nums;
     text-align: center;
@@ -431,14 +446,14 @@
   .box.disabled::before {
     background: none;
     mask: none;
-    border: 1px dashed #a3afb8;
+    border: 1px dashed var(--muted);
   }
   .box.disabled::after {
     box-shadow: none;
   }
   .box.disabled b {
-    color: #c4cdd3;
-    box-shadow: inset 0 0 0 0.5px #a3afb8;
+    color: var(--soft);
+    box-shadow: inset 0 0 0 0.5px var(--muted);
   }
   /* The number rises into place, rather than popping. */
   @keyframes tag {
@@ -488,7 +503,7 @@
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: #ffffff;
+    background: var(--paper);
     box-shadow:
       0 0 5px 2px var(--c),
       0 0 16px 4px color-mix(in srgb, var(--c) 50%, transparent);
@@ -582,13 +597,17 @@
     max-width: min(440px, 62vw);
     padding: 9px 18px 11px 16px;
     border-radius: 16px;
-    background: linear-gradient(180deg, #131715f7, #090c0afc);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--raised) 97%, transparent),
+      color-mix(in srgb, var(--ink) 99%, transparent)
+    );
     backdrop-filter: blur(24px) saturate(1.6);
     box-shadow:
-      inset 0 1px 0 #ffffff1f,
-      0 8px 24px #00000066,
-      0 2px 6px #00000040,
-      0 0 18px #39ed3524;
+      inset 0 1px 0 color-mix(in srgb, var(--paper) 12%, transparent),
+      0 8px 24px color-mix(in srgb, var(--ink) 40%, transparent),
+      0 2px 6px color-mix(in srgb, var(--ink) 25%, transparent),
+      0 0 18px color-mix(in srgb, var(--oya) 14%, transparent);
     opacity: 0;
     filter: blur(8px);
     transform: translateX(14px) scale(0.96);
@@ -605,7 +624,12 @@
     inset: 0;
     padding: 1px;
     border-radius: inherit;
-    background: linear-gradient(90deg, #ffffff14, #a6ffc94d 65%, #39ed35bf);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--paper) 8%, transparent),
+      color-mix(in srgb, var(--mint) 30%, transparent) 65%,
+      color-mix(in srgb, var(--oya) 75%, transparent)
+    );
     mask:
       linear-gradient(#000 0 0) content-box exclude,
       linear-gradient(#000 0 0);
@@ -621,7 +645,7 @@
     align-items: center;
     gap: 7px;
     margin-bottom: 3px;
-    color: #a6ffc9;
+    color: var(--mint);
     font: 600 9.5px/12px var(--mono);
     letter-spacing: 0.22em;
     text-transform: uppercase;
@@ -665,12 +689,12 @@
     overflow: hidden;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    color: #f7f7f2;
+    color: var(--paper);
     font-size: 15.5px;
     font-weight: 500;
     line-height: 21px;
     letter-spacing: -0.01em;
-    text-shadow: 0 1px 2px #00000066;
+    text-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 40%, transparent);
   }
   .words .w {
     display: inline-block;
@@ -764,10 +788,10 @@
     position: absolute;
     inset: 2px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 28%, #262b28, #0f1211 55%, #070908);
+    background: radial-gradient(circle at 35% 28%, var(--raised), var(--ink) 55%, var(--ink));
     box-shadow:
-      inset 0 1px 0 #ffffff2e,
-      inset 0 -8px 14px #000000a6;
+      inset 0 1px 0 color-mix(in srgb, var(--paper) 18%, transparent),
+      inset 0 -8px 14px color-mix(in srgb, var(--ink) 65%, transparent);
     overflow: hidden;
   }
   /* The glass's highlight, over everything inside it. */
@@ -777,8 +801,8 @@
     inset: 0;
     border-radius: 50%;
     background:
-      radial-gradient(ellipse 70% 42% at 50% 6%, #ffffff40, transparent 70%),
-      radial-gradient(ellipse 60% 30% at 50% 100%, #39ed3526, transparent 70%);
+      radial-gradient(ellipse 70% 42% at 50% 6%, color-mix(in srgb, var(--paper) 25%, transparent), transparent 70%),
+      radial-gradient(ellipse 60% 30% at 50% 100%, color-mix(in srgb, var(--oya) 15%, transparent), transparent 70%);
   }
   /* The core: two soft lights, green and cyan, circling behind the mark like something alive in the glass. */
   .orb .core {
@@ -802,12 +826,12 @@
   .orb .core i:nth-child(1) {
     left: 2%;
     top: 4%;
-    background: #39ed35;
+    background: var(--oya);
   }
   .orb .core i:nth-child(2) {
     right: 2%;
     bottom: 4%;
-    background: #5ef3ff;
+    background: var(--cyan);
   }
   .talking .orb .core i {
     opacity: 0.5;
@@ -817,7 +841,7 @@
     position: absolute;
     inset: -8px;
     border-radius: 50%;
-    border: 1px solid #a6ffc970;
+    border: 1px solid color-mix(in srgb, var(--mint) 44%, transparent);
     opacity: 0;
     transform: rotateX(74deg);
     animation: orbit-3d 7s linear infinite paused;
@@ -831,10 +855,10 @@
     height: 5px;
     margin-left: -2.5px;
     border-radius: 50%;
-    background: #ffffff;
+    background: var(--paper);
     box-shadow:
-      0 0 6px 2px #a6ffc9,
-      0 0 14px 3px #39ed3580;
+      0 0 6px 2px var(--mint),
+      0 0 14px 3px color-mix(in srgb, var(--oya) 50%, transparent);
   }
   .talking .orb .orbit {
     opacity: 1;
@@ -854,8 +878,8 @@
     inset: 0;
     border-radius: 50%;
     box-shadow:
-      0 0 0 1.5px #a6ffc9,
-      0 0 18px #39ed35a6;
+      0 0 0 1.5px var(--mint),
+      0 0 18px color-mix(in srgb, var(--oya) 65%, transparent);
     opacity: 0;
   }
   .orb .pulse.go {
@@ -883,7 +907,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    filter: drop-shadow(0 0 3px #00000099);
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--ink) 60%, transparent));
   }
   .mark .back {
     transform-origin: 47px 47px;
@@ -938,9 +962,9 @@
         <!-- The Oya mark: the green ring behind, offset, and the white ring in front. -->
         <svg class="mark" viewBox="0 0 100 100">
           <g class="back">
-            <circle cx="53" cy="53" r="19" fill="none" stroke="#39ed35" stroke-width="9.5" />
+            <circle cx="53" cy="53" r="19" fill="none" style="stroke: var(--oya)" stroke-width="9.5" />
           </g>
-          <circle cx="47" cy="47" r="19" fill="none" stroke="#f4f3ef" stroke-width="9.5" />
+          <circle cx="47" cy="47" r="19" fill="none" style="stroke: var(--paper)" stroke-width="9.5" />
         </svg>
       </div>
       <div class="pulse"></div>

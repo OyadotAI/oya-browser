@@ -6,6 +6,7 @@ import { Router } from 'express';
 import {
   userAuthMiddleware,
   registerApiKey,
+  claimAgentApiKey,
   keyExpiry,
   listApiKeys,
   deleteApiKey,
@@ -41,6 +42,12 @@ mfaRoutes(router);
  * Without this, importing "a" was a valid, publicly guessable admin key.
  */
 const IMPORTABLE_KEY = /^[A-Za-z0-9_-]{32,128}$/;
+
+/** What a caller is told when a key is not that shape. */
+const KEY_SHAPE = 'key must be 32-128 characters of A-Z a-z 0-9 _ -';
+
+/** Whether `key` is a string in the shape an existing key may be registered in. */
+const importable = (key: unknown): key is string => typeof key === 'string' && IMPORTABLE_KEY.test(key);
 
 /** Answers 400 with `error`. */
 const badRequest = (res, error) => res.status(Status.BAD_REQUEST).json({ error });
@@ -262,13 +269,27 @@ async function mintKey(req, res, expiresAt: string | null) {
  */
 router.post('/auth/keys/import', userAuthMiddleware, async (req, res) => {
   const { key, label } = req.body;
-  if (!key || typeof key !== 'string' || !IMPORTABLE_KEY.test(key))
-    return badRequest(res, 'key must be 32-128 characters of A-Z a-z 0-9 _ -');
+  if (!importable(key)) return badRequest(res, KEY_SHAPE);
   const expiresAt = keyExpiry(req.body.expiresInDays);
   const claimedFromAgent = await registerApiKey(key, req.user.id, label || 'Imported', expiresAt);
   auditKey(req, 'key.import', keyDigest(key));
   if (claimedFromAgent) track.agentKeyClaimed(req.user);
   res.json({ ok: true, claimed_from_agent: Boolean(claimedFromAgent), ...keyInfo(key, label || 'Imported') });
+});
+
+/**
+ * POST /auth/keys/claim, what an agent's claim link does once the person
+ * confirms: the agent's own unclaimed key joins the signed-in user's account.
+ * Apart from /auth/keys/import on purpose. Import takes any key a person
+ * pastes; a link someone else wrote must not be able to plant a key they hold.
+ */
+router.post('/auth/keys/claim', userAuthMiddleware, async (req, res) => {
+  const { key } = req.body;
+  if (!importable(key)) return badRequest(res, KEY_SHAPE);
+  const adopted = await claimAgentApiKey(key, req.user.id);
+  auditKey(req, 'key.import', keyDigest(key));
+  if (adopted) track.agentKeyClaimed(req.user);
+  res.json({ ok: true, claimed_from_agent: true, ...keyInfo(key, 'Agent') });
 });
 
 /**

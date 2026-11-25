@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { PlaybooksViewModel } from '../../../../../../src/renderer/features/playbooks/view-models/playbooks-view-model.ts';
 import { PanelViewModel } from '../../../../../../src/renderer/app/panel/panel-view-model.ts';
 import { fakeBridge, manualFrames } from '../../../support/bridge.ts';
+import { RUN_POLL_MS } from '../../../../../../src/renderer/features/playbooks/model/constants.ts';
 const item = { name: 'lookup', variables: ['member'], defaults: { member: '123' }, steps: 2, code: 'navigate();' };
 /** A library with a fake main process and owned subscriptions. */
 function fixture(t: any, playbooks: (command: any) => unknown) {
@@ -86,4 +87,20 @@ it('does not restore a signed-out project from an old in-flight response', async
   resolve({ playbooks: [item] });
   await reading;
   assert.deepEqual(vm.state.items, []);
+});
+
+it('knows which playbook its active run belongs to, and forgets it once the run ends', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let status = 'running';
+  const { vm } = fixture(t, (command: any) =>
+    command.action === 'list' ? { playbooks: [item] } : { id: 'r1', status },
+  );
+  await vm.refresh();
+  vm.select('lookup');
+  await vm.run();
+  assert.deepEqual(vm.active, { name: 'lookup', status: 'running' });
+  status = 'succeeded';
+  t.mock.timers.tick(RUN_POLL_MS);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(vm.active, null);
 });

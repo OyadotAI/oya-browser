@@ -60,7 +60,7 @@ export default function Explorer({ name, active, dirty, variables, onOpen }: Pro
                 role="treeitem"
                 aria-selected={selected}
                 onClick={() => onOpen(id)}
-                className={`flex h-7 w-full items-center gap-2 pl-6 pr-3 text-left font-mono text-[12px] ${selected ? 'bg-accent/10 text-text' : 'text-text-secondary hover:bg-text/5'}`}
+                className={`flex h-7 w-full items-center gap-2 pl-6 pr-3 text-left font-mono text-[12px] ${selected ? 'bg-accent-soft text-text' : 'text-text-secondary hover:bg-text/5'}`}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden />
                 <span className="flex-1 truncate">{FILES[id].name}</span>

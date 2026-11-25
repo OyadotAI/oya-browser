@@ -3,6 +3,7 @@
  * title with its effective date and lead, numbered sections, and the footer.
  * It reads in the trust center's column style.
  */
+import { Reveal } from '@/components/ui/reveal';
 import type { ReactNode } from 'react';
 import styles from '../page.module.css';
 import trust from '../trust/trust.module.css';
@@ -56,12 +57,14 @@ function Contents({ sections }: Pick<LegalPageProps, 'sections'>) {
 export function LegalPage({ title, effective, lead, sections }: LegalPageProps) {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={trust.main}>
-          <h1>{title}</h1>
-          <p className={legal.effective}>Effective {effective}</p>
-          <div className={trust.lead}>{lead}</div>
+        <main id="top" tabIndex={-1} className={trust.main}>
+          <Reveal preset="public">
+            <h1>{title}</h1>
+            <p className={legal.effective}>Effective {effective}</p>
+            <div className={trust.lead}>{lead}</div>
+          </Reveal>
           <Contents sections={sections} />
           {sections.map((s, i) => (
             <section key={s.heading} id={anchor(s.heading)} className={`${trust.section} ${legal.section}`}>
@@ -72,8 +75,8 @@ export function LegalPage({ title, effective, lead, sections }: LegalPageProps) 
             </section>
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

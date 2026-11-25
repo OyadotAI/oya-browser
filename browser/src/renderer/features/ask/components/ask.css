@@ -22,7 +22,7 @@
 .chat-msg {
   max-width: 85%;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: 0;
   font-size: 12px;
   line-height: 1.5;
   word-break: break-word;
@@ -41,28 +41,24 @@
 }
 .chat-msg.user {
   align-self: flex-end;
-  background: var(--accent);
-  color: var(--surface);
+  background: var(--accent-fill);
+  color: var(--on-accent);
   border-bottom-right-radius: 3px;
 }
 .chat-msg.assistant {
   align-self: flex-start;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  color: #27272a;
   border-bottom-left-radius: 3px;
 }
 .chat-msg.error {
   color: var(--danger);
-  background: #fef2f2;
-  border-color: #fecaca;
 }
 .chat-msg code {
   font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 12px;
-  background: rgba(0, 0, 0, 0.06);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 .chat-msg pre {
   background: var(--muted-surface);
@@ -90,7 +86,7 @@
   right: 4px;
   background: var(--hover);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--secondary);
   font-size: 12px;
   padding: 2px 6px;
@@ -117,9 +113,9 @@
   font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent-soft);
-  color: var(--accent-hover);
+  color: var(--accent);
   font-family: ui-monospace, monospace;
 }
 .chat-thinking {
@@ -128,7 +124,7 @@
   padding: 8px 12px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 0;
   border-bottom-left-radius: 3px;
   font-size: 12px;
   color: var(--secondary);
@@ -177,7 +173,7 @@
   flex: 1;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 8px 10px;
   color: var(--text);
   font-size: 12px;
@@ -192,10 +188,10 @@
 .chat-send {
   width: 34px;
   height: 34px;
-  background: var(--accent);
+  background: var(--accent-fill);
   border: none;
-  border-radius: 8px;
-  color: var(--surface);
+  border-radius: 0;
+  color: var(--on-accent);
   font-size: 13px;
   cursor: pointer;
   display: flex;
@@ -251,7 +247,7 @@
   resize: vertical;
   min-height: 64px;
   max-height: 180px;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px;
   font-size: 13px;
   background: var(--muted-surface);
@@ -286,7 +282,7 @@
   width: 40px;
   height: 40px;
   margin-bottom: 14px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -327,7 +323,7 @@
 .chat-msg.error {
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--danger-soft);
   color: var(--danger);
 }
@@ -374,14 +370,14 @@
 }
 .chat-msg code {
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--muted-surface);
   font: 12px var(--mono);
 }
 .chat-msg pre {
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--muted-surface);
   white-space: pre;
   overflow-x: auto;
@@ -462,9 +458,9 @@
   gap: 4px;
   padding: 8px 6px 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
-  box-shadow: 0 1px 2px #0000000d;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-ink) 5%, transparent);
   transition:
     border-color 140ms ease,
     box-shadow 140ms ease;
@@ -491,7 +487,7 @@
 .chat-send {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: 0;
 }
 .chat-send svg {
   width: 15px;
@@ -557,7 +553,7 @@
   gap: 2px;
   max-width: 100%;
   padding: 2px 2px 2px 9px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--muted-surface);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
   font-size: 12px;
@@ -573,7 +569,7 @@
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   cursor: pointer;
@@ -622,13 +618,22 @@
 .chat-empty h2 {
   margin: 0 0 6px;
   font-family: var(--font-display);
+  text-transform: uppercase;
   font-size: 19px;
   font-weight: 400;
   letter-spacing: -0.005em;
 }
+/* The lit word, as on the start page: ink on a lime block on paper, lime text on charcoal. */
 .chat-empty h2 em {
-  color: var(--accent);
+  padding: 0 0.14em;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   font-style: normal;
+}
+:root[data-theme='dark'] .chat-empty h2 em {
+  padding: 0;
+  background: none;
+  color: var(--accent);
 }
 .chat-empty p {
   max-width: 260px;
@@ -646,7 +651,7 @@
 .chat-examples button {
   padding: 6px 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--secondary);
   font: inherit;
@@ -670,7 +675,7 @@
   align-self: stretch;
   max-width: none;
   padding: 10px 14px 12px;
-  border-radius: 14px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 5%, transparent);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
   font-size: var(--text-lg);
@@ -695,7 +700,7 @@
   gap: 7px;
   margin-bottom: 8px;
   padding: 3px 10px 3px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   font: 600 10px/16px var(--mono);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -712,13 +717,13 @@
   color: var(--accent);
 }
 .chat-verdict.failed {
-  background: color-mix(in srgb, var(--amber) 16%, transparent);
-  color: color-mix(in srgb, var(--amber) 80%, var(--text));
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .chat-msg.error {
   padding: 10px 12px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   color: var(--danger);
 }
@@ -759,7 +764,7 @@
 .run-plan {
   margin-bottom: 10px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 .run-plan li {
@@ -861,7 +866,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--oya);
+  background: var(--accent);
   animation: agent-dot 1.2s var(--glide) infinite;
 }
 .chat-dots span:nth-child(2) {
@@ -878,7 +883,7 @@
   margin: 0 0 4px -2px;
   padding: 2px 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--secondary);
   font: 11px var(--mono);
@@ -910,7 +915,7 @@
 }
 .chat-composer {
   border: 0;
-  border-radius: 16px;
+  border-radius: 0;
   background: var(--glass-strong);
   box-shadow: var(--glass-edge), var(--shadow-sm);
   transition: box-shadow var(--t-base) var(--ease);
@@ -927,8 +932,9 @@
 .chat-send {
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
   transition: background-color var(--t-fast) var(--ease);
 }
 .chat-send:hover {
@@ -978,8 +984,8 @@
   position: relative;
   gap: 8px;
   padding: 18px 16px 16px;
-  border-color: color-mix(in srgb, var(--logo-green) 35%, var(--border));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--logo-green) 7%, var(--surface)), var(--surface) 60%);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-fill) 7%, var(--surface)), var(--surface) 60%);
 }
 .trial-card-mark {
   display: grid;
@@ -987,8 +993,8 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  color: var(--logo-green);
-  background: color-mix(in srgb, var(--logo-green) 14%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
 }
 .trial-card-perks {
   display: grid;
@@ -1001,7 +1007,7 @@
 .trial-card-perks li::before {
   content: '✓';
   margin-right: 8px;
-  color: var(--logo-green);
+  color: var(--accent);
   font-weight: 650;
 }
 /* A reply where the agent stopped to ask: a normal reply under a "Needs your answer" pill in Oya's green,

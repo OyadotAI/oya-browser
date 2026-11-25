@@ -3,10 +3,33 @@
  * explicit, remembered per profile and site, and safe across asynchronous
  * prompts; a remembered grant never bypasses the gate.
  */
-import { it } from 'node:test';
+import { afterEach, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fixture, details } from '../../support/media-fixture.ts';
+import { MEDIA_SETTINGS_OPEN_MS } from '../../../../src/main/app/constants.ts';
+
+afterEach(() => mock.timers.reset());
+it('a stalled Settings opener cannot expire a later valid media request', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(),
+    entered = Promise.withResolvers<void>();
+  f.state.os = false;
+  f.deps.electron.shell.openExternal = () => {
+    entered.resolve();
+    return new Promise(() => {});
+  };
+  const first = f.service.request(f.contents as any, details as any);
+  await entered.promise;
+  f.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false });
+  f.state.os = true;
+  const second = f.service.request(f.contents as any, { ...details, mediaTypes: ['video'] } as any);
+  mock.timers.tick(MEDIA_SETTINGS_OPEN_MS);
+  assert.equal(await first, false);
+  assert.equal(await second, true);
+  assert.deepEqual(f.devices, ['microphone', 'camera']);
+  assert(!f.prompts.some((prompt) => prompt.message === 'Open System Settings manually'));
+});
 
 it('one denial settles a burst of identical device requests while a later retry asks again', async () => {
   const f = fixture();
@@ -29,6 +52,7 @@ it('queued device consent cannot capture a document or profile that replaced its
     (f) => (f.deps.persona.partitionName = () => 'persist:two'),
     (f) => (f.state.interactive = false),
     (f) => (f.state.destroyed = true),
+    (f) => ((f.contents as any).session = {}),
   ]) {
     const f = fixture();
     const pending = Promise.withResolvers<boolean>();
@@ -82,6 +106,67 @@ it('OS refusal keeps site consent without repeating Allow or reporting device ac
   assert.equal(await f.service.request(f.contents as any, details as any), true);
   assert.equal(f.check(), true);
   assert.equal(f.prompts.filter((p) => p.message === 'Allow microphone?').length, 1);
+});
+it('microphone and camera OS denials receive independent device-specific recovery', async () => {
+  const f = fixture();
+  f.state.os = false;
+  const opened: string[] = [];
+  (f.deps.electron as any).shell = {
+    openExternal: async (url) => {
+      opened.push(url);
+    },
+  };
+  await f.service.request(f.contents as any, details as any);
+  await f.service.request(f.contents as any, { ...details, mediaTypes: ['video'] } as any);
+  assert(f.prompts.some((prompt) => prompt.message === 'Microphone access is blocked by macOS.'));
+  assert(f.prompts.some((prompt) => prompt.message === 'Camera access is blocked by macOS.'));
+  assert.deepEqual(opened, [
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
+  ]);
+});
+it('restricted device access does not promise that opening Settings will grant permission', async () => {
+  const f = fixture();
+  f.state.os = false;
+  f.deps.electron.systemPreferences.getMediaAccessStatus = () => 'restricted';
+  await f.service.request(f.contents as any, details as any);
+  assert.match(f.prompts.at(-1).detail, /managed by your organization/);
+  assert.deepEqual(f.prompts.at(-1).buttons, ['OK']);
+});
+it('a failed Settings launch keeps the device-specific manual recovery instructions', async () => {
+  const f = fixture();
+  f.state.os = false;
+  (f.deps.electron as any).shell = {
+    openExternal: async () => {
+      throw Error('OS opener failed');
+    },
+  };
+  assert.equal(await f.service.request(f.contents as any, details as any), false);
+  assert.match(f.prompts.at(-1).detail, /open.*manually/i);
+  assert.match(f.prompts.at(-1).detail, /Microphone/);
+});
+it('dismissing OS recovery never opens Settings or retries capture automatically', async () => {
+  const f = fixture(),
+    opened: string[] = [];
+  f.state.os = false;
+  f.deps.electron.shell.openExternal = async (url) => {
+    opened.push(url);
+  };
+  f.deps.electron.dialog.showMessageBox = async (options) => {
+    f.prompts.push(options);
+    return { response: options.message.includes('blocked') ? 0 : 1 };
+  };
+  assert.equal(await f.service.request(f.contents as any, details as any), false);
+  assert.deepEqual(opened, []);
+  assert.deepEqual(f.devices, ['microphone']);
+});
+it('an unknown OS request failure is not described as a confirmed permission denial', async () => {
+  const f = fixture();
+  f.deps.electron.systemPreferences.askForMediaAccess = async () => {
+    throw Error('OS failure');
+  };
+  assert.equal(await f.service.request(f.contents as any, details as any), false);
+  assert.match(f.prompts.at(-1).message, /Couldn’t request microphone access/);
 });
 it('microphone and camera consent accumulate separately on non-macOS platforms', async () => {
   const f = fixture('win32');

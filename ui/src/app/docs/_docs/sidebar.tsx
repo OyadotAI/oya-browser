@@ -10,7 +10,6 @@ import {
   Search,
   X,
   ArrowLeft,
-  ExternalLink,
   ChevronRight,
   BookOpen,
   Terminal,
@@ -28,7 +27,7 @@ import {
 import { useDocsNav } from './nav';
 import type { DocsSearch } from './use-docs-search';
 
-/** A sidebar link: [section id, label], or the Swagger UI link. */
+/** A sidebar link: [section id, label], or the link to the interactive API reference. */
 type NavEntry = [string, string] | 'swagger';
 
 /** A group of sidebar links. */
@@ -37,6 +36,8 @@ interface NavGroup {
   icon: typeof Layers;
   /** The group's heading. */
   label: string;
+  /** The part whose own page (/docs/<topic>) the heading links to; none for a part that has no page. */
+  topic?: string;
   /** Its links, in order. */
   links: NavEntry[];
 }
@@ -46,6 +47,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Rocket,
     label: 'Get started',
+    topic: 'getting-started',
     links: [
       ['quickstart', 'Quickstart'],
       ['create-key', 'API keys'],
@@ -56,6 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Repeat,
     label: 'Playbooks',
+    topic: 'playbooks',
     links: [
       ['playbooks', 'Record and replay'],
       ['playbook-variables', 'Variables and secrets'],
@@ -67,21 +70,27 @@ const NAV_GROUPS: NavGroup[] = [
       ['background-runs', 'Background runs'],
     ],
   },
-  { icon: Package, label: 'SDK', links: [['sdk', 'TypeScript SDK']] },
-  { icon: Terminal, label: 'CLI', links: [['cli', 'Commands']] },
+  { icon: Package, label: 'SDK', topic: 'sdk', links: [['sdk', 'TypeScript SDK']] },
+  { icon: Terminal, label: 'CLI', topic: 'cli', links: [['cli', 'Commands']] },
   {
     icon: BookOpen,
     label: 'MCP',
+    topic: 'mcp',
     links: [
       ['mcp-setup', 'Setup'],
+      ['desktop-app', 'Desktop app'],
       ['cursor', 'Cursor'],
-      ['claude-desktop', 'Claude Desktop'],
       ['claude-code', 'Claude Code'],
+      ['codex', 'Codex'],
+      ['claude-ai', 'claude.ai and Claude Desktop'],
+      ['chatgpt', 'ChatGPT'],
+      ['try-it', 'Try it'],
     ],
   },
   {
     icon: Wrench,
     label: 'MCP tools',
+    topic: 'mcp-tools',
     links: [
       ['analyze_page', 'analyze_page'],
       ['navigate', 'navigate'],
@@ -92,11 +101,13 @@ const NAV_GROUPS: NavGroup[] = [
       ['scroll', 'scroll'],
       ['tabs', 'Tab management'],
       ['wait', 'wait'],
+      ['more-tools', 'More tools'],
     ],
   },
   {
     icon: Users,
     label: 'Identity',
+    topic: 'identity',
     links: [
       ['personas', 'Personas'],
       ['rotation', 'Rotation'],
@@ -107,6 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Shield,
     label: 'Stealth',
+    topic: 'anonymity',
     links: [
       ['anonymity', 'Overview'],
       ['fingerprint', 'Fingerprint Spoofing'],
@@ -118,6 +130,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Server,
     label: 'Self-hosting',
+    topic: 'self-hosting',
     links: [
       ['self-hosting', 'Install'],
       ['self-hosting-connect', 'Point your code at it'],
@@ -137,6 +150,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Globe,
     label: 'Console',
+    topic: 'dashboard',
     links: [
       ['dashboard-overview', 'Overview'],
       ['onboarding', 'Onboarding'],
@@ -147,6 +161,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     icon: Code,
     label: 'API reference',
+    topic: 'api',
     links: [
       ['rest-api', 'REST API'],
       ['command-api', 'Command Reference'],
@@ -162,15 +177,27 @@ interface NavSectionProps extends PropsWithChildren {
   icon: ReactNode;
   /** The group's heading. */
   label: string;
+  /** The part whose own page the heading links to, when it has one. */
+  topic?: string;
 }
 
-/** A labeled group of links. */
-function NavSection({ icon, label, children }: NavSectionProps) {
+/**
+ * A labeled group of links. The heading links to the part's own page: the sidebar is on every
+ * view of /docs and outside <main>, so it gives the topic pages an inbound link without adding
+ * one to the Markdown, which is cut from <main>.
+ */
+function NavSection({ icon, label, topic, children }: NavSectionProps) {
   return (
     <div className="mb-5">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-dim mb-2">
         {icon}
-        {label}
+        {topic ? (
+          <Link href={`/docs/${topic}`} className="hover:text-text transition-colors">
+            {label}
+          </Link>
+        ) : (
+          label
+        )}
       </div>
       <div className="flex flex-col gap-0.5">{children}</div>
     </div>
@@ -194,7 +221,7 @@ function NavLink({ id, children }: NavLinkProps) {
         e.preventDefault();
         navigate(id);
       }}
-      className={`rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors ${active === id ? 'bg-accent/8 text-accent font-medium' : 'text-text-muted hover:bg-text/5 hover:text-text'}`}
+      className={`rounded-md px-2.5 py-1.5 text-[12.5px] transition-colors ${active === id ? 'bg-accent-soft text-accent font-medium' : 'text-text-muted hover:bg-text/5 hover:text-text'}`}
     >
       {children}
     </a>
@@ -204,19 +231,19 @@ function NavLink({ id, children }: NavLinkProps) {
 /** The link to the interactive API reference. */
 function SwaggerLink() {
   return (
-    <a
-      href="/swagger"
+    <Link
+      href="/docs/api/reference"
       className="flex items-center gap-1 text-[13px] text-text-muted hover:text-text py-1 transition-colors"
     >
-      Swagger UI <ExternalLink className="w-3 h-3" />
-    </a>
+      Interactive reference
+    </Link>
   );
 }
 
 /** Every group of section links. */
 function SectionLinks() {
-  return NAV_GROUPS.map(({ icon: Icon, label, links }) => (
-    <NavSection key={label} icon={<Icon className="w-3 h-3" />} label={label}>
+  return NAV_GROUPS.map(({ icon: Icon, label, topic, links }) => (
+    <NavSection key={label} icon={<Icon className="w-3 h-3" />} label={label} topic={topic}>
       {links.map((link) =>
         link === 'swagger' ? (
           <SwaggerLink key="swagger" />
@@ -252,7 +279,7 @@ function SearchBox({ search, inputRef }: SearchBoxProps) {
         type="text"
         placeholder="Search docs…"
         aria-label="Search documentation"
-        className="w-full bg-bg-sunken border border-border rounded-lg py-2.5 pl-8 pr-8 text-text text-sm outline-none placeholder:text-text-dim focus:border-indigo transition-colors"
+        className="w-full bg-bg-sunken border border-border rounded-lg py-2.5 pl-8 pr-8 text-text text-sm outline-none placeholder:text-text-dim focus:border-border-focus transition-colors"
         value={search.query}
         onChange={(e) => search.onInput(e.target.value)}
         onKeyDown={search.onKeyDown}
@@ -274,7 +301,7 @@ function SearchBox({ search, inputRef }: SearchBoxProps) {
 function SearchResults({ search }: SearchProps) {
   if (!search.results) return null;
   return (
-    <div className="mb-4 bg-bg-card border border-border rounded-xl overflow-hidden shadow-lg shadow-black/30">
+    <div className="mb-4 bg-bg-card border border-border rounded-xl overflow-hidden shadow-lg shadow-ink/30">
       {search.results.length === 0 ? (
         <div className="text-xs text-text-dim px-3 py-2">No results</div>
       ) : (

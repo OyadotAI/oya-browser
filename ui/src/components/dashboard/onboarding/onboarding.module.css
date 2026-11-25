@@ -106,10 +106,11 @@
   color: var(--primary);
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 12%, transparent);
 }
+/* A finished step is lime with ink on it, in both themes, edged in ink on paper. */
 .nodeDone {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: var(--primary-foreground);
+  border-color: var(--fill-edge);
+  background: var(--lime);
+  color: var(--ink);
   box-shadow: 0 0 18px color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
@@ -128,11 +129,11 @@
   position: relative;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
-  background: color-mix(in srgb, var(--card) 92%, black);
+  background: color-mix(in srgb, var(--card) 92%, var(--ink));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
     0 30px 80px -30px color-mix(in srgb, var(--primary) 35%, transparent),
-    0 24px 60px -20px rgba(0, 0, 0, 0.6);
+    0 24px 60px -20px color-mix(in srgb, var(--ink) 60%, transparent);
   overflow: hidden;
 }
 .screen {

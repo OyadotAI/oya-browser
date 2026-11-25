@@ -219,6 +219,124 @@ describe('PlaybookEditor', () => {
     expect(screen.getByText('Failed: Step 1 broke')).toBeTruthy();
     expect(screen.getByText('broke')).toBeTruthy();
   });
+  describe('the Visual view', () => {
+    /** Switches the definition tab to Visual. */
+    const toVisual = () => userEvent.click(screen.getByRole('radio', { name: 'Visual' }));
+    /** The first step's card. */
+    const firstCard = () => screen.getByRole('button', { name: /^1 · navigate/ });
+
+    it('switching to Visual and back leaves the text byte-identical', async () => {
+      serve();
+      await setup();
+      const before = definitionText();
+      await toVisual();
+      await userEvent.click(firstCard());
+      await userEvent.click(screen.getByRole('radio', { name: 'JSON' }));
+      expect(definitionText()).toBe(before);
+      expect(screen.queryAllByText('●')).toHaveLength(0);
+    });
+
+    it('draws Start, one card per step with what it does, and End', async () => {
+      serve();
+      await setup();
+      await toVisual();
+      const list = screen.getByRole('list', { name: 'Steps' });
+      expect(list.textContent).toContain('Start');
+      expect(firstCard().textContent).toContain('https://a.test/{{path}}');
+      expect(list.textContent).toContain('End');
+    });
+
+    it('a confirmed edit marks the file unsaved and Save sends it', async () => {
+      serve((path, opts) => (opts.method === 'PUT' ? { name: 'order' } : {}));
+      await setup();
+      await toVisual();
+      await userEvent.click(firstCard());
+      const url = screen.getByLabelText('URL');
+      await userEvent.clear(url);
+      await userEvent.type(url, 'https://b.test');
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+      expect(screen.getAllByText('●').length).toBeGreaterThan(0);
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+      const put = apiMock.mock.calls.find(([, o]) => o?.method === 'PUT')!;
+      expect(JSON.stringify(put[1]?.body)).toContain('https://b.test');
+      expect(JSON.stringify(put[1]?.body)).toContain('"defaults"');
+    });
+
+    it('cannot confirm a navigate step with no URL, which the server would drop', async () => {
+      serve();
+      await setup();
+      await toVisual();
+      await userEvent.click(firstCard());
+      await userEvent.clear(screen.getByLabelText('URL'));
+      expect((screen.getByRole('button', { name: 'Confirm' }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('deletes a step', async () => {
+      serve();
+      await setup();
+      await toVisual();
+      await userEvent.click(firstCard());
+      await userEvent.click(screen.getByRole('button', { name: 'Delete step' }));
+      expect(screen.getByText('No steps yet. Record a playbook to add some.')).toBeTruthy();
+      expect(screen.getAllByText('●').length).toBeGreaterThan(0);
+    });
+
+    it('opens a card from the keyboard and focuses its first field', async () => {
+      serve();
+      await setup();
+      await toVisual();
+      firstCard().focus();
+      await userEvent.keyboard('{Enter}');
+      expect(document.activeElement).toBe(screen.getByLabelText('URL'));
+    });
+
+    it('Escape cancels the edit and gives focus back to the card, without closing the editor', async () => {
+      serve();
+      const { onClose } = await setup();
+      await toVisual();
+      await userEvent.click(firstCard());
+      await userEvent.type(screen.getByLabelText('URL'), 'x');
+      await userEvent.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText('URL')).toBeNull();
+      expect(document.activeElement).toBe(firstCard());
+      expect(screen.queryAllByText('●')).toHaveLength(0);
+    });
+
+    it('closes the panel when Discard changes the step under it, so a draft never lands on another step', async () => {
+      serve();
+      await setup();
+      await toVisual();
+      await userEvent.click(firstCard());
+      await userEvent.type(screen.getByLabelText('URL'), '/x');
+      await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+      await userEvent.click(firstCard());
+      await userEvent.click(screen.getByRole('button', { name: 'Discard' }));
+      expect(screen.queryByLabelText('URL')).toBeNull();
+    });
+
+    it('Escape cancels a step with no editable fields, where focus stays on its card', async () => {
+      apiMock.mockImplementation(async () => ({ steps: [{ action: 'click', el: { text: 'Go' } }] }));
+      const { onClose } = await setup();
+      await toVisual();
+      await userEvent.click(screen.getByRole('button', { name: /^1 · click/ }));
+      expect(screen.getByText('Recorded element')).toBeTruthy();
+      await userEvent.keyboard('{Escape}');
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.queryByText('Recorded element')).toBeNull();
+    });
+
+    it('shows no cards while the JSON does not parse, and a way back to it', async () => {
+      serve();
+      await setup();
+      typeDefinition('{ nope');
+      await toVisual();
+      expect(screen.queryByRole('list', { name: 'Steps' })).toBeNull();
+      expect(screen.getByText(/Not valid JSON/)).toBeTruthy();
+      await userEvent.click(screen.getByRole('button', { name: 'Open JSON' }));
+      expect(screen.getByRole('radio', { name: 'JSON' }).getAttribute('aria-checked')).toBe('true');
+    });
+  });
 });
 
 /** The definition with its URL given a suffix, as text. */

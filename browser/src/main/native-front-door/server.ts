@@ -6,6 +6,8 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { NativeProtocol, ProtocolError } from './protocol.ts';
 import { nativeCommand } from './command.ts';
+import { resolvesRequest } from './request-resolution.ts';
+import { ConcurrentCommands } from './concurrent-commands.ts';
 import { NATIVE_DOOR } from './constants.ts';
 import type { NativeCommand, NativeDoorOptions } from './types.ts';
 
@@ -60,6 +62,8 @@ function failure(socket: WebSocket, error: unknown, msg?: NativeCommand): void {
 }
 /** Serialize all clients so two commands cannot race native focus, navigation or element identities. */
 class CommandQueue {
+  /** Approved page promises must not serialize commands that can unblock them. */
+  private readonly concurrent = new ConcurrentCommands();
   /** Tail includes the entire native operation, not just its admission. */
   private tail = Promise.resolve();
   /** Bound waiting work even when a client floods requests. */
@@ -78,11 +82,26 @@ class CommandQueue {
     } catch (error) {
       return failure(socket, error);
     }
-    if (resolveHeldRequest(socket, protocol, msg)) return;
+    // Resolving a held request cannot wait behind the navigation it unblocks, so it skips the
+    // queues, but not admission: in Human Mode a client must not answer the person's requests.
+    if (resolvesRequest(msg.method)) return this.resolveHeld(socket, protocol, msg);
     this.schedule(socket, protocol, msg);
+  }
+  /** A held request answered at once, under the same control admission as every other command. */
+  private resolveHeld(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
+    void this.run(socket, protocol, msg).catch((error) => failure(socket, error, msg));
   }
   /** Bound the shared queue before accepting another operation. */
   private schedule(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
+    if (protocol.passesThrough(msg)) return this.passed(socket, protocol, msg);
+    this.native(socket, protocol, msg);
+  }
+  /** Concurrent page calls retain one normal control admission and finisher apiece. */
+  private passed(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
+    void this.concurrent.run(() => this.run(socket, protocol, msg)).catch((error) => failure(socket, error, msg));
+  }
+  /** Native browser, focus and identity operations preserve their previous completion order. */
+  private native(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): void {
     if (this.pending >= NATIVE_DOOR.maxQueued)
       return failure(socket, new ProtocolError('Native command queue is full'), msg);
     this.pending++;
@@ -198,11 +217,4 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error.slice(0, NATIVE_DOOR.maxPayload);
   return 'Native command failed';
-}
-
-/** Resolving an existing native pause cannot wait behind the navigation it is unblocking. */
-function resolveHeldRequest(socket: WebSocket, protocol: NativeProtocol, msg: NativeCommand): boolean {
-  if (msg.method !== 'Fetch.continueRequest' && msg.method !== 'Fetch.failRequest') return false;
-  void reply(socket, protocol, msg).catch((error) => failure(socket, error, msg));
-  return true;
 }

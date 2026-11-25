@@ -21,12 +21,15 @@ import {
 
 /**
  * What a read-only script may not do: act on the page, send a request, or leave.
+ * A fill it let through never becomes a playbook step, so the replay then "succeeds"
+ * with the field empty: bracket writes (el['value'] = …), execCommand and the native
+ * value setter are refused along with the dotted forms.
  * ponytail: a pattern check keeps an honest model to reading; it is not a sandbox
  * (the isolated world is what keeps the page from seeing the script). A proxy-wrapped
  * DOM is the upgrade if scripts ever come from somewhere untrusted.
  */
 const MUTATES =
-  /\.(click|submit|requestSubmit|focus|blur|remove|append|prepend|appendChild|removeChild|replaceChildren|insertAdjacent\w*|setAttribute|removeAttribute|dispatchEvent|setItem|removeItem|clear|pushState|replaceState|back|forward|go|assign|reload|play|pause)\s*\(|\b(fetch|XMLHttpRequest|sendBeacon|WebSocket|EventSource|open|postMessage|eval|Function)\s*\(|new\s+(XMLHttpRequest|WebSocket|EventSource|Function)\b|\.(value|checked|selected|innerHTML|outerHTML|textContent|innerText|href|src|cookie|hash|search|pathname|disabled|scrollTop|scrollLeft|location)\s*[+-]?=[^=]|\blocation\s*=[^=]/;
+  /\.(click|submit|requestSubmit|focus|blur|remove|append|prepend|appendChild|removeChild|replaceChildren|insertAdjacent\w*|setAttribute|removeAttribute|dispatchEvent|setItem|removeItem|clear|pushState|replaceState|back|forward|go|assign|reload|play|pause)\s*\(|\b(fetch|XMLHttpRequest|sendBeacon|WebSocket|EventSource|open|postMessage|eval|Function)\s*\(|new\s+(XMLHttpRequest|WebSocket|EventSource|Function)\b|\.(value|checked|selected|innerHTML|outerHTML|textContent|innerText|href|src|cookie|hash|search|pathname|disabled|scrollTop|scrollLeft|location)\s*[+-]?=[^=]|\blocation\s*=[^=]|\[\s*['"`](value|checked|selected|innerHTML|outerHTML|textContent|innerText|href|src)['"`]\s*\]\s*[+-]?=[^=]|\bexecCommand\s*\(|getOwnPropertyDescriptor\b|\.set\.(call|apply)\s*\(|\bReflect\.set\s*\(/;
 
 /** Why a script was refused. */
 const READ_ONLY =

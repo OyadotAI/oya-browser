@@ -5,7 +5,7 @@
 import { FLAGS, captured, fakeFetch } from '../support/harness.ts';
 import { describe, it, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdCookies } from '../../../src/commands/cookies.ts';
@@ -39,6 +39,18 @@ describe('oya cookies', () => {
     chmodSync(file, 0o644);
     await captured(() => cmdCookies(['export', 'p1'], { ...FLAGS, out: file }));
     assert.equal(statSync(file).mode & 0o777, 0o600);
+  });
+
+  it('export --out replaces a symlink atomically without overwriting its target', async () => {
+    fakeFetch({ 'GET /api/pool/cookies?persona=p1&format=json': { cookies: [COOKIE] } });
+    const target = join(dir, 'sym-target.json');
+    const link = join(dir, 'sym-jar.json');
+    writeFileSync(target, 'untouched');
+    symlinkSync(target, link);
+    await captured(() => cmdCookies(['export', 'p1'], { ...FLAGS, out: link }));
+    assert.equal(readFileSync(target, 'utf8'), 'untouched');
+    assert.equal(lstatSync(link).isSymbolicLink(), false);
+    assert.equal(statSync(link).mode & 0o777, 0o600);
   });
 
   it('export refuses a format it does not know before asking the server, and leaves the file alone', async () => {

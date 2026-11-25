@@ -13,21 +13,26 @@ export type Self = {
   authorization?: string;
 };
 
-/** Headers for one call: the caller's credential and a fresh idempotency key. */
-const headersFor = (self: Self) => ({
+/** Headers for one call: the caller's credential and an idempotency key, fresh unless the caller repeats one. */
+const headersFor = (self: Self, idempotencyKey?: string) => ({
   Authorization: self.authorization,
   'Content-Type': 'application/json',
-  'Idempotency-Key': globalThis.crypto.randomUUID(),
+  'Idempotency-Key': idempotencyKey || globalThis.crypto.randomUUID(),
   // Names the client, so a start can be counted as one an agent asked for.
   'X-Oya-Client': 'mcp',
 });
 
-/** POSTs `body` to the public API at `path` as the caller; throws its error message on failure. */
-export async function selfApi(self: Self, path: string, body?) {
+/**
+ * POSTs `body` to the public API at `path` as the caller; throws its error message on failure.
+ * A refusal the API answered is marked `answered`; without it the reply was lost (a timeout, a
+ * dropped connection) and the call may have happened, so a caller that passes the same
+ * `idempotencyKey` again gets the first outcome instead of a second start.
+ */
+export async function selfApi(self: Self, path: string, body?, idempotencyKey?: string) {
   if (!self.origin || !self.authorization) throw new Error('browser lifecycle is unavailable on this endpoint');
-  const init = { method: 'POST', headers: headersFor(self), body: JSON.stringify(body || {}) };
+  const init = { method: 'POST', headers: headersFor(self, idempotencyKey), body: JSON.stringify(body || {}) };
   const res = await fetch(`${self.origin}/api${path}`, { ...init, signal: AbortSignal.timeout(SELF_API_TIMEOUT_MS) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `${res.status} ${res.statusText}`), { answered: true });
   return data;
 }

@@ -1,9 +1,9 @@
 {
   "name": "oya-browser",
-  "version": "1.0.206",
-  "description": "AI-controlled browser, your real browser as an MCP server",
+  "version": "1.0.295",
+  "description": "Oya Browser: an AI browser and agentic browser for people and AI agents; HIPAA compliant on Oya Cloud and Enterprise.",
   "main": "out/main/index.js",
-  "author": "Oya <hello@oya.ai>",
+  "author": "Oya <sales@getoya.ai>",
   "scripts": {
     "start": "npm run build && node src/dev/launch.ts",
     "dev": "npm run build && node src/dev/launch.ts --dev",
@@ -36,9 +36,12 @@
     "test:desktop-library": "node tests/integration/desktop-library.mjs",
     "test:desktop-media": "node tests/integration/desktop-media.mjs && node tests/integration/desktop-media-overlap.mjs",
     "test:desktop-window-selection": "npm run build && node tests/integration/desktop-window-selection.mjs",
+    "test:desktop-notifications": "node tests/integration/desktop-notifications.mjs",
     "test:desktop-passkeys": "node tests/integration/desktop-passkeys.mjs",
     "test:desktop-external-apps": "node tests/integration/desktop-external-apps.mjs",
     "test:agent": "npm run build && node tests/integration/agent-commands.mjs",
+    "test:pairing": "npm run build && node tests/integration/pairing.mjs",
+    "test:connect-link": "npm run build && node tests/integration/agent-connect-link.mjs",
     "test:workflow": "node tests/integration/native-workflow.mjs",
     "test:workflow-locator": "electron tests/integration/workflow-locator-electron.cjs",
     "test:recorder-combobox": "electron tests/integration/recorder-combobox-electron.cjs",
@@ -46,8 +49,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:analyzer": "node tests/integration/analyzer-dom.mjs",
+    "test:frames": "node tests/integration/frame-read.mjs",
     "test:recorder": "node tests/integration/recorder-dom.mjs",
-    "build": "electron-vite build",
+    "build": "node build/owned-pointer.cjs && electron-vite build",
     "typecheck": "tsc --noEmit",
     "test:native-contexts": "node tests/integration/native-contexts.mjs",
     "test:native-storage": "node tests/integration/native-storage.mjs",
@@ -65,13 +69,14 @@
     "test:native-app": "npm run build && node tests/integration/native-app.mjs",
     "test:native-packaged-app": "node tests/integration/native-packaged-app.mjs",
     "test:desktop-highlights": "node tests/integration/desktop-highlights.mjs",
-    "postinstall": "node build/minimatch-compat.cjs"
+    "postinstall": "node build/minimatch-compat.cjs",
+    "test:keel-browser": "node tests/integration/keel-browser-viewport.mjs"
   },
   "dependencies": {
-    "@playwright/test": "^1.64.1",
+    "@playwright/test": "^1.65.1",
     "electron-updater": "^6.8.11",
     "mime-types": "^3.0.2",
-    "ws": "^8.22.0"
+    "ws": "^8.23.0"
   },
   "optionalDependencies": {
     "@oya/window-selector": "file:native/window-selector"
@@ -82,29 +87,30 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
-    "@vitejs/plugin-react": "^6.1.2",
-    "electron": "^44.10.1",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^44.11.3",
     "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
-    "eslint": "^10.13.0",
+    "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-jsdoc": "^65.4.2",
+    "eslint-plugin-jsdoc": "^65.4.9",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "globals": "^17.13.0",
-    "prettier": "^3.9.10",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1",
-    "vite": "^8.3.5"
+    "typescript-eslint": "^8.73.0",
+    "vite": "^8.3.8"
   },
   "build": {
     "appId": "ai.oya.browser",
-    "beforePack": "build/webauthn.cjs",
-    "afterPack": "build/window-selector.cjs",
     "asarUnpack": [
+      "out/native/*.node",
       "node_modules/@oya/window-selector/build/Release/*.node"
     ],
+    "beforePack": "build/webauthn.cjs",
+    "afterPack": "build/window-selector.cjs",
     "productName": "Oya Browser",
     "artifactName": "Oya.Browser-${version}-${arch}.${ext}",
     "directories": {
@@ -157,6 +163,14 @@
       }
     },
     "win": {
+      "forceCodeSigning": true,
+      "verifyUpdateCodeSignature": true,
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "rfc3161TimeStampServer": "http://timestamp.digicert.com"
+      },
       "icon": "build/icon.png",
       "target": [
         {

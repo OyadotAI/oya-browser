@@ -4,7 +4,7 @@
  * call becomes that command, run as the calling agent's lane, so it works in its
  * own tab and closes only tabs it opened.
  */
-import { SAFE_KEYS } from './constants.ts';
+import { SAFE_KEYS, WAIT_FOR_MAX_MS } from './constants.ts';
 
 /** A tool's JSON Schema for its arguments. */
 type Schema = Record<string, unknown>;
@@ -38,6 +38,44 @@ const byId = (id: unknown) => `[data-ac-id="${Number(id)}"]`;
 
 /** The page tools: read, move, act. */
 const PAGE_TOOLS: Record<string, LocalTool> = {
+  browser_identity: {
+    description: 'Read this owned tab’s native browser version, immutable profile identity and measured DPR.',
+    inputSchema: object(),
+    command: () => ['browser_debug', { kind: 'identity' }],
+  },
+  browser_read_frames: {
+    description:
+      'Read every native descendant frame, including cross-origin frames, with unique actionable element numbers and document references.',
+    inputSchema: object({ frames: { type: 'boolean' } }),
+    command: ({ frames }) => ['browser_debug', given({ kind: 'read', frames })],
+  },
+  browser_eval: {
+    description:
+      'Evaluate a synchronous JavaScript expression in the owned page world or an exact document reference. This can mutate the page; errors are never replayed.',
+    inputSchema: object({ expression: { type: 'string', maxLength: 32768 }, frame: { type: 'string' } }, [
+      'expression',
+    ]),
+    command: ({ expression, frame }) => ['browser_debug', given({ kind: 'eval', expression, frame })],
+  },
+  browser_hit_test: {
+    description:
+      'Report the actual hit at top-level CSS viewport coordinates, through exact native frame owners; partial traversal is explicit.',
+    inputSchema: object({ x: { type: 'number', minimum: 0 }, y: { type: 'number', minimum: 0 } }, ['x', 'y']),
+    command: ({ x, y }) => ['browser_debug', { kind: 'hit_test', x, y }],
+  },
+  browser_native_click: {
+    description: 'Send native mouse move/down/up to an owned numbered element. Never substitute DOM click/focus.',
+    inputSchema: object({ element: { type: 'integer', minimum: 1 }, framed: { type: 'boolean' } }, ['element']),
+    command: ({ element, framed }) => ['browser_debug', { kind: 'click', element, framed }],
+  },
+  browser_frame_type: {
+    description: 'Fill an exact document-bound field number from browser_read_frames, preserving its frame ownership.',
+    inputSchema: object(
+      { element: { type: 'integer', minimum: 1 }, text: { type: 'string' }, submit: { type: 'boolean' } },
+      ['element', 'text'],
+    ),
+    command: ({ element, text, submit }) => ['browser_debug', given({ kind: 'type', element, text, submit })],
+  },
   analyze_page: {
     description:
       'Read the current page: its content and every interactive element, numbered for click and type. format: toon (default, fewest tokens), markdown or jsonl.',
@@ -55,7 +93,8 @@ const PAGE_TOOLS: Record<string, LocalTool> = {
     command: ({ element_id }) => ['click', { selector: byId(element_id) }],
   },
   type: {
-    description: 'Type text into a field by its id from analyze_page, replacing what it held.',
+    description:
+      'Type text into a field by its id from analyze_page, replacing what it held. Typing keeps every id valid: type the next field straight away, without analyzing again.',
     inputSchema: object({ ...ELEMENT, text: { type: 'string' } }, ['element_id', 'text']),
     command: ({ element_id, text }) => ['type', { selector: byId(element_id), text }],
   },
@@ -71,6 +110,21 @@ const PAGE_TOOLS: Record<string, LocalTool> = {
     ]),
     command: ({ direction, amount }) => ['scroll', { direction, amount }],
   },
+  viewport: {
+    description:
+      'Set CSS width/height until reset:true. Optional DPR retains its value; mobile:true is unsupported. Open a page first.',
+    inputSchema: object({
+      width: { type: 'integer', minimum: 1, maximum: 4096 },
+      height: { type: 'integer', minimum: 1, maximum: 4096 },
+      deviceScaleFactor: { type: 'number', minimum: 0.25, maximum: 4 },
+      mobile: { type: 'boolean' },
+      reset: { type: 'boolean' },
+    }),
+    command: ({ width, height, deviceScaleFactor, mobile, reset }) => [
+      'viewport',
+      given({ width, height, deviceScaleFactor, mobile, reset }),
+    ],
+  },
   screenshot: {
     description: 'Capture the visible part of your tab as an image.',
     inputSchema: object(),
@@ -78,6 +132,70 @@ const PAGE_TOOLS: Record<string, LocalTool> = {
   },
   go_back: { description: 'Go back in your tab.', inputSchema: object(), command: () => ['back', {}] },
   go_forward: { description: 'Go forward in your tab.', inputSchema: object(), command: () => ['forward', {}] },
+};
+
+/** A positive number an agent gave, or undefined: a limit sent as text would otherwise match nothing. */
+const positive = (value: unknown): number | undefined => {
+  const n = Number(value);
+  return value !== undefined && Number.isFinite(n) && n > 0 ? n : undefined;
+};
+
+/** The parameters that were given, so a command never receives a key holding undefined. */
+const given = (params: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined));
+
+/** How long wait_for waits: what the agent asked for, held to the longest wait allowed. */
+const waitTimeout = (timeout: unknown): number | undefined => {
+  const ms = positive(timeout);
+  return ms === undefined ? undefined : Math.min(ms, WAIT_FOR_MAX_MS);
+};
+
+/** The arguments the two read tools share. */
+const READ_ARGS = { limit: { type: 'number', description: 'The most to return.' } };
+
+/**
+ * The tools a test needs: what the page logged, what it fetched, and waiting for it to change.
+ * Without them an agent could act on a page but not tell whether the page threw or a request
+ * failed, so it went to another browser tool to test.
+ */
+const TEST_TOOLS: Record<string, LocalTool> = {
+  read_console: {
+    description:
+      'Read what the page in your tab logged, newest first. Call it after an action in a test to see whether the page threw an error.',
+    inputSchema: object({
+      level: {
+        type: 'string',
+        enum: ['debug', 'info', 'warning', 'error'],
+        description: 'Only entries at this level.',
+      },
+      pattern: { type: 'string', description: 'Only entries matching this text or regular expression, ignoring case.' },
+      ...READ_ARGS,
+    }),
+    command: ({ level, pattern, limit }) => ['read_console', given({ level, pattern, limit: positive(limit) })],
+  },
+  read_network: {
+    description:
+      'Read the requests the page in your tab made, newest first. Call it after an action in a test to see whether a request failed. URLs are shown without their query string.',
+    inputSchema: object({
+      failed_only: { type: 'boolean', description: 'Only requests that errored or answered 400 or above.' },
+      pattern: { type: 'string', description: 'Only URLs matching this text or regular expression, ignoring case.' },
+      ...READ_ARGS,
+    }),
+    command: ({ failed_only, pattern, limit }) => [
+      'read_network',
+      given({ failedOnly: failed_only === true ? true : undefined, pattern, limit: positive(limit) }),
+    ],
+  },
+  wait_for: {
+    description:
+      'Wait until some text shows, or a CSS selector matches, in your tab, then go on. Use it after a click that loads something, before you read or assert. Returns an error when the time runs out.',
+    inputSchema: object({
+      text: { type: 'string', description: 'The text to wait for.' },
+      selector: { type: 'string', description: 'The CSS selector to wait for, when no text is given.' },
+      timeout: { type: 'number', description: `How long to wait, in milliseconds (at most ${WAIT_FOR_MAX_MS}).` },
+    }),
+    command: ({ text, selector, timeout }) => ['wait', given({ text, selector, timeout: waitTimeout(timeout) })],
+  },
 };
 
 /** The tab and dialog tools. */
@@ -110,7 +228,7 @@ const TAB_TOOLS: Record<string, LocalTool> = {
 };
 
 /** Every local tool, by name. */
-export const LOCAL_TOOLS: Readonly<Record<string, LocalTool>> = { ...PAGE_TOOLS, ...TAB_TOOLS };
+export const LOCAL_TOOLS: Readonly<Record<string, LocalTool>> = { ...PAGE_TOOLS, ...TEST_TOOLS, ...TAB_TOOLS };
 
 /** The tools as tools/list answers them. */
 export const toolList = () =>

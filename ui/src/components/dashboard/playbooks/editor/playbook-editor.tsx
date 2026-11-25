@@ -4,6 +4,7 @@
  * CodeMirror editor that marks a JSON error where it is, a test panel below
  * (⌘J) that runs the edit before it is saved, and a status bar. Save replaces
  * the playbook (⌘S); Save as keeps the original; leaving with changes asks.
+ * The definition tab shows as JSON or, toggled, as its steps in order.
  */
 'use client';
 
@@ -16,7 +17,8 @@ import TesterPane from './tester-pane';
 import TitleBar from './title-bar';
 import VariablesPane from './variables-pane';
 import { variableRows } from './definition';
-import { EDITOR_TEXT, type FileId } from './editor-text';
+import StepFlow from './step-flow';
+import { EDITOR_TEXT, type DefinitionView, type FileId } from './editor-text';
 import { usePlaybookEditor, type PlaybookEditorState } from './use-playbook-editor';
 import { useWorkbench, type Workbench } from './use-workbench';
 import { useWorkbenchKeys } from './use-workbench-keys';
@@ -48,8 +50,47 @@ interface FileProps {
   props: Props;
 }
 
+/** Visual or JSON, for the definition tab; switching never touches the text. */
+function ViewToggle({ w }: { /** The layout. */ w: Workbench }) {
+  const item = (view: DefinitionView, label: string) => (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={w.view === view}
+      onClick={() => w.setView(view)}
+      className={`h-[22px] rounded px-2.5 ${w.view === view ? 'bg-bg text-text' : 'text-text-muted hover:text-text'}`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex h-7 items-center border-b border-border px-2">
+      <div role="radiogroup" aria-label={EDITOR_TEXT.viewLabel} className="flex rounded bg-bg-card p-0.5 text-[12px]">
+        {item('visual', EDITOR_TEXT.visual)}
+        {item('json', EDITOR_TEXT.json)}
+      </div>
+    </div>
+  );
+}
+
+/** The definition as steps, or, while it does not parse, a way back to the JSON that says why. */
+function VisualView({ e, w }: Omit<FileProps, 'props'>) {
+  if (e.parsed.definition) return <StepFlow definition={e.parsed.definition} onChange={e.setText} />;
+  return (
+    <div className="grid h-full place-items-center text-[13px] text-text-muted">
+      <p>
+        {EDITOR_TEXT.fixInJson}{' '}
+        <button type="button" className="text-accent hover:underline" onClick={() => w.setView('json')}>
+          {EDITOR_TEXT.showJson}
+        </button>
+      </p>
+    </div>
+  );
+}
+
 /** The file showing: the definition, its variables, the code, or a hint to open one. */
 function FileView({ file, e, w, props }: FileProps & { /** The file. */ file: FileId | null }) {
+  if (file === 'definition' && w.view === 'visual') return <VisualView e={e} w={w} />;
   if (file === 'definition')
     return (
       <CodeEditor
@@ -94,6 +135,7 @@ function EditorArea({ e, w, props }: FileProps) {
           {e.saveError}
         </p>
       )}
+      {w.active === 'definition' && <ViewToggle w={w} />}
       <div className="min-h-0 flex-1">
         <FileView file={w.active} e={e} w={w} props={props} />
       </div>

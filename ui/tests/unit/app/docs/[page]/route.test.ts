@@ -26,11 +26,25 @@ describe('GET /docs/<slug>.md', () => {
     });
   }
 
+  it('carries the try-it prompts in the MCP page as fenced code', async () => {
+    serveDocsHtml();
+    const body = await (await get('mcp.md')).text();
+    const fences = body.match(/```[\s\S]*?```/g) ?? [];
+    expect(fences.some((fence) => fence.includes('instead of Chrome'))).toBe(true);
+    expect(body).toContain('### Try it');
+  });
+
   it('cuts each part from its own section only', async () => {
     serveDocsHtml();
     const sdk = await (await get('sdk.md')).text();
     expect(sdk).toContain('## SDK');
     expect(sdk).not.toContain('## Quickstart');
+  });
+
+  it('points each twin at its own topic page as canonical, or at /docs when it has none', async () => {
+    serveDocsHtml();
+    expect((await get('sdk.md')).headers.get('link')).toBe('<https://oyabrowser.com/docs/sdk>; rel="canonical"');
+    expect((await get('control-plane.md')).headers.get('link')).toBe('<https://oyabrowser.com/docs>; rel="canonical"');
   });
 
   it('answers an unknown page with a 404, without rendering anything', async () => {

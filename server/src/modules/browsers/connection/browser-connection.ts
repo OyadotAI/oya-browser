@@ -9,8 +9,8 @@ import { container } from '../../../app/container.ts';
 import { getAll as getAllCookies } from '../../personas/cookies.ts';
 import { releaseBrowser } from './release.ts';
 import { HANDLERS, type Connection } from './handlers/index.ts';
-import { admit, takePersona, Rejection } from './admission.ts';
-import { adopt, list, providerOf, type Registration } from './registration.ts';
+import { admit, claimRegistered, hijack, takePersona, Rejection, type Admitted } from './admission.ts';
+import { adopt, checkEnrolment, enlist, list, providerOf, type Registration } from './registration.ts';
 import { identityFor, welcomeMessage } from './identity.ts';
 import { Heartbeat } from './heartbeat.ts';
 import { AUTH_DEADLINE_MS, CloseCode } from './constants.ts';
@@ -31,6 +31,8 @@ export class BrowserConnection implements Connection {
   apiKey: string | null = null;
   /** The persona it runs as; its concurrency slot is held while connected. */
   persona: any = null;
+  /** Whether admission verified a server-issued cloud worker enrollment. */
+  cloudVerified = false;
   /** Whether it uses the operator's metered residential gateway. */
   residentialProxy = false;
   /** A desktop control handoff is in progress. */
@@ -85,12 +87,12 @@ export class BrowserConnection implements Connection {
   /** `auth` authenticates; everything else needs an authenticated socket. */
   private async route(msg) {
     if (msg.type === 'auth') return this.authenticate(msg);
-    if (this.authenticated) await HANDLERS[msg.type]?.(this, msg);
+    if (this.authenticated && Object.hasOwn(HANDLERS, msg.type)) await HANDLERS[msg.type](this, msg);
   }
 
-  /** The control plane or the server refused: release the persona and close. */
+  /** The control plane or the server refused: release held resources and close. */
   private fail(err) {
-    if (this.persona) container.personas.release(this.persona, this.browserId);
+    releaseHeld(this);
     console.error('[ws] registration/message rejected:', err.message);
     this.ws.close(CloseCode.CONTROL_REJECTED, 'Control plane rejected connection');
   }
@@ -104,7 +106,7 @@ export class BrowserConnection implements Connection {
 
   /** The `auth` message: admission, then registration and the welcome. */
   private async authenticate(msg) {
-    if (this.authStarted) return this.ws.close(CloseCode.REJECTED, 'Already authenticating');
+    if (this.authStarted) return rejectDuplicateAuth(this);
     this.authStarted = true;
     clearTimeout(this.authTimer);
     if (!(await this.admit(msg))) return;
@@ -112,13 +114,10 @@ export class BrowserConnection implements Connection {
     if (await this.register(msg, provider)) await this.welcome(provider);
   }
 
-  /** Admits the browser and takes its persona; false if it was refused. */
+  /** Admits the browser and takes its persona; false if it was refused or hung up. */
   private async admit(msg) {
     try {
-      Object.assign(this, await admit(msg));
-      this.authenticated = true;
-      this.persona = takePersona(this.apiKey, this.browserId, msg.persona, msg.host_platform);
-      return true;
+      return await acquireAdmission(this, msg);
     } catch (err) {
       return this.reject(err);
     }
@@ -133,31 +132,31 @@ export class BrowserConnection implements Connection {
     return false;
   }
 
-  /** Adopts and lists the session; false (persona released) if the socket closed meanwhile. */
+  /** Adopts and lists the session; false if the socket closed or was replaced meanwhile. */
   private async register(msg, provider: string) {
     const reg = this.registration(msg.api_key);
-    await adopt(reg, provider, msg.enrollment_token);
-    if (!this.isOpen()) {
-      container.personas.release(this.persona, this.browserId);
-      return false;
-    }
+    await adopt(reg, provider);
+    if (!stillLive(this)) return false;
+    enlist(reg, provider, msg);
+    unclaimed.delete(this.browserId);
     await list(reg, provider, msg);
-    return true;
+    return stillLive(this);
   }
 
   /** What registration needs, from this connection. */
   private registration(authToken: string): Registration {
-    return { apiKey: this.apiKey, browserId: this.browserId, persona: this.persona, ws: this.ws, authToken };
+    const { cloudVerified, apiKey, browserId, persona, ws } = this;
+    return { cloudVerified, apiKey, browserId, persona, ws, authToken };
   }
 
-  /** Sends the identity and the cookie jar, then starts the heartbeat. */
+  /** Sends the identity and the cookie jar, then opens message routing and the heartbeat. */
   private async welcome(provider: string) {
     const { fingerprint, residential } = identityFor(this.apiKey, this.persona, provider);
     this.residentialProxy = residential;
-    this.send(await welcomeMessage(this.apiKey, this.browserId, this.persona, fingerprint));
-    // The jar again as a sync, so the browser applies it at once.
-    const cookies = getAllCookies(this.persona.id);
-    if (cookies.length > 0) this.send({ type: 'cookie_sync', cookies });
+    const greeting = await welcomeMessage(this.apiKey, this.browserId, this.persona, fingerprint);
+    if (!stillLive(this)) return;
+    sendGreeting(this, greeting);
+    this.authenticated = true;
     this.heartbeat.start();
   }
 
@@ -167,15 +166,84 @@ export class BrowserConnection implements Connection {
     this.localCommands.clear();
     clearTimeout(this.authTimer);
     this.heartbeat.stop();
-    // Removing the entry of the connection that replaced us would make the browser flap on/off.
-    if (this.browserId && this.isCurrent()) this.unregister();
+    releaseHeld(this);
   }
+}
 
-  /** Takes the browser out of every registry and returns its persona slot. */
-  private unregister() {
-    releaseBrowser(this.browserId, registry.get(this.browserId), 'disconnected');
-    metrics.wsDisconnections.inc({ client: 'oya' });
-  }
+/** Connections holding a persona slot that has not yet been handed to `registry`, keyed by `browserId`. */
+const unclaimed = new Map<string, BrowserConnection>();
+
+/** Resolves the browser's key and persona slot while the socket stays open. */
+async function acquireAdmission(conn: BrowserConnection, msg) {
+  const admitted = await admit(msg);
+  conn.cloudVerified = await checkEnrolment(admitted.browserId, msg.enrollment_token);
+  if (!conn.isOpen()) return false;
+  claimSlot(conn, admitted, msg);
+  return true;
+}
+
+/** Replaces any prior socket for `browserId`, takes the persona slot, and records the pre-registry claim. */
+function claimSlot(conn: BrowserConnection, admitted: Admitted, msg) {
+  claimRegistered(admitted.browserId, admitted.apiKey);
+  clearPending(admitted.browserId, admitted.apiKey);
+  Object.assign(conn, admitted);
+  conn.persona = takePersona(conn.apiKey, conn.browserId, msg.persona, msg.host_platform);
+  unclaimed.set(conn.browserId, conn);
+}
+
+/** Refuses another tenant's pending handshake, or releases and replaces an earlier one for the same key. */
+function clearPending(browserId: string, apiKey: string) {
+  const prior = unclaimed.get(browserId);
+  if (!prior) return;
+  if (prior.apiKey !== apiKey) throw hijack(browserId);
+  unclaimed.delete(browserId);
+  if (prior.persona) container.personas.release(prior.persona, browserId);
+  closeReplaced(prior);
+}
+
+/** Closes a socket superseded during admission; a socket that already closed is not an error. */
+function closeReplaced(conn: BrowserConnection) {
+  try {
+    conn.ws.close(CloseCode.REPLACED, 'Replaced by new connection');
+  } catch {}
+}
+
+/** Sends `auth_ok` and, when non-empty, the persona's initial cookie jar. */
+function sendGreeting(conn: BrowserConnection, greeting: object) {
+  conn.send(greeting);
+  const cookies = getAllCookies(conn.persona.id);
+  if (cookies.length > 0) conn.send({ type: 'cookie_sync', cookies });
+}
+
+/** Refuses a duplicate `auth` frame, releasing any resources the socket already held. */
+function rejectDuplicateAuth(conn: BrowserConnection) {
+  releaseHeld(conn);
+  conn.ws.close(CloseCode.REJECTED, 'Already authenticating');
+}
+
+/** Whether `conn` currently owns the pre-registry admission claim for its `browserId`. */
+function isPending(conn: BrowserConnection) {
+  return conn.browserId !== null && unclaimed.get(conn.browserId) === conn;
+}
+
+/** Whether `conn` is still open and active; releases held resources if it began closing. */
+function stillLive(conn: BrowserConnection) {
+  if (!conn.isOpen()) return (releaseHeld(conn), false);
+  return isPending(conn) || conn.isCurrent();
+}
+
+/** Releases a connection's registration or pre-registry persona slot at most once. */
+function releaseHeld(conn: BrowserConnection) {
+  const preRegistry = isPending(conn);
+  if (preRegistry && conn.browserId) unclaimed.delete(conn.browserId);
+  if (conn.browserId && conn.isCurrent()) releaseRegistered(conn.browserId);
+  else if (preRegistry && conn.persona) container.personas.release(conn.persona, conn.browserId);
+}
+
+/** Unregisters a live connection and records its disconnect metric. */
+function releaseRegistered(browserId: string) {
+  releaseBrowser(browserId, registry.get(browserId), 'disconnected');
+  metrics.wsDisconnections.inc({ client: 'oya' });
 }
 
 /** A message as JSON with a type, or null. */

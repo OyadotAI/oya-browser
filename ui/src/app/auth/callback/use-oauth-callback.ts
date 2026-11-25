@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { refreshToken } from '@/lib/api';
-import { keepRefreshToken } from '@/lib/auth/storage';
+import { keepRefreshToken, keepStepUp } from '@/lib/auth/storage';
 import { afterSignIn } from '@/components/auth/use-auth-form';
 import { metaSignUp } from '@/lib/meta-pixel';
 
@@ -28,7 +28,8 @@ function readReturn() {
  */
 async function adopt(token: string) {
   const data = await refreshToken(token, true);
-  if (data.refresh_token) keepRefreshToken(data.refresh_token);
+  keepRefreshToken(data.refresh_token);
+  keepStepUp(data.mfa_required);
   if (data.signed_up) await metaSignUp();
   window.location.replace(afterSignIn());
 }

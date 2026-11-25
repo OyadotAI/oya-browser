@@ -8,10 +8,20 @@ import { lastRun } from '../agent/chat.ts';
 import * as keyConfig from '../config/service.ts';
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
-import { WORKFLOW_SCHEMA } from './constants.ts';
-import { sanitizeSteps } from './sanitize.ts';
+import { MAX_STEPS, WORKFLOW_SCHEMA } from './constants.ts';
+import { replayableAction } from './replay.ts';
 import { namesOf, templateValues } from './variables.ts';
 import { renderPlaywright } from './playwright.ts';
+import * as history from './history.ts';
+import { fingerprint } from '../../platform/audit.ts';
+
+/**
+ * Runs a change to a playbook's run history after the playbook itself changed.
+ * The playbook change already happened, so a history the database refused is
+ * logged rather than turned into an error for a request that did what it said.
+ */
+const alongside = (work: Promise<void>) =>
+  work.catch((e) => console.warn(`[playbooks] run history not updated: ${e.message}`));
 
 /** A valid playbook name. */
 const NAME = /^[\w-]{1,64}$/;
@@ -31,7 +41,7 @@ const shownDefaults = (pb) => {
  * on a workflow's variables, so a form that sets its values (a routine's) can say
  * the saved value is used instead of asking for it again.
  */
-const secretNames = (pb): string[] => {
+export const secretNames = (pb): string[] => {
   const declared = Object.entries(pb.variables || {}).filter(([, v]: [string, any]) => v?.secret);
   return [...new Set([...(pb.secrets ?? []).map(String), ...declared.map(([k]) => k)])];
 };
@@ -73,14 +83,73 @@ export async function create(apiKey, browserId, name, run = lastRun(browserId)) 
   return describe(pb);
 }
 
-/** The legacy run's supported steps, with unsupported commands removed. */
+/**
+ * The run's steps as recorded, less any action replay has no handler for.
+ *
+ * Not sanitizeSteps(): that is for a recording built in a web page (requests.ts runs
+ * it on those before they get here). The agent's run comes from this server's own
+ * recorder, and passing it through the page sanitizer kept 7 of the actions the
+ * recorder records, so typing into a focused field (keyboard_type), a key chord or a
+ * tab switch vanished on save and the replay "succeeded" without them. Fields are
+ * kept whole too: cutting typed text short would corrupt a playbook just as quietly.
+ */
 function replayableSteps(run) {
   if (!run) return [];
   if (run.schemaVersion === WORKFLOW_SCHEMA) return structuredClone(run.steps || []);
   const steps = Array.isArray(run.steps) ? run.steps : [];
-  if (!steps.some((s) => ['click', 'type', 'select_option', 'upload_file', 'press_key', 'scroll'].includes(s?.action)))
-    return [];
-  return sanitizeSteps(steps);
+  const kept = withoutRunUp(steps.filter((s) => replayableAction(s?.action)));
+  // Refused, not cut: a playbook missing its tail would replay as if it were whole.
+  if (kept.length > MAX_STEPS) throw new HttpError(Status.BAD_REQUEST, `A playbook is limited to ${MAX_STEPS} steps`);
+  return structuredClone(kept);
+}
+
+/** Steps that change something on the page; the rest only move around it. */
+const ACTS = new Set(['type', 'keyboard_type', 'select_option', 'upload_file', 'click', 'double_click', 'edit_text']);
+/** Steps that change which page the run is on, and the field that says which page it is now. */
+const FRESH: Record<string, string> = {
+  navigate: 'url',
+  reload: '',
+  open_tab: 'url',
+  switch_tab: 'tabUrl',
+  // Closing a tab leaves the run on a page the recording does not name.
+  close_tab: 'none',
+};
+
+/**
+ * The run from its last change of page (a navigation, reload, new tab or tab switch)
+ * before its first real action, opened with a navigation to the page it was then on. An agent often looks around first,
+ * scrolling, opening and closing tabs, pressing Tab, reloading, and a playbook that kept
+ * that run-up replayed every bit of it and read as nonsense in its Playwright file.
+ * Nothing after the first real action is touched: a tab switch mid-task still replays.
+ */
+function withoutRunUp(steps) {
+  const { start, url } = lastFreshStart(
+    steps,
+    steps.findIndex((s) => ACTS.has(s.action)),
+  );
+  if (start < 1 || !url) return steps;
+  return [{ action: 'navigate', url, start: true }, ...steps.slice(start + 1)];
+}
+
+/** Where a run last started afresh. */
+interface FreshStart {
+  /** The step's index, or -1 for none. */
+  start: number;
+  /** The page it was on. */
+  url?: string;
+}
+
+/** The last change of page before step `first`, and the page it left the run on (a reload stays on the same one). */
+function lastFreshStart(steps, first: number): FreshStart {
+  let start = -1;
+  let url;
+  for (let i = 0; i < first; i++) {
+    if (!Object.hasOwn(FRESH, steps[i].action)) continue;
+    start = i;
+    // A reload stays put; a step that does not say where it left the run makes the page unknown.
+    url = FRESH[steps[i].action] === '' ? url : steps[i][FRESH[steps[i].action]];
+  }
+  return { start, url };
 }
 
 /** The playbook a run becomes. */
@@ -123,9 +192,15 @@ export async function rename(apiKey, name, newName) {
   if (newName === name) return describe(pb);
   checkFree(apiKey, newName);
   await keyConfig.savePlaybook(apiKey, newName, { ...pb, name: newName });
+  await moveRecords(apiKey, name, newName);
+  return describe({ ...pb, name: newName });
+}
+
+/** Moves what hangs off a playbook's name, its healed draft and its run history, then drops the old name. */
+async function moveRecords(apiKey, name, newName) {
   await moveDraft(apiKey, name, newName);
   await keyConfig.deletePlaybook(apiKey, name);
-  return describe({ ...pb, name: newName });
+  await alongside(history.move(fingerprint(apiKey), name, newName));
 }
 
 /** The playbook to rename; a draft is not one. */
@@ -175,5 +250,8 @@ function listed(pb, draft) {
 export async function remove(apiKey, name) {
   if (!keyConfig.getPlaybook(apiKey, name)) throw new HttpError(Status.NOT_FOUND, `No playbook named ${name}`);
   await keyConfig.deletePlaybook(apiKey, name);
-  if (!name.endsWith(':draft')) await keyConfig.deletePlaybook(apiKey, `${name}:draft`);
+  if (name.endsWith(':draft')) return;
+  await keyConfig.deletePlaybook(apiKey, `${name}:draft`);
+  // A new playbook given this name must not inherit these runs.
+  await alongside(history.forget(fingerprint(apiKey), name));
 }

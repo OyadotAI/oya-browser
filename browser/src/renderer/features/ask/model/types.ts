@@ -102,7 +102,7 @@ export interface PlanStep {
 
 /** One event of an agent run (the `event` of an `onAgentEvent`). */
 export interface AgentRunEvent {
-  /** `start`, `plan`, `step`, or kinds the pane ignores. */
+  /** `start`, `plan`, `step`, `usage`; `reconnecting` and `resumed` from this app about the run's connection; or kinds the pane ignores. */
   kind?: string;
   /** A plan's steps. */
   steps?: PlanStep[];

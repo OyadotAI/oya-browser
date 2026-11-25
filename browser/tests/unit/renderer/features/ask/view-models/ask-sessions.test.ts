@@ -88,4 +88,30 @@ describe('AskSessions', () => {
     await show([2], 2);
     assert.deepEqual(fake.called('stopChat'), [[1]]);
   });
+
+  it('stops and disposes the last tab when all tabs close on sign-out', async () => {
+    const { fake, vm, show, say } = await sessions();
+    made = vm;
+    await show([1], 1);
+    await say('sign-out task');
+    assert.equal(vm.anyBusy(), true);
+    await show([], -1);
+    assert.deepEqual(fake.called('stopChat'), [[1]]);
+    assert.equal(vm.state.current.tabId, null);
+    assert.equal(vm.anyBusy(), false);
+  });
+
+  it('disposes a pre-tab sending session once its run finishes after the first tab appears', async () => {
+    const { vm, show, say, pending } = await sessions();
+    made = vm;
+    await say('before tabs');
+    const preTab = vm.state.current;
+    assert.equal(preTab.tabId, null);
+    await show([1], 1);
+    assert.equal(vm.state.current.tabId, 1);
+    assert.equal(vm.anyBusy(), true);
+    pending.shift()?.({ text: 'finished' });
+    await settle();
+    assert.equal(vm.anyBusy(), false);
+  });
 });

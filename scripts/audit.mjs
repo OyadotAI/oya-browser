@@ -10,7 +10,15 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 /** Advisories that may stay, by GHSA id, with why. Remove an entry once a fix ships. */
-export const ALLOWED = {};
+export const ALLOWED = {
+  // picomatch ReDoS (high), every version through 4.0.7, the latest; no fixed release exists yet.
+  // It reaches the server only as @daytona/sdk > tinyglobby > picomatch, which the SDK calls
+  // when it parses a Dockerfile's COPY lines to build an image (Image.js). The server never
+  // builds an image: it starts sandboxes from a snapshot (drivers/sandbox/workers/daytona.ts).
+  // Remove this entry once picomatch ships a release past 4.0.7.
+  'GHSA-fc5q-39xc-vjpf':
+    'No fixed picomatch release; reached only through the Daytona SDK image builder, which the server never calls.',
+};
 
 /** Severities that fail the build. */
 const BLOCKING = new Set(['high', 'critical']);

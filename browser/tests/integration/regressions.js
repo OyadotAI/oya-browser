@@ -393,8 +393,8 @@ assert.doesNotMatch(protection, /dialogs\.watch\(dbg\)/);
 assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/main/main.ts'), 'utf8'), /from ['"]\.\/cdp\/dialogs/);
 // The early answer must go out BEFORE the id is parked, or sendResult drops the
 // very result being sent and the caller waits out the timeout anyway.
-const early = src.match(/if \(outcome !== DIALOG_HELD\) return;[\s\S]*?\n}/);
-assert.ok(early, 'the dialog race in handleCommand is gone');
+const early = src.match(/outcome === DIALOG_HELD[\s\S]*?\n {2}}/);
+assert.ok(early, 'the dialog race in CommandRunner is gone');
 assert.ok(
   early[0].indexOf('sendResult(') < early[0].indexOf('answeredCommands.add('),
   'answeredCommands.add() before sendResult() makes sendResult swallow the dialog answer',

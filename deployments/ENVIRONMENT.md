@@ -85,6 +85,7 @@ Defaults are what the server uses when the variable is unset. For limits and quo
 | `OYA_SESSION_GRACE_MS` | `60000` | How long a session waits for a dropped client to come back. |
 | `OYA_COMMAND_TIMEOUT_MS` | `60000` | How long one browser command may take. |
 | `OYA_CHAT_DRAIN_MS` | `300000` | How long a shutdown waits for chats in flight. Keep it under the pod's grace period. |
+| `OYA_CHAT_GRACE_MS` | `120000` | How long a desktop chat run keeps going after its connection drops, waiting for the desktop to come back for it. |
 | `OYA_STUCK_COMMAND_MS` | `60000` | When a gateway command counts as stuck. |
 
 ### Personas and proxies
@@ -149,7 +150,7 @@ Without these, sign-in is by API key and the console asks for one. The control p
 
 | Variable | Default | What it does |
 |:---|:---|:---|
-| `OYA_LICENSE_KEY` | none | A license key from sales@getoya.ai. Without one, at most 5 cloud browsers run at once. |
+| `OYA_LICENSE_KEY` | none | A license key from [oyabrowser.com/dashboard/billing](https://oyabrowser.com/dashboard/billing#self-hosted). Without one, at most 5 cloud browsers run at once. |
 
 ### Telemetry (all off unless set)
 

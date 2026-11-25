@@ -10,8 +10,6 @@ import { useRef } from 'react';
 interface Props {
   /** How many playbooks there are. */
   count: number;
-  /** Recording needs a running browser. */
-  hasBrowsers: boolean;
   /** Opens the recording dialog. */
   onRecord: () => void;
   /** Imports a playbook export file. */
@@ -49,7 +47,7 @@ function ImportButton({ onImport }: ImportProps) {
 }
 
 /** The title, count and Record button. */
-export default function TabHeader({ count, hasBrowsers, onRecord, onImport }: Props) {
+export default function TabHeader({ count, onRecord, onImport }: Props) {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-3 px-4 py-5 lg:px-6">
       <div className="mr-auto">
@@ -65,10 +63,7 @@ export default function TabHeader({ count, hasBrowsers, onRecord, onImport }: Pr
       <button
         className="btn-primary"
         onClick={onRecord}
-        disabled={!hasBrowsers}
-        title={
-          hasBrowsers ? 'Do the task yourself in a live browser and keep it as a playbook' : 'Start a browser first'
-        }
+        title="Do the task yourself in a live browser and keep it as a playbook"
       >
         <CircleDot className="h-4 w-4" /> Record a flow
       </button>

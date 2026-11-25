@@ -39,6 +39,16 @@ export const USAGE_FIELDS = [
 
 /** Each table by name. */
 export const TABLES: Record<string, Table> = {
+  // Immutable buyer ownership is retained even if an Oya account is deleted.
+  aws_marketplace_accounts: {
+    key: ['aws_account_id'],
+    columns: { aws_account_id: 'text', user_id: 'text', linked_at: 'time' },
+  },
+  // A registration is pending; it carries no activated subscription or paid plan.
+  aws_marketplace_registrations: {
+    key: ['license_arn'],
+    columns: { license_arn: 'text', aws_account_id: 'text', product_code: 'text', registered_at: 'time' },
+  },
   personas: {
     key: ['id'],
     columns: {
@@ -82,6 +92,11 @@ export const TABLES: Record<string, Table> = {
     key: ['owner', 'id'],
     columns: { owner: 'text', id: 'text', value: 'text', version: 'int', updated_at: 'time' },
   },
+  // A playbook's newest finished runs, sealed; version guards every write (see modules/playbooks/history.ts).
+  playbook_runs: {
+    key: ['owner', 'playbook'],
+    columns: { owner: 'text', playbook: 'text', value: 'text', version: 'int', updated_at: 'time' },
+  },
   // A person's paid plan, as Stripe last said, and what of the period's usage has been reported to it.
   subscriptions: {
     key: ['user_id'],
@@ -118,6 +133,16 @@ export const TABLES: Record<string, Table> = {
     columns: {
       ...{ install_id: 'text', day: 'text', version: 'text', os: 'text', steps: 'int', license_id: 'text' },
       received_at: 'time',
+      runtime_ms: 'int',
+      project_ids: 'json',
+    },
+  },
+  // Mutable reporting presence stays independent of the immutable daily usage snapshots.
+  keel_installs: {
+    key: ['install_id'],
+    columns: {
+      ...{ install_id: 'text', first_seen: 'time', last_seen: 'time', version: 'text', os: 'text' },
+      license_id: 'text',
     },
   },
   // Downloads and update checks, counted per UTC day, kind and platform.
@@ -125,12 +150,14 @@ export const TABLES: Record<string, Table> = {
     key: ['day', 'kind', 'platform'],
     columns: { day: 'text', kind: 'text', platform: 'text', count: 'int' },
   },
-  // Self-hosted licenses admins issued; the key itself is never stored.
+  // Self-hosted licenses: issued by admins (key never stored) or bought through Stripe (key sealed, so the buyer sees it again).
   licenses: {
     key: ['id'],
     columns: {
       ...{ id: 'text', licensee: 'text', max_concurrent: 'int', expires_at: 'time' },
       ...{ created_at: 'time', created_by: 'text', revoked_at: 'time' },
+      ...{ user_id: 'text', stripe_customer_id: 'text', stripe_subscription_id: 'text', stripe_invoice_id: 'text' },
+      ...{ key_sealed: 'text', interval: 'text' },
     },
   },
   audit_log: {

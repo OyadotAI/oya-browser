@@ -129,6 +129,21 @@ test('local and executable URLs and semantic options never reach native navigati
   await assert.rejects(f.run('Target.createTarget', { url: 'https://example.test', newWindow: true }));
   assert.equal(f.calls.length, 0);
 });
+test('createTarget takes background, as browser-use sends it, and opens the tab as usual', async () => {
+  const f = fixture();
+  for (const background of [true, false])
+    assert.ok(((await f.run('Target.createTarget', { url: 'https://example.test', background })) as any).targetId);
+  assert.equal(f.calls.filter((c: any) => c[0] === 'open').length, 2);
+});
+test('createTarget still refuses a background that is not a boolean, and options that change where a tab opens', async () => {
+  const f = fixture();
+  await assert.rejects(f.run('Target.createTarget', { url: 'https://example.test', background: 'yes' }));
+  for (const params of [{ newWindow: true }, { width: 800 }, { background: true, newWindow: true }])
+    await assert.rejects(
+      f.run('Target.createTarget', { url: 'https://example.test', ...params }),
+      /Unsupported parameter/,
+    );
+});
 test('page readiness subscriptions coexist with logs and disabling one preserves the other', async () => {
   const f = fixture();
   const { sessionId } = (await f.run('Target.attachToTarget', { targetId: 'a', flatten: true })) as any;

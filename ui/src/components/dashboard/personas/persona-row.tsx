@@ -68,7 +68,7 @@ export default function PersonaRow({ p, browsers, selected, onOpen, now }: RowPr
   const { cap, at, running } = rowStats(p, browsers);
   return (
     <tr
-      className={`cursor-pointer border-b border-border/60 hover:bg-text/[0.035] ${selected ? 'bg-accent/[0.08]' : ''}`}
+      className={`cursor-pointer border-b border-border/60 hover:bg-text/[0.035] ${selected ? 'bg-accent-soft' : ''}`}
       onClick={() => onOpen(p.id)}
     >
       <NameCell p={p} onOpen={onOpen} />

@@ -21,7 +21,9 @@ export { isConfigured, solveExternally } from './captcha-solver.ts';
 /** Why a provider-solved challenge is left alone. */
 const PROVIDER_NOTE = 'This provider solves natively; poll for the challenge to clear.';
 /** What to do when nothing can solve a challenge. */
-const NO_SOLVER = 'No CAPTCHA solver configured. Set OYA_CAPTCHA_API_KEY, or use a provider that solves natively.';
+const NO_SOLVER =
+  "No CAPTCHA solver configured. Choose a solver and add its key in Settings > Verification, or call oya.config.set({ captcha_solver: 'capsolver', captcha_api_key: '...' }). " +
+  'Self-hosting: set OYA_CAPTCHA_API_KEY on the server. A provider that solves CAPTCHAs natively needs neither.';
 
 /**
  * Detect and, if asked, solve. `evaluate` runs a script in the page.

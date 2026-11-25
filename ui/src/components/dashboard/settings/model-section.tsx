@@ -31,7 +31,7 @@ function ProviderPicker({ config, choice }: Omit<Props, 'form'>) {
       {llmCatalog(config).map((p) => {
         const on = choice.provider === p.id;
         const tone = on
-          ? 'border-accent/50 bg-accent/[0.06] text-text'
+          ? 'border-accent/50 bg-accent-soft text-text'
           : 'border-border bg-bg-sunken text-text-muted hover:border-text-dim';
         return (
           <button

@@ -1,7 +1,15 @@
 /**
  * The admin page's numbers, shaped for display: pure functions, tested alone.
  */
-import { CENTS_PER_DOLLAR, DAY_CHARS, MIN_BAR_PERCENT, MS_PER_DAY, PERCENT, SECONDS_PER_HOUR } from './constants';
+import {
+  CENTS_PER_DOLLAR,
+  DAY_CHARS,
+  MIN_BAR_PERCENT,
+  MS_PER_DAY,
+  PERCENT,
+  SECONDS_PER_HOUR,
+  UTC_SECOND_CHARS,
+} from './constants';
 
 /** A download count as the server keeps it. */
 export interface DownloadRow {
@@ -43,6 +51,10 @@ export const hours = (seconds = 0) => (seconds / SECONDS_PER_HOUR).toFixed(1);
 
 /** An ISO time as its day, or a dash. */
 export const dayOf = (iso?: string | null) => (iso ? String(iso).slice(0, DAY_CHARS) : '—');
+
+/** Administrative periods and freshness use one explicit timezone rather than the viewer's local clock. */
+export const utcTime = (iso?: string | null) =>
+  iso ? `${new Date(iso).toISOString().slice(0, UTC_SECOND_CHARS).replace('T', ' ')} UTC` : '—';
 
 /** The day `days` from now, as a date input takes it. */
 export const daysFromNow = (days: number, now = Date.now()) =>

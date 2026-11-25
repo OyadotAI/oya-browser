@@ -3,7 +3,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, statSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readEnv, renderEnv, writeEnv, SECRET_KEYS } from '../../../src/install/env-file.ts';
@@ -15,6 +15,20 @@ describe('readEnv', () => {
     const path = join(dir, 'a.env');
     writeFileSync(path, '# c\nA_1=x=y\n  B=2  \nlower=no\n');
     assert.deepEqual(readEnv(path), { A_1: 'x=y', B: '2' });
+  });
+
+  it('parses export prefixes, quoted values, escapes and inline comments', () => {
+    const path = join(dir, 'quoted.env');
+    writeFileSync(
+      path,
+      'export OYA_PROFILE_SECRET="abc#123"\nSINGLE=\'p#ss word\'\nPLAIN=val # comment\nESCAPED="a\\"b\\\\c"\n',
+    );
+    assert.deepEqual(readEnv(path), {
+      OYA_PROFILE_SECRET: 'abc#123',
+      SINGLE: 'p#ss word',
+      PLAIN: 'val',
+      ESCAPED: 'a"b\\c',
+    });
   });
 
   it('is empty when there is no file', () => {
@@ -53,6 +67,22 @@ describe('writeEnv', () => {
     writeEnv(path, 'new');
     assert.equal(readFileSync(path, 'utf8'), 'new');
     assert.equal(statSync(path).mode & 0o777, 0o600);
+  });
+
+  it('quotes values with #, whitespace or quotes and never writes through a symlink', () => {
+    const rendered = renderEnv({ DATABASE_URL: 'postgres://u:p#ss@h:5432/db', CUSTOM: 'a "b" c' }, []);
+    const path = join(dir, 'roundtrip.env');
+    writeEnv(path, rendered);
+    assert.deepEqual(readEnv(path), { DATABASE_URL: 'postgres://u:p#ss@h:5432/db', CUSTOM: 'a "b" c' });
+
+    const target = join(dir, 'elsewhere.env');
+    const link = join(dir, 'link.env');
+    writeFileSync(target, 'untouched');
+    symlinkSync(target, link);
+    writeEnv(link, 'SECRET=1\n');
+    assert.equal(readFileSync(target, 'utf8'), 'untouched');
+    assert.equal(lstatSync(link).isSymbolicLink(), false);
+    assert.equal(statSync(link).mode & 0o777, 0o600);
   });
 });
 

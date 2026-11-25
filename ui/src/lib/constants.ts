@@ -39,3 +39,7 @@ export const SOURCE_MAX_LENGTH = 80;
 
 /** Digits in a code from an authenticator app. */
 export const TOTP_CODE_LENGTH = 6;
+/** Base64 quantum length, for padding Base64URL JWT segments. */
+export const BASE64_PAD_MOD = 4;
+/** Corrected staff overview semantics require an explicit client contract. */
+export const ADMIN_OVERVIEW_VERSION = 2;

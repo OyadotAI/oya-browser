@@ -25,6 +25,11 @@ type Deps = Pick<
   | 'electron'
   | 'windows'
   | 'deepLinks'
+  | 'onboarding'
+  | 'desktopSignIn'
+  | 'modelSettings'
+  | 'chatAbort'
+  | 'chatRuns'
 >;
 
 /** The channels this group answers. */
@@ -191,11 +196,32 @@ export class SessionHandlers {
    * on the next launch; signing in again clears it.
    */
   private signOut(): void {
+    this.clearSetup();
     rememberAccount(this.deps);
     this.deps.socket.disconnect();
     this.deps.socket.browserId = null;
     this.deps.config.merge({ apiKey: '', signedOut: true, keyFromApp: false, account: null });
     this.deps.config.save();
+    this.leaveWindows();
+  }
+
+  /** Sign-out revokes all windows' pending login, chat, and credential operations. */
+  private clearSetup(): void {
+    this.deps.desktopSignIn?.cancel();
+    this.deps.modelSettings?.cancel();
+    this.deps.onboarding?.reset?.();
+    this.abortChats();
+  }
+
+  /** Aborts any in-flight Ask chat or playbook runs on sign-out. */
+  private abortChats(): void {
+    this.deps.chatRuns?.forEach((run) => run.abort());
+    this.deps.chatRuns?.clear();
+    this.deps.chatAbort?.abort();
+    this.deps.chatAbort = null;
+  }
+  /** Sign-out clears private windows and returns each ordinary window to account recovery. */
+  private leaveWindows(): void {
     this.deps.windows?.closeIncognito();
     if (this.deps.windows) this.deps.windows.each((scope) => scope.tabs.leaveBrowsingMode());
     else this.deps.tabs.leaveBrowsingMode();
@@ -223,8 +249,11 @@ export class SessionHandlers {
    */
   private async readAccount(): Promise<Record<string, unknown> | null> {
     if (!this.deps.socket.ready) return this.lastAccount();
+    const { apiKey, serverUrl } = this.deps.config.values;
     const account = (await this.api.get('auth/whoami').catch(() => null)) as Record<string, unknown> | null;
-    if (!account) return this.lastAccount();
+    // A pairing that landed while the server was answering makes this the previous account's answer.
+    const moved = apiKey !== this.deps.config.values.apiKey || serverUrl !== this.deps.config.values.serverUrl;
+    if (!account || moved) return this.lastAccount();
     this.deps.config.merge({ account });
     this.deps.config.save();
     return account;

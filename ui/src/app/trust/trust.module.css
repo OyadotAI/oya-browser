@@ -1,19 +1,21 @@
-/* The trust center: status cards, then readable sections and tables, in the release notes' column style. */
+/** Public evidence and answer pages use generous titles, clear reading sections and complete scrollable tables. */
 .main {
-  max-width: 960px;
-  padding: 64px 0 96px;
+  max-width: 1040px;
+  padding: 80px 0 96px;
 }
 .main h1 {
-  font-size: 44px;
+  max-width: 20ch;
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 1.08;
   font-weight: 500;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.055em;
 }
 .lead {
-  max-width: 640px;
-  margin-top: 12px;
+  max-width: 68ch;
+  margin-top: 20px;
   color: var(--muted);
-  font-size: 16px;
-  line-height: 1.6;
+  font-size: 19px;
+  line-height: 1.7;
 }
 .cards {
   display: grid;
@@ -22,10 +24,10 @@
   margin-top: 40px;
 }
 .card {
-  padding: 20px;
-  border: 1px solid #e5e9e1;
-  border-radius: 12px;
-  background: #fff;
+  padding: 28px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--card);
 }
 .card h3 {
   margin-top: 10px;
@@ -40,7 +42,7 @@
 }
 .state {
   color: var(--primary);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -48,17 +50,19 @@
 .section {
   margin-top: 56px;
   padding-top: 32px;
-  border-top: 1px solid #e5e9e1;
+  border-top: 1px solid var(--border);
 }
 .section h2 {
-  font-size: 24px;
+  font-size: clamp(28px, 3vw, 40px);
+  line-height: 1.15;
   font-weight: 500;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.04em;
 }
 .section p {
   margin-top: 12px;
   color: var(--muted);
-  line-height: 1.65;
+  max-width: 68ch;
+  line-height: 1.75;
 }
 .section a {
   color: var(--primary);
@@ -92,7 +96,7 @@
 .table th {
   padding: 8px 12px 8px 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-align: left;
@@ -100,7 +104,7 @@
 }
 .table td {
   padding: 12px 12px 12px 0;
-  border-top: 1px solid #e5e9e1;
+  border-top: 1px solid var(--border);
   line-height: 1.5;
   vertical-align: top;
 }
@@ -112,14 +116,14 @@
   margin-top: 2px;
   color: var(--muted);
   font-family: var(--font-mono, ui-monospace), monospace;
-  font-size: 12px;
+  font-size: 13px;
 }
 .pass {
   color: var(--primary);
   font-weight: 600;
 }
 .gap {
-  color: #92400e;
+  color: var(--warning);
   font-weight: 600;
 }
 @media (max-width: 760px) {
@@ -127,14 +131,54 @@
     padding: 40px 0 64px;
   }
   .main h1 {
-    font-size: 34px;
+    font-size: 36px;
   }
   .cards,
   .grid {
     grid-template-columns: 1fr;
   }
-  .table th:nth-child(2),
-  .table td:nth-child(2) {
-    display: none;
+}
+
+.section {
+  scroll-margin-top: 104px;
+}
+.section h3 {
+  margin-top: 28px;
+  font-size: 20px;
+}
+.section ul {
+  display: grid;
+  gap: 12px;
+  max-width: 68ch;
+  margin-top: 20px;
+  padding-left: 20px;
+  list-style: disc;
+  color: var(--muted);
+  line-height: 1.75;
+}
+.scroll {
+  margin-top: 24px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.scroll .table {
+  min-width: 640px;
+  margin-top: 0;
+}
+.scroll :is(th, td) {
+  padding: 16px;
+}
+@media (max-width: 760px) {
+  .lead {
+    font-size: 17px;
+  }
+  .section {
+    margin-top: 40px;
+    padding-top: 28px;
+  }
+  .card {
+    padding: 24px;
   }
 }

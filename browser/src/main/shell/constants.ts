@@ -43,8 +43,11 @@ export const WINDOW_VISIBLE_MIN = 100;
 export const WINDOW_BOUNDS_FILE = 'window-bounds.json';
 /** Where macOS draws the traffic lights on the inset title bar: centred on the tabs (34px tall, ending at the strip's 40px; renderer/tabs.css). */
 export const TRAFFIC_LIGHTS = { x: 12, y: 16 } as const;
-/** The shell's background in each theme, before its page paints: the launch stage's own edge colour, so nothing flashes. */
-export const SHELL_BACKGROUND = { dark: '#0c0f0d', light: '#eef1ed' } as const;
+/**
+ * The shell's background in each theme, before its page paints: ink and paper, the launch stage's own
+ * colours (--ink and --paper in core/tokens.css, which a test holds these to), so nothing flashes.
+ */
+export const SHELL_BACKGROUND = { dark: '#1a1a1a', light: '#f7f5f0' } as const;
 /** A see-through view: the control shield only catches input. */
 export const TRANSPARENT = '#00000000';
 

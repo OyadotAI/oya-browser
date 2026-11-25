@@ -40,22 +40,102 @@ jobs:
 
   build-windows:
     name: Build Windows installer
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: ci
+    environment: windows-signing
     runs-on: windows-latest
+    timeout-minutes: 30
     permissions:
       contents: write
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      AZURE_SIGNING_PROFILE_NAME: ${{ vars.AZURE_SIGNING_PROFILE_NAME }}
+      WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+      WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - uses: actions/setup-node@v7
       with:
         node-version: 24
 
+    - name: Verify release commit belongs to main
+      run: node browser/build/verify-release-ref.cjs
+
     - name: Install browser dependencies
       run: cd browser && npm ci
 
-    - name: Build NSIS installer
-      run: cd browser && npm run dist:win -- --x64
+    - name: Test Windows signature refusal paths
+      shell: pwsh
+      run: ./browser/build/test-windows-signatures.ps1
+
+    # Managed (Azure Artifact Signing) when every setting is present; until then a self-signed
+    # build, so a release is never blocked on signing. Windows warns on installing a self-signed
+    # installer, and auto-update cannot check its signature, so that check is off for those builds.
+    - name: Choose Windows signing
+      id: signing
+      shell: bash
+      run: |
+        missing=""
+        for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT_NAME AZURE_SIGNING_PROFILE_NAME WINDOWS_PUBLISHER_NAME WINDOWS_SIGNER_SUBJECT; do
+          [ -n "${!name}" ] || missing="$missing $name"
+        done
+        if [ -z "$missing" ]; then
+          echo "mode=managed" >> "$GITHUB_OUTPUT"
+        else
+          echo "mode=self" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Self-signed Windows build::Managed signing is not configured (missing:$missing). This release's installer is self-signed: Windows warns on install, and auto-update skips its signature check."
+        fi
+
+    - uses: ./.github/actions/windows-signing
+      if: steps.signing.outputs.mode == 'managed'
+
+    - name: Build NSIS installer (managed signing)
+      if: steps.signing.outputs.mode == 'managed'
+      run: cd browser && npm run dist:win -- --x64 --config build/windows-signing.cjs
+
+    - name: Make a self-signed code-signing certificate
+      if: steps.signing.outputs.mode == 'self'
+      shell: pwsh
+      run: |
+        $bytes = New-Object byte[] 24
+        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $password = [Convert]::ToBase64String($bytes)
+        Write-Output "::add-mask::$password"
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Oya Browser (self-signed)' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(1)
+        $pfx = Join-Path $env:RUNNER_TEMP 'oya-self-signed.pfx'
+        Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
+        "CSC_LINK=$pfx" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        "CSC_KEY_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+    - name: Build NSIS installer (self-signed)
+      if: steps.signing.outputs.mode == 'self'
+      run: cd browser && npm run dist:win -- --x64 --config.win.verifyUpdateCodeSignature=false
+
+    - name: Verify packaged and installed Windows signatures
+      if: steps.signing.outputs.mode == 'managed'
+      shell: pwsh
+      run: |
+        $version = (Get-Content browser/package.json | ConvertFrom-Json).version
+        $installer = (Resolve-Path "browser/dist/Oya.Browser-$version-x64.exe").Path
+        $packaged = (Resolve-Path 'browser/dist/win-unpacked/Oya Browser.exe').Path
+        & ./browser/build/verify-windows-signatures.ps1 -Files @($installer, $packaged) -ExpectedSubject $env:WINDOWS_SIGNER_SUBJECT
+        $sqliteProbe = (Resolve-Path 'browser/build/check-sqlite-runtime.cjs').Path
+        try {
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $probe = Start-Process -FilePath $packaged -ArgumentList @("`"$sqliteProbe`"") -PassThru -Wait -NoNewWindow
+          if ($probe.ExitCode -ne 0) { throw 'The packaged Windows runtime lacks required SQLite support.' }
+        } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+        $destination = Join-Path $env:RUNNER_TEMP 'oya-signature-check'
+        $install = Start-Process -FilePath $installer -ArgumentList @('/S', '/currentuser', "/D=$destination") -PassThru -Wait
+        if ($install.ExitCode -ne 0) { throw 'The disposable Windows installation failed.' }
+        & ./browser/build/verify-windows-signatures.ps1 -Files @((Join-Path $destination 'Oya Browser.exe')) -ExpectedSubject $env:WINDOWS_SIGNER_SUBJECT
 
     - name: Upload to GitHub release
       shell: bash
@@ -359,6 +439,10 @@ jobs:
         echo "snapshot=$NAME" >> "$GITHUB_OUTPUT"
 
   deploy:
+    # One deploy per namespace at a time: overlapping runs would delete each other's migration Job.
+    concurrency:
+      group: deploy-oya-browser
+      cancel-in-progress: false
     name: Deploy to GKE (prod)
     needs: [build-image, build-browser, register-snapshot]
     # Desktop failures are ancestors of build-image. Override GitHub's implicit
@@ -410,6 +494,7 @@ jobs:
         SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         # Every table lives in Postgres (the Supabase project's own); Supabase itself is sign-in only.
         DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
         # Turnstile captcha on sign-in and sign-up. Optional: off when unset.
         TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
         TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
@@ -449,7 +534,11 @@ jobs:
         STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
         STRIPE_PRICES_DEVELOPER: ${{ secrets.STRIPE_PRICES_DEVELOPER }}
         STRIPE_PRICES_STARTUP: ${{ secrets.STRIPE_PRICES_STARTUP }}
+        STRIPE_LEGACY_BASE_PRICES_DEVELOPER: ${{ secrets.STRIPE_LEGACY_BASE_PRICES_DEVELOPER }}
+        STRIPE_LEGACY_BASE_PRICES_STARTUP: ${{ secrets.STRIPE_LEGACY_BASE_PRICES_STARTUP }}
         STRIPE_PORTAL_CONFIGURATION: ${{ secrets.STRIPE_PORTAL_CONFIGURATION }}
+        STRIPE_PRICE_LICENSE_MONTH: ${{ secrets.STRIPE_PRICE_LICENSE_MONTH }}
+        STRIPE_PRICE_LICENSE_YEAR: ${{ secrets.STRIPE_PRICE_LICENSE_YEAR }}
         # This deployment's own license, and the key admins issue licenses with.
         OYA_LICENSE_KEY: ${{ secrets.OYA_LICENSE_KEY }}
         OYA_LICENSE_SIGNING_KEY: ${{ secrets.OYA_LICENSE_SIGNING_KEY }}
@@ -474,6 +563,7 @@ jobs:
           --from-literal=SUPABASE_SERVICE_KEY="${SUPABASE_SERVICE_KEY}" \
           --from-literal=OYA_STORAGE=postgres \
           --from-literal=DATABASE_URL="${DATABASE_URL}" \
+          --from-literal=KEEL_DATABASE_URL="${KEEL_DATABASE_URL}" \
           --from-literal=TURNSTILE_SITE_KEY="${TURNSTILE_SITE_KEY}" \
           --from-literal=TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
           --from-literal=OYA_PROFILE_SECRET="${OYA_PROFILE_SECRET}" \
@@ -498,7 +588,11 @@ jobs:
           --from-literal=STRIPE_WEBHOOK_SECRET="${STRIPE_WEBHOOK_SECRET}" \
           --from-literal=STRIPE_PRICES_DEVELOPER="${STRIPE_PRICES_DEVELOPER}" \
           --from-literal=STRIPE_PRICES_STARTUP="${STRIPE_PRICES_STARTUP}" \
+          --from-literal=STRIPE_LEGACY_BASE_PRICES_DEVELOPER="${STRIPE_LEGACY_BASE_PRICES_DEVELOPER}" \
+          --from-literal=STRIPE_LEGACY_BASE_PRICES_STARTUP="${STRIPE_LEGACY_BASE_PRICES_STARTUP}" \
           --from-literal=STRIPE_PORTAL_CONFIGURATION="${STRIPE_PORTAL_CONFIGURATION}" \
+          --from-literal=STRIPE_PRICE_LICENSE_MONTH="${STRIPE_PRICE_LICENSE_MONTH}" \
+          --from-literal=STRIPE_PRICE_LICENSE_YEAR="${STRIPE_PRICE_LICENSE_YEAR}" \
           --from-literal=OYA_LICENSE_KEY="${OYA_LICENSE_KEY}" \
           --from-literal=OYA_LICENSE_SIGNING_KEY="${OYA_LICENSE_SIGNING_KEY}" \
           -n ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
@@ -528,10 +622,11 @@ jobs:
     - name: Apply billing, Keel telemetry and persona group migrations
       env:
         PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
-        PGCONNECT_TIMEOUT: '10'
+        KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
       run: |
-        : "${PGDATABASE:?Missing database connection for billing migration}"
-        psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/022_admin_billing.sql --file=server/migrations/023_agent_step_grants.sql --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql
+        scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/022_admin_billing.sql server/migrations/023_agent_step_grants.sql server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql server/migrations/029_self_hosted_licenses.sql
+        # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
+        if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 
     - name: Deploy with Kustomize
       run: kubectl apply -k k8s/overlays/prod
@@ -561,6 +656,38 @@ jobs:
       if: always()
       run: kubectl get pods,svc,ingress -n ${{ env.NAMESPACE }}
 
+  # A failed search notification must never undo a rollout or delay package publishing.
+  indexnow:
+    name: Notify IndexNow (production)
+    needs: [deploy, server-only]
+    # One deployment path normally skips; an explicit status function preserves the successful path.
+    if: ${{ !cancelled() && (needs.deploy.result == 'success' || needs['server-only'].result == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        persist-credentials: false
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: 24
+
+    - name: Submit production sitemap
+      env:
+        SITE_URL: https://oyabrowser.com
+      run: npm run indexnow
+
+    - name: Report notification failure
+      if: failure()
+      run: |
+        # The retry command is literal text, not shell substitution.
+        # shellcheck disable=SC2016
+        echo '::warning title=IndexNow notification failed::Production deployment succeeded; the IndexNow notification failed. See the script error above. Retry from the repository root: `npm run indexnow`.'
+
   publish-npm:
     name: Publish SDK and CLI to npm
     # After the deploy, so a new SDK never calls a route the server does not
@@ -570,6 +697,9 @@ jobs:
     # Each package must list this repo and deploy-prod.yaml as its trusted
     # publisher on npmjs.com (package settings, Trusted Publisher).
     needs: deploy
+    # Explicit, not the default success(): that also fails on any job upstream of the
+    # deploy, so an unsigned Windows build skipped publishing although prod was live.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
@@ -600,11 +730,64 @@ jobs:
           npm publish --workspace="$PKG" --provenance
         done
 
+  build-pypi:
+    name: Build the Python SDK
+    # Built apart from the upload, with no id-token: nothing the build runs (its
+    # dependencies, its build backend) can mint a PyPI publishing token.
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+    - name: Build
+      working-directory: packages/python
+      run: uv build
+
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: python-dist
+        path: packages/python/dist/
+        if-no-files-found: error
+
+  publish-pypi:
+    name: Publish the Python SDK to PyPI
+    # After the deploy, for the same reason as npm: a new SDK never calls a route the
+    # server does not have yet. PyPI Trusted Publishing by OIDC, so no PyPI token exists
+    # to leak or rotate. PyPI accepts only this repo's deploy-prod.yaml running in the
+    # `pypi` environment, which only v* tags may deploy to. This job does nothing but
+    # upload the files build-pypi made. The SDK versions on its own (pyproject.toml), so
+    # most tags carry a version already out; skip-existing makes that a no-op.
+    needs: build-pypi
+    if: ${{ !cancelled() && needs.build-pypi.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/oya-browser/
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        name: python-dist
+        path: dist/
+
+    - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+      with:
+        skip-existing: true
+
   publish-registry:
     name: Publish to MCP Registry
     # After the deploy, so the listing never points at tools that are not live
     # yet: the registry entry advertises this server to every MCP client.
     needs: deploy
+    # Explicit, not the default success(): that also fails on any job upstream of the
+    # deploy, so an unsigned Windows build skipped publishing although prod was live.
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       # OIDC proves the workflow belongs to this repo, and the repo's owner is
@@ -784,7 +967,7 @@ jobs:
     # Only explicit manual dispatch opts into this path; ordinary tag releases keep their existing jobs.
     if: github.event_name == 'workflow_dispatch' && inputs.server_only
     concurrency:
-      group: server-production-hotfix
+      group: deploy-oya-browser
       cancel-in-progress: false
     environment:
       name: production
@@ -865,12 +1048,13 @@ jobs:
       - name: Apply Keel telemetry and persona group migrations before rollout
         env:
           PGDATABASE: ${{ secrets.OYA_MIGRATE_DATABASE_URL || secrets.DATABASE_URL }}
-          PGCONNECT_TIMEOUT: '10'
+          KEEL_DATABASE_URL: ${{ secrets.KEEL_DATABASE_URL }}
         shell: bash
         run: |
           set -euo pipefail
-          : "${PGDATABASE:?Missing database connection for the rollout migrations}"
-          psql -X --dbname="$PGDATABASE" --set=ON_ERROR_STOP=1 --single-transaction --file=server/migrations/024_keel_usage.sql --file=server/migrations/025_persona_groups.sql
+          scripts/migrate-in-cluster.sh "$NAMESPACE" app "$PGDATABASE" server/migrations/024_keel_usage.sql server/migrations/025_persona_groups.sql server/migrations/026_keel_activity.sql server/migrations/027_aws_marketplace.sql server/migrations/028_playbook_runs.sql server/migrations/029_self_hosted_licenses.sql
+          # Keel has its own database once KEEL_DATABASE_URL is set; until then its tables stay in the main one.
+          if [ -n "$KEEL_DATABASE_URL" ]; then scripts/migrate-in-cluster.sh "$NAMESPACE" keel "$KEEL_DATABASE_URL" server/migrations/postgres/000_bootstrap.sql server/migrations/024_keel_usage.sql server/migrations/026_keel_activity.sql; fi
 
       - name: Roll out only the server container by immutable digest
         env:

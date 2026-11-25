@@ -14,6 +14,7 @@ const { hopHeader } = await import('../../../../../src/modules/control/cluster/h
 const { control } = await import('../../../../../src/modules/control/service.ts');
 const { stubFetch, text } = await import('../../../support/http.ts');
 const { patchRow, putRow, readySession } = await import('../../../support/control.ts');
+const { rememberSeat } = await import('../../../../../src/mcp/seat-store.ts');
 
 /** An Express-like request. */
 const request = (path, extra: any = {}) => ({
@@ -130,6 +131,20 @@ describe('forwardHttp, clustered', () => {
     assert.equal(res.body, 'frame');
   });
 
+  it('carries the caller’s model to the owner, so it runs the model the caller picked', async () => {
+    const calls = stubFetch(() => text('', 200));
+    const model = { 'x-oya-llm-provider': 'anthropic', 'x-oya-llm-model': 'claude-x', 'x-oya-llm-api-key': 'sk-a' };
+    const req = request(`/live/${id}`, {
+      originalUrl: `/api/live/${id}?key=${token}`,
+      query: { key: token },
+      headers: model,
+    });
+    const res = response();
+    await forward(req, res);
+    await res.done;
+    for (const [name, value] of Object.entries(model)) assert.equal(calls[0].init.headers[name], value);
+  });
+
   it('sends a JSON body for writes', async () => {
     const calls = stubFetch(() => text('', 200));
     const res = response();
@@ -168,5 +183,67 @@ describe('forwardHttp, clustered', () => {
     await forward(request(`/browsers/${id}`, { authToken: token }), res);
     assert.equal(res.statusCode, 503);
     assert.equal(res.body.code, 'owner_unavailable');
+  });
+});
+
+describe('forwardHttp, a chat connector’s pool request', () => {
+  /** A POST to the pool as `bearer`. */
+  const pool = (bearer: string) =>
+    request('/pool', {
+      baseUrl: '/mcp',
+      originalUrl: '/mcp/pool',
+      method: 'POST',
+      body: { jsonrpc: '2.0', id: 1, method: 'tools/call' },
+      headers: { authorization: `Bearer ${bearer}` },
+    });
+
+  /** A connector on key-a whose remembered browser `id` is connected to replica-2. */
+  async function connectorElsewhere(id: string) {
+    const connector = await control().credential('key-a', { label: 'Claude connector', connector: true });
+    await readySession(control(), 'key-a', id);
+    await patchRow(control(), 'session', id, { instance: 'replica-2', leaseUntil: Date.now() + 60_000 });
+    await putRow(control(), 'instance', 'replica-2', {
+      id: 'replica-2',
+      url: 'https://replica-2',
+      leaseUntil: Date.now() + 60_000,
+    });
+    await rememberSeat(connector.id, id);
+    return connector;
+  }
+
+  beforeEach(() => {
+    process.env.OYA_INSTANCE_URL = 'https://replica-1';
+  });
+
+  it('goes to the replica its browser is connected to, so a rollout never starts a second browser', async () => {
+    const connector = await connectorElsewhere('seat-b1');
+    const calls = stubFetch(() => text('ok'));
+    const res = response();
+    assert.equal(await forward(pool(connector.token), res), false);
+    await res.done;
+    assert.equal(calls[0].url, 'https://replica-2/mcp/pool');
+    assert.equal(calls[0].init.headers.Authorization, `Bearer ${connector.token}`);
+    assert.equal(calls[0].init.body, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call' }));
+  });
+
+  it('is served here when its browser is connected here, or it has none yet', async () => {
+    const connector = await control().credential('key-a', { label: 'Claude connector', connector: true });
+    assert.equal(await forward(pool(connector.token)), true);
+    await readySession(control(), 'key-a', 'seat-b2');
+    await rememberSeat(connector.id, 'seat-b2');
+    assert.equal(await forward(pool(connector.token)), true);
+  });
+
+  it('leaves an API key’s pool request, a keyless one and a bad token to be served here', async () => {
+    await connectorElsewhere('seat-b3');
+    assert.equal(await forward(pool(token)), true);
+    assert.equal(await forward(pool('oya_unknown')), true);
+    assert.equal(await forward(request('/pool', { baseUrl: '/mcp', originalUrl: '/mcp/pool' })), true);
+  });
+
+  it('serves everything here when running alone', async () => {
+    const connector = await connectorElsewhere('seat-b4');
+    delete process.env.OYA_INSTANCE_URL;
+    assert.equal(await forward(pool(connector.token)), true);
   });
 });

@@ -22,11 +22,15 @@ import { router as browsersRoutes } from '../modules/browsers/routes.ts';
 import { personaRoutes } from '../modules/personas/routes.ts';
 import { personaGroupRoutes } from '../modules/personas/group-routes.ts';
 import { container } from './container.ts';
+import { marketplaceRoutes, marketplaceConfig } from '../modules/marketplace/index.ts';
+import { consoleUrl } from '../modules/slack/service.ts';
 import { accountRoutes } from '../modules/erasure/index.ts';
 import { router as pairingRoutes } from '../modules/pairing/routes.ts';
 import { router as proxiesRoutes } from '../modules/proxies/routes.ts';
 import { router as gatewayRoutes } from '../modules/gateway/routes.ts';
 import { router as configRoutes } from '../modules/config/routes.ts';
+import { requestLlmMiddleware } from '../modules/config/request-llm.ts';
+import { laneMiddleware } from '../modules/browsers/connection/lane.ts';
 import { router as runsRoutes } from '../modules/playbooks/routes.ts';
 import { router as translateRoutes } from '../modules/translate/index.ts';
 import { router as routinesRoutes } from '../modules/routines/routes.ts';
@@ -86,6 +90,12 @@ function routeLabel(req) {
     .replace(/\/[A-Za-z0-9_-]{24,}/g, '/:token');
 }
 
+/** A model the caller picked for this request (`new Oya({ model })`), kept with the request's work and never saved. */
+router.use(requestLlmMiddleware);
+
+/** The lane the caller named (X-Oya-Agent), kept with the request's work so a desktop gives it one tab. */
+router.use(laneMiddleware);
+
 // Sign-in attempts are counted per browser so a wrong password cannot be typed
 // until the account locks. A browser that is gone cannot lock anything, and
 // keeping its tally would refuse a later browser that reused the id.
@@ -93,6 +103,8 @@ registry.on('browser:disconnected', ({ id }) => siteLogin.forget(id));
 
 /** Resources. Mounted without a prefix so req.path, which the role guards read, is unchanged. Auth: sign-in, account and API keys. */
 router.use(authRoutes);
+/** AWS purchase registration uses account sessions and remains distinct from paid activation. */
+router.use(marketplaceRoutes(container.marketplace, () => marketplaceConfig(consoleUrl())));
 /** Who the calling credential is signed in as, with the plan where this server has plans. */
 router.use(whoamiRoutes(async (userId) => (hosted() ? container.billing.subscriptions.plan(userId) : null)));
 /** Agent self-signup: an AI agent gets its own key, no person needed. */

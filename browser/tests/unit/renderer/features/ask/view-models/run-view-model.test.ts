@@ -35,6 +35,40 @@ describe('RunViewModel', () => {
   /** The step line as people read it. */
   const line = () => `${run.state.label || ASK_TEXT.thinking} ${progressMeta(run.state.count, run.state.seconds)}`;
 
+  describe('a dropped connection', () => {
+    it('says Reconnecting on the live line, before the run has a name and with no run id of its own', () => {
+      agent('', { kind: 'reconnecting' });
+      assert.match(line(), /^Reconnecting…/);
+      assert.equal(run.state.orb, 'thinking');
+    });
+
+    it('goes back to the run once it is heard again', () => {
+      agent('r1', { kind: 'start' });
+      agent('', { kind: 'reconnecting' });
+      agent('', { kind: 'resumed' });
+      assert.equal(run.state.label, '');
+    });
+
+    it('the next narrated step clears it, and the steps before it are kept', () => {
+      agent('r1', { kind: 'start' });
+      agent('r1', { kind: 'step', line: 'Opening the form' });
+      agent('', { kind: 'reconnecting' });
+      agent('r1', { kind: 'step', line: 'Typing the name' });
+      assert.equal(run.state.label, '');
+      assert.equal(run.state.card?.steps.length, 2);
+    });
+
+    it("ignores another tab's connection", () => {
+      const mine = new RunViewModel(fake.bridge, 3);
+      mine.begin();
+      fake.emit('onAgentEvent', { runId: '', event: { kind: 'reconnecting' }, tabId: 8 });
+      assert.equal(mine.state.label, '');
+      fake.emit('onAgentEvent', { runId: '', event: { kind: 'reconnecting' }, tabId: 3 });
+      assert.equal(mine.state.label, ASK_TEXT.reconnecting);
+      mine.dispose();
+    });
+  });
+
   describe('the card', () => {
     it('draws the plan and one narrated line per action once its run has started', () => {
       agent('r1', { kind: 'start', task: 'find jordans' });

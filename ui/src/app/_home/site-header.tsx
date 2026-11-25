@@ -1,38 +1,12 @@
-/**
- * The landing header.
- */
-import Link from 'next/link';
-import { OyaWordmark } from '@/components/oya-logo';
-import { discord, repository } from './content';
-import styles from '../page.module.css';
+/** The header every public page shares: the landing's own navigation, so menus match across pages. */
+import { Nav } from './nav';
+import { SiteChrome } from './site-chrome';
 
-/** Wordmark and main navigation, with Download always in reach as the header sticks. */
+/** The landing navigation, rendered with the landing's tokens on any public page. */
 export function SiteHeader() {
   return (
-    <header className={styles.header}>
-      <OyaWordmark />
-      <nav aria-label="Main navigation" className={styles.navigation}>
-        <Link href="/docs" data-track="cta_clicked" data-track-label="header_docs">
-          Docs
-        </Link>
-        <a href={repository} className={styles.roomy} data-track="cta_clicked" data-track-label="header_github">
-          GitHub
-        </a>
-        <a href={discord} className={styles.roomy} data-track="cta_clicked" data-track-label="header_discord">
-          Discord
-        </a>
-        <Link
-          href="/#download"
-          className={styles.headerDownload}
-          data-track="cta_clicked"
-          data-track-label="header_download"
-        >
-          Download
-        </Link>
-        <Link href="/dashboard" className={styles.console} data-track="cta_clicked" data-track-label="header_console">
-          Open console
-        </Link>
-      </nav>
-    </header>
+    <SiteChrome>
+      <Nav />
+    </SiteChrome>
   );
 }

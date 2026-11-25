@@ -6,196 +6,755 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
-### Security
-
-- Updated vulnerable runtime and development dependencies, including Electron and Mars's vendored Rustls. Retained the existing TLS ClientHello shaping and adapted legacy build tooling to the patched minimatch implementation.
-
 ### Added
 
 - Added optional macOS on-screen window selection with a separate Oya confirmation before capture. The existing window list remains available, and closed windows or changed requesting tabs cannot inherit a pending choice.
+
+## [1.0.295](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.295) · 2026-11-25
+
+### Changed
+
+- claude.ai and ChatGPT connectors on `/mcp/pool` now work like the desktop app's MCP: ten tools, and one cloud browser that starts itself the first time a page is opened. There is no start, stop or pool tool to call. Only six tools act on a page, so there are fewer approvals to give. API keys keep the full pool tool set, unchanged.
+- A connector keeps its own browser, apart from other connectors and API clients in the same project, and finds it again after a deploy or a dropped connection.
+- Connecting an app to Oya is one Allow click when you have one project. With several, the last project you connected is preselected. A new account gets its first project on that screen.
+
+### Fixed
+
+- The OAuth server no longer advertises refresh tokens it does not issue.
+- An expired connection request has its own screen, and a failed one can be tried again.
+
+### Documentation
+
+- Added ChatGPT setup steps. The tool counts in the docs and llms.txt are checked against the code.
+
+## [1.0.294](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.294) · 2026-11-24
+
+### Fixed
+
+- Fixed the release check for native desktop clicks. It now reads the page and uses the returned button reference to verify input before, during, and after human takeover.
+
+## [1.0.293](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.293) · 2026-11-24
+
+### Documentation
+
+- Added a prompt users can paste into Claude Code or Codex to install Oya Browser on macOS or Windows and connect the desktop app to their agent.
+
+## [1.0.292](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.292) · 2026-11-24
+
+### Documentation
+
+- Added desktop and cloud installation steps for Claude Code and Codex, including a prompt to verify the connection.
+
+## [1.0.291](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.291) · 2026-11-24
+
+### Added
+
+- Remote MCP now selects verified cloud sessions. Desktop browsing uses local MCP.
+- Browsing turns can show a fresh live card with a temporary watch-only link. Requested screenshots appear as fixed images in compatible chat hosts.
+- Oya Browser is being submitted to the ChatGPT plugin directory: the package lives in plugins/oya-browser-chatgpt, and oyabrowser.com answers OpenAI's domain check at /.well-known/openai-apps-challenge.
+
+## [1.0.290](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.290) · 2026-11-24
+
+### Added
+
+- In Claude, and other chat apps that show MCP Apps, starting a browser now shows a card in the conversation: the browser's page, refreshed every two seconds while you can see it, with its name and address, and a Take over button that opens the live page. The card gets its pictures through the chat app's own connection, so no sign-in token ever reaches it. Every chat app also gets a "Watch or take over" link in the start reply.
+
+## [1.0.289](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.289) · 2026-11-24
+
+### Fixed
+
+- The Claude Code plugin's author is now "OyadotAI", the GitHub organization's name: the Claude directory refused "Oya" and "Oya AI" as too close to other listings' names. Its author link is oyabrowser.com, not getoya.ai.
+
+## [1.0.288](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.288) · 2026-11-24
+
+### Fixed
+
+- Agents' `analyze_page`, `click` and `type` now reach every frame from another site, as Keel's read does: a frame nested inside another (an embedded checkout inside a portal) and two frames from the same site are each read and acted on, where before they were skipped. A frame that reloaded since the read, even at the same address, is refused rather than acted on blind. This reaches local agents and claude.ai or ChatGPT alike.
+- The Claude Code plugin's manifest names itself "Oya Browser" to match its directory listing, and its description no longer carries compliance wording, which the directory could not accept automatically.
+- Keel's page reads now show the scan animation and the outlines on the page, and its clicks and typing are narrated on the shield, as other agents' actions are.
+
+## [1.0.287](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.287) · 2026-11-24
+
+### Fixed
+
+- The agent's page scan and its on-page outlines now agree on common form patterns. A field under its own floating label is no longer reported as covered and gets its outline; a hidden "I agree" checkbox is seen and outlined through its label; controls inside a fully transparent banner are no longer reported as visible.
+
+## [1.0.286](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.286) · 2026-11-24
+
+### Fixed
+
+- The desktop browser no longer freezes with "Could not change control" until it is force-quit. A control change that hit an error left the takeover waiting forever and closed the server connection for good; the takeover now finishes, and only a failed sign-in ends the connection.
+
+### Added
+
+- Added owned-frame page evaluation, native hit testing, actionable cross-origin frame reads and verified browser/profile/DPR identity for Keel diagnostics. Native click paths report their actual input method; shielded macOS input returns an explicit capability error before scrolling or focus, preserving the browser control fence. Native clicking beneath that shield remains unavailable.
+
+## [1.0.285](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.285) · 2026-11-24
+
+### Fixed
+
+- The desktop app no longer stops taking agent commands after a page closes its own tab (for example Gmail's pop-out compose). Every command failed with "Cannot read properties of undefined (reading 'isFocused')" until Oya was restarted.
+
+## [1.0.284](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.284) · 2026-11-23
+
+### Added
+
+- A comparison of Oya and Amazon Nova Act for healthcare browser agents at /vs/amazon-nova-act, with every Nova Act fact sourced from AWS's own pages.
+- Short addresses for healthcare buyers: /security, /hipaa, /healthcare, /use-cases/* and /compare/* now lead to the trust center, the BAA page, the healthcare page, the workflow pages and the comparisons.
+- The BAA page answers whether you can self-host to keep PHI in your own VPC, and whether the free community edition is covered.
+- llms.txt opens with a healthcare and HIPAA summary, and the self-hosting docs link to the BAA page and trust center.
+
+## [1.0.283](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.283) · 2026-11-23
+
+### Fixed
+
+- Added session-scoped viewport sizing to local MCP and preserved screenshot metadata; wrapped links now use reachable client-rect points for both coverage analysis and native clicks.
+
+## [1.0.282](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.282) · 2026-11-23
+
+### Fixed
+
+- A self-hosted license whose payment is refunded in full or disputed is revoked, and its subscription issues no new keys; a revoked key stops working at the server's next daily check-in. Previously the key kept working until it expired, up to a year and 14 days later.
+
+## [1.0.281](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.281) · 2026-11-23
+
+### Added
+
+- Self-hosted servers can buy more cloud browsers themselves. The billing page has a Self-hosted license section: choose 6 to 50 browsers, billed $20 a browser a month or $240 a year, pay through Stripe, and copy the key to set as `OYA_LICENSE_KEY`. Each renewal issues a new key; every key works 14 days past its paid period so there is time to swap it in.
+
+### Changed
+
+- A self-hosted server past its cap now answers with a link to buy a license (`upgrade_url`) instead of an email address. For more than self-serve sells, refusals, the billing page and the docs link a call with the founders instead of sales@getoya.ai.
+
+## [1.0.280](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.280) · 2026-11-21
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.279](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.279) · 2026-11-21
+
+### Changed
+
+- One palette of five colours across the desktop app, the website and the console: ink, paper, the logo's lime, red and amber. Lime is the only green; the olive, forest and other greens, the blues and purples are gone. Light and dark themes use the same five.
+- Desktop: buttons, the start page's "DO?", switches and the connected dot are lime with dark content in the light theme, and success shows in lime. Profile avatars differ by fill style rather than hue. The control shield, the share picker and the page dialogs use the same palette.
+- Desktop: the connect screen shows the ChatGPT, Codex and VS Code marks.
+- Website: dark sections are charcoal rather than green-black, and every lime is the logo's. The trust, research, release-notes, legal and answer pages and the favicon follow the same palette.
+- Console and docs: the green-black dark theme becomes charcoal, light-theme buttons are lime with dark text, form outlines are easier to see, code highlighting uses the five colours, and info notes are neutral. Docs and sign-in links are underlined.
+- A test in each part fails if a colour outside the five is added, if lime is used as text on a light background, or if text drops below 4.5:1 contrast.
+
+## [1.0.278](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.278) · 2026-11-21
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.277](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.277) · 2026-11-21
+
+### Fixed
+
+- Desktop: pairing the app with a different account now switches the account at once in the toolbar avatar, the profile menu and Settings. Before, the previous account stayed on screen until Settings was opened, and its cached details and claim page were kept on disk.
+- Desktop: the app names the account it remembers from launch, even when the server cannot be reached; it used to say "Signed in with an API key" until it connected.
+- Desktop: an answer about the previous account that arrives after a switch is discarded and can no longer overwrite the new one.
+
+### Changed
+
+- Desktop: every colour in the shell's stylesheets now comes from the design tokens, with new tokens for success, warning, information, the dialog scrim and the profile avatar tones. Status badges, avatars and Studio error text are easier to read in the light theme. A check in the test suite fails on any colour written outside the tokens.
+
+## [1.0.276](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.276) · 2026-11-21
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.275](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.275) · 2026-11-21
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.274](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.274) · 2026-11-21
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.273](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.273) · 2026-11-21
+
+### Added
+
+- Added the official dark-theme Product Hunt launch embed badge to the landing hero on `/` and allowed `https://api.producthunt.com` in `Content-Security-Policy` `img-src`.
+
+## [1.0.272](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.272) · 2026-11-20
+
+### Added
+
+- Emitted full semantic HTML inside `<content:encoded>` (`xmlns:content`) on `/feed.xml` for `/research/*` posts so RSS readers and syndication importers receive full research tables and methodology instead of one-sentence summaries.
+- Expanded `Organization.sameAs` structured data to 15 verified profiles, adding `x.com/OyaAgents`, `dev.to/oya-browser`, `oyabrowser.hashnode.dev` and `reddit.com/user/OyaAI/`.
+
+## [1.0.271](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.271) · 2026-11-20
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.270](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.270) · 2026-11-20
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.269](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.269) · 2026-11-20
+
+### Added
+
+- Added five sourced comparison pages (`/vs/playwright-mcp`, `/vs/chrome-devtools-mcp`, `/vs/firecrawl`, `/vs/stagehand`, `/vs/skyvern`) linked from `/vs`, site footers, `/sitemap.xml` and `/llms.txt`, with an upgraded comparison table provenance bar, highlighted Oya column, differentiated "Not stated" pills and side-by-side fit summary cards.
+
+### Changed
+
+- Re-audited all public vendor comparisons on `2026-11-20`, expanded root `Organization.sameAs` with verified public profiles (`oya.dev`, Glama, YouTube, X), and lengthened meta descriptions on `/release-notes`, `/privacy`, `/terms` and `/vs` to 150-160 characters.
+- Notified IndexNow automatically after successful full and server-only production deployments, with bounded requests and a visible, nonblocking warning when notification failed.
+
+## [1.0.268](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.268) · 2026-11-20
+
+### Fixed
+
+- Corrected the release secret scan's false positive on public documentation/feed metadata with one exact historical exception; all other secret detection remains enabled.
+
+## [1.0.267](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.267) · 2026-11-20
+
+### Added
+
+- Added a dedicated pricing page, an RSS feed for research and releases, and structured data for public pages and published plans.
+- Added cached agent-discovery aliases for the documentation index and agent card while preserving OAuth discovery routes.
+
+### Changed
+
+- Made coding-agent setup easier to discover from Product navigation and documentation, and aligned desktop welcome, Connect, session restart and recovery instructions across the website, README and agent guides.
+- Distinguished authenticated cloud MCP and plugin setup from local desktop Connect, corrected headless SDK examples to start and stop cloud browsers, and replaced an absolute bot-detection claim with explicit limitations.
+- Kept canonical HTML pages in the sitemap, retained Markdown discovery through agent docs and alternate links, and omitted modification dates because request times, benchmark dates and vendor-check dates do not establish an editorial update.
+- Preserved RSS, agent-document and API alternate links on public pages with their own canonical metadata, including pricing, comparisons and documentation topics.
+- Added a dedicated `/pricing` page, a static `/feed.xml` RSS feed, a concise `/llms.txt` index mirrored at `/.well-known/llms.txt` with public cache headers, unified JSON-LD structured data (`Organization`, `SoftwareApplication`, `TechArticle` and `BreadcrumbList`), and broadened coding-agent discovery metadata in `server.json` and `.claude-plugin/plugin.json`.
+
+## [1.0.266](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.266) · 2026-11-20
+
+### Changed
+
+- The desktop app's first-run setup shows every way to connect on one screen: continue with ChatGPT, continue with Oya, one button per AI app on this computer (Claude Code, Codex, Cursor, VS Code), your own AI key, or your own server. Every option is disabled while a sign-in runs, an app that is not installed no longer shows a test prompt, and the skip link reads "No AI for now, just browse".
+
+## [1.0.265](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.265) · 2026-11-20
+
+### Added
+
+- Coding agents connected to the desktop app can test a web app and pull data from pages: `read_console` and `read_network` show what the page in the agent's own tab logged and fetched, and `wait_for` waits for text or an element. An agent reads only a tab it opened itself, never the person's tabs or another agent's.
+- One line installs and connects Oya for a coding agent: `curl -fsSL https://oyabrowser.com/install-desktop.sh | sh -s -- claude-code` (and a PowerShell line for Windows) installs the app if it is missing, checks Oya's signature before copying it, opens it, and asks the person in a dialog before connecting. Cancel is the default; after a Cancel, further requests are ignored for five minutes.
+- llms.txt and the agent skill lead with that line, and add two recipes: testing a web app on localhost, and extracting data from pages into rows.
+
+### Fixed
+
+- Reading a page's console or requests through the browser commands returned every tab's entries, the person's own tabs among them. It now returns only the calling agent's own tab.
+
+## [1.0.264](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.264) · 2026-11-20
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.263](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.263) · 2026-11-20
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.262](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.262) · 2026-11-20
+
+### Fixed
+
+- Hardened server authorization and connection lifecycle: restricted pairing, persona-group, pool-cookie and credential-import writes to administrators, confined shared-browser MCP links to single-browser page tools, rejected invalid MFA domain clears, serialized WebSocket admission and command-send failure cleanup, and handled malformed upgrade URLs, billing state, and usage accounting cleanly.
+- Improved desktop browser reliability: kept alert/confirm/prompt dialogs scoped per page, preserved control ownership and local MCP session cleanup on disconnect or `DELETE /mcp`, kept offline MCP access to the starting tab after opening new tabs, aborted in-flight chats on sign-out and empty tab strips, deduplicated download titles, and fixed Library site filtering for hostless items.
+- Fixed console and docs behavior: decoded Base64URL JWT expiry for background session renewal, preserved MFA requirements on OAuth/claim callbacks, kept `/dashboard?browser=` deep links intact, reset workspace tabs and modals across project and manual API-key switches, persisted shared `/live` tokens across same-tab reloads with accurate initial control mode, aligned `/docs` search anchors and mobile scrolling, and fixed header menu dismissal and keyboard shortcuts.
+- Hardened the CLI, TypeScript SDK, and Python SDK: wrote config, `.env`, and cookie jar files atomically owner-only without following symlinks, scrubbed secret prompts from readline history, preserved existing `.env` secrets and quoted special characters on `oya install --config`, normalized schemeless `oya login` URLs, improved global flag and TTY menu input handling, URL-encoded SDK path segments, and aligned Python SDK start options, timeouts, header checks, and element validation.
+
+## [1.0.261](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.261) · 2026-11-20
+
+### Added
+
+- A page on browser automation for regulated industries: the audit trail, access limits, human takeover and self-hosting a reviewer checks, with SOC 2 status and HIPAA scoped to healthcare on Oya Cloud and the enterprise edition. It is linked from the footer, the sitemap and llms.txt.
+
+### Changed
+
+- The prior authorization, eligibility, claim status and payer portal pages each explain their own task: the portal steps, what the agent reads and writes, and where a person takes over.
+- Six healthcare pages now say what they are about in their main heading, such as "payer portal automation" and "browser for healthcare".
+- The trust page shows HIPAA mode on Oya Cloud as available with a BAA on request, matching the enterprise trust center.
+
+## [1.0.260](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.260) · 2026-11-19
+
+### Changed
+
+- Updated new-subscription billing choices to Developer $500/month and Startup $2,500/month, and preserved existing subscribers' plan recognition when Stripe price IDs change.
+- Highlighted the homepage's browser-scaling sentence in lime, matching the requested marker treatment.
+- Darkened supporting text across the public website so deployment guidance, answers, pricing notes and qualifications are easier to read on light surfaces.
+- Made the homepage's HIPAA, BAA and SOC 2 Type I claims more prominent in a linked trust badge beside the primary actions.
+- Redesigned the homepage hero with an editorial split layout, refined typography and a luminous frame around the product video, preserving its content and controls.
+- Removed the heading and introduction above the homepage hero video.
+- Replaced the homepage's abstract hero artwork with the recorded product demo and updated the website's listed monthly prices to $500 for Developer and $2,500 for Startup.
+- Connected the homepage around a first portal case and its reusable steps, restored the recorded prior-authorization demo, and added visible pricing with a direct navigation link so visitors can evaluate the workflow and cost together.
+
+## [1.0.259](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.259) · 2026-11-19
+
+### Changed
+
+- Setting up the desktop browser is simpler: the headline is "Connect the browser your way to enable AI mode", the three starting cards say what they do and what you need, and each shows the logos of the tools it works with in place of the mock-up pictures. The inner screens use plainer wording, and the getting-started docs use the same card names.
+
+## [1.0.258](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.258) · 2026-11-19
+
+### Changed
+
+- The public website, the docs, sign-in and the console are back to the look and home page they had before 1.0.256. The desktop browser keeps its new look. The docs side menu still follows the page.
+
+## [1.0.257](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.257) · 2026-11-19
+
+### Changed
+
+- The desktop browser has the website's look: flat charcoal in dark and warm paper in light, a lime accent, square edges and tall condensed headings. The Oya mark is drawn flat in lime, and the start page and setup screen have a plain background.
+
+## [1.0.256](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.256) · 2026-11-19
+
+### Changed
+
+- The public website has a new look: flat charcoal with one lime accent, tall condensed headlines and square edges, across the website, the docs, sign-in and the console, in both the dark and light themes. The wording and sections are the same.
+- The docs side menu now scrolls with the page, so the section you are reading stays highlighted and in view.
+- The home page has a pricing section: Free, Developer, Startup and Enterprise, with Enterprise leading to sales. "Pricing" is in the menu and `/pricing` lands on it.
+- The home page has a new headline, "No API? No problem. Automate any portal with browser agents.", and shows the result of a run straight after the demo.
+- The Security and Release notes pages load when the site is started from the repository root.
+- The home page's hero now shows the recorded prior-authorization demo in place of the artwork.
+
+## [1.0.255](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.255) · 2026-11-19
+
+### Fixed
+
+- The website's macOS and Windows download buttons download again. They had pointed at a 1.0.83 file that no longer exists; they now always fetch the newest installer.
+- The whole Product row in the phone menu opens the product links, not only the small arrow.
+
+### Changed
+
+- The download buttons in the site footer are now filled buttons with a download icon.
+- Every public page now uses the home page's header and footer, so the menu and footer links are the same everywhere.
+
+## [1.0.254](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.254) · 2026-11-19
+
+### Fixed
+
+- The landing page menu on iPhone works again: tapping Product, Docs or any other item no longer closes the menu before the tap lands.
+
+## [1.0.253](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.253) · 2026-11-18
+
+### Changed
+
+- Extended the forest, ivory and lime design across the website, documentation, authentication and console. Mobile navigation and full scrolling tables keep every destination and column available; the landing diagram has a separate routing lane, and documentation anchors honor reduced motion.
+- Added qualified workflow-maintenance and portal-document stories, with primary sources and a founder-led invitation to scope an SOP or screen recording.
+- Gave all 22 answer pages subject-specific visual heroes and clearer feature, setup and comparison layouts. Added finite section entrances and disclosure feedback, with visible server content, reduced-motion support and immediate settling on interaction.
+- Simplified the maintenance story to plain server and desktop outcomes, keeping the technical repair details available on demand.
+- Rewrote the landing page and all 22 answer pages as task-led narratives: start with one case, explain reusable steps and intervention, then end with the relevant next action. Search metadata, comparison evidence and dated BAA facts stay intact.
+
+## [1.0.252](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.252) · 2026-11-18
+
+### Added
+
+- The Python SDK, `oya-browser` 0.2.2: `Oya(model={"provider": ..., "name": ..., "api_key": ...})` picks the model for one client, as `@oya-ai/browser` does, and `oya.personas.create`, `clone` and `update` take keyword arguments (`create(name="us", max_concurrent=2)`), with a dict still accepted.
+- The repository README links both SDKs: `@oya-ai/browser` on npm and `oya-browser` on PyPI.
+
+### Fixed
+
+- The server reads a `null` `data` or `secrets` on a chat or a background run as none, so an older client that sends `null` (the Python SDK before 0.2.1) is no longer refused.
+- On oyabrowser.com, the "change one line" cards and the comparison tables' first column showed black; the site header no longer lets the page show through behind its links; the home page's opening paragraph is shorter.
+
+## [1.0.251](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.251) · 2026-11-18
+
+### Fixed
+
+- Python SDK 0.2.1: `browser.ask()` and `extract()` called without `data` or `secrets` failed, because they sent `null` for both and the server refuses that. They now leave out what was not given, as the TypeScript SDK does.
+
+## [1.0.250](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.250) · 2026-11-18
+
+### Added
+
+- The Python SDK, [oya-browser on PyPI](https://pypi.org/project/oya-browser/): `pip install oya-browser`. The same surface as `@oya-ai/browser`, sync (`Oya`) and async (`AsyncOya`), and `browser.for_browser_use()` hands an Oya browser to browser-use in one line.
+- The home page and the docs open with the one line each stack changes to run on Oya: browser-use, Playwright (Python and TypeScript), Browserbase, and Claude Code, Codex or Cursor.
+
+### Fixed
+
+- A background run (`browser.submit()`) that brings its own login, as `secrets` or as a replay's secret variables, signs in itself instead of waiting forever for a person when no login is stored on the profile. A stored login, a refused password, a lockout, MFA and CAPTCHA still hand off as before.
+- "No CAPTCHA solver configured" and "<vendor> is not configured" now say where to fix it on a hosted key: the console's Settings tab or `oya.config.set(...)`, with the server variable only for self-hosting.
+- The `@oya-ai/browser` README: the portal example saves its login on the profile, `analyze()` asks for markdown, `extract()` is typed, and the `login` attention reason is listed.
+
+## [1.0.249](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.249) · 2026-11-18
+
+### Added
+
+- [A BAA page](https://oyabrowser.com/baa): how to get a Business Associate Agreement for HIPAA mode (on Oya Cloud on request, or self-hosted in your own cloud), what HIPAA mode changes, where Oya Cloud runs PHI on Google Cloud, and the evidence available on request.
+
+### Changed
+
+- SOC 2: the site now states the issued SOC 2 Type I report; the Type II audit is in progress.
+- The comparison pages say HIPAA mode uses no outside browser vendors, proxies or CAPTCHA solvers, and that audit records are kept six years in HIPAA mode.
+
+## [1.0.248](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.248) · 2026-11-18
+
+### Added
+
+- Comparison pages built from each vendor's own public pages, linked and dated: [best browser for AI agents](https://oyabrowser.com/best-browser-for-ai-agents) (Browserbase, Steel, Anchor, Browser Use, Kernel), [best payer portal automation](https://oyabrowser.com/best-payer-portal-automation) (Skyvern, CloudCruise, QuickIntell, Champ AI) and [best AI browser](https://oyabrowser.com/best-ai-browser) (Comet, Dia, Claude in Chrome, Aside, ego). Each Oya vs page now has a side-by-side table too.
+
+### Changed
+
+- The home page leads with what Oya is for: build a browser automation on your desktop, deploy it anywhere, replay it with no model.
+- When an agent connects to the desktop app's MCP server or loads the oya-browser skill, it is told Oya is the browser the person installed for it, and uses Oya for web tasks unless the person asks for another.
+
+### Fixed
+
+- browser-use could not drive an Oya browser: Oya's CDP endpoint refused the `background` option browser-use sends when it opens its tab. It is now accepted; the tab opens as every automation tab does.
+
+## [1.0.247](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.247) · 2026-11-18
+
+### Fixed
+
+- An agent run in the desktop app now survives a dropped connection. The run used to stop whenever the network cut the long request behind it, with "the connection to the server dropped mid-run, likely a server restart". Now the server keeps the run going for two minutes, the panel says "Reconnecting…", and the app comes back for the same run and shows its real answer. The agent stays in the tab it was working in, and Stop still stops the run at once. Needs this release on both the server and the desktop app.
+- The message shown when a run really could not be picked up again no longer blames a server restart.
+
+## [1.0.246](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.246) · 2026-11-18
+
+### Fixed
+
+- Releases were blocked by a high-severity advisory in picomatch (GHSA-fc5q-39xc-vjpf) that has no fixed version yet. It reaches the server only through the Daytona SDK's image builder, which Oya never calls, so the dependency audit now allows it by id until a fix ships.
+
+## [1.0.245](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.245) · 2026-11-18
+
+### Added
+
+- Two pages for people choosing an AI browser: [the browser for Claude Code, Codex and Cursor](https://oyabrowser.com/browser-for-claude-code) and [an AI browser that works with ChatGPT and Claude](https://oyabrowser.com/ai-browser-chatgpt-claude).
+
+### Changed
+
+- The home page title and description are shorter, and each payer portal page's title now starts with what it automates (for example, "Payer portal automation for portals with no API").
+
+## [1.0.244](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.244) · 2026-11-17
+
+### Added
+
+- An [interactive API reference](https://oyabrowser.com/docs/api/reference): every public route, rendered from [/openapi.json](https://oyabrowser.com/openapi.json).
+
+### Changed
+
+- `/openapi.json` now describes the API the SDK uses, each path under its real `/api` prefix, including playbook run history and typed request bodies. Routes only the console, the desktop app or an operator call are left out, and a test keeps the spec and the server's routes in step.
+
+## [1.0.243](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.243) · 2026-11-17
+
+### Fixed
+
+- A script driving your Oya desktop app through the SDK (`oya.desktop.connect()`) now works in one tab of its own: it no longer takes over the tab you are looking at, every `goto()`, `ask()`, `play()` and background run stays in that tab, and `stop()` closes it. Before, each run left a second tab open and replaced the page you had open.
+
+## [1.0.242](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.242) · 2026-11-17
+
+### Added
+
+- Run history for playbooks. Every replay, from the console, the SDK, the desktop app, MCP or a routine, is kept when it ends: the newest 20 per playbook, sealed per project. The console shows them under a Runs button on each playbook, and `GET /playbooks/:name/runs` returns them. `GET /playbooks` now says how each playbook last ran (`lastRun`, `null` if never).
+- A visual view of a playbook in the console's editor: Start, one card per step, End. Click a step to edit its fields; the JSON stays the source.
+
+### Changed
+
+- Record a flow in the console no longer needs a running browser. With none running, it starts one with your project defaults and records on it once it connects.
+- The desktop app's Playbooks panel is tighter: one-line search, compact rows, and a dot for how each playbook last ran.
+
+## [1.0.241](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.241) · 2026-11-17
+
+### Added
+
+- [Research](https://oyabrowser.com/research) on oyabrowser.com: dated write-ups with the method and the raw numbers, starting with [how well a recorded run replays](https://oyabrowser.com/research/replay) and [stealth, measured](https://oyabrowser.com/research/stealth).
+- [Compare](https://oyabrowser.com/vs), one page listing every Oya comparison, linked from the navigation and the footers.
+- [What is an agentic browser?](https://oyabrowser.com/agentic-browser), and a Browsers group in the site menu linking it next to the [AI browser](https://oyabrowser.com/ai-browser) and [HIPAA-compliant browser](https://oyabrowser.com/hipaa-compliant-browser) pages.
+
+## [1.0.240](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.240) · 2026-11-14
+
+### Added
+
+- New pages on oyabrowser.com for the payer portal work teams automate with Oya: [payer portal automation](https://oyabrowser.com/payer-portal-automation), [eligibility verification](https://oyabrowser.com/eligibility-verification-automation), [claim status](https://oyabrowser.com/claim-status-automation), [denials and appeals](https://oyabrowser.com/denial-management-automation), [provider enrollment](https://oyabrowser.com/provider-enrollment-automation) and [state registry lookups](https://oyabrowser.com/state-registry-automation).
+
+### Changed
+
+- [Oya vs Browserbase](https://oyabrowser.com/vs/browserbase) now leads with Oya as a HIPAA-compliant Browserbase alternative.
+
+### Fixed
+
+- The plugin manifest's contact and legal links, and the desktop app's author address, pointed at oya.ai, which no longer resolves. They now use sales@getoya.ai and oyabrowser.com/terms.
+
+## [1.0.239](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.239) · 2026-11-13
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.238](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.238) · 2026-11-13
+
+### Fixed
+
+- Reading a page with a dialog open now covers the whole dialog, not just its body. On LinkedIn's "comment, react and repost as" picker, agents saw the choices but never the Save button, so they could select an identity and never confirm it. A dialog named by `aria-labelledby` is now reported by its heading text instead of an element id.
+
+## [1.0.237](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.237) · 2026-11-12
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.236](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.236) · 2026-11-12
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.235](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.235) · 2026-11-12
+
+### Fixed
+
+- Corrected installer test formatting that blocked v1.0.234's release pipeline, allowing the guided Docker, Kubernetes, Amazon ECS and Google Cloud installer to ship to npm.
+
+## [1.0.234](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.234) · 2026-11-12
+
+### Changed
+
+- Redesigned the installer around four clear phases, compact completed answers and readable choices, with inline instructions for finding every required and Advanced value. Added narrow-terminal and plain-output fallbacks, and made cancellation and EOF stop setup safely.
+
+- Connected the installer to the existing Docker, Kubernetes, Amazon ECS and Google Cloud/GKE deployment examples, with destination-specific questions, preflight, saved plans and recovery commands. Kept the original `--yes` quickstart and version 1 plans compatible.
+- Made installer previews skip checkout updates and deployment writes, and made deployment verification wait for readiness and clean up temporary browsers and port-forwards on failure.
+
+## [1.0.233](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.233) · 2026-11-11
+
+### Added
+
+- oyabrowser.com/vs/steel, /vs/anchor and /vs/browser-use: Oya next to each provider its API drives, each from a different side of Oya, with a visible FAQ and matching structured data, linked from both footers and in the sitemap.
+- Each docs topic has its own page (oyabrowser.com/docs/sdk, /docs/playbooks, /docs/mcp and eight more) with its own title, description and canonical address, linked from the docs sidebar and in the sitemap. The full /docs page and the Markdown docs are unchanged.
+
+## [1.0.232](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.232) · 2026-11-10
+
+### Fixed
+
+- The secret scan accepts the site's IndexNow key, which is public by design, so v1.0.231's site pages deploy.
+
+## [1.0.231](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.231) · 2026-11-10
+
+### Added
+
+- oyabrowser.com/ai-browser, /browser-for-healthcare, /hipaa-browser-automation and /prior-authorization-automation, each answering its question with a visible FAQ and matching structured data, in the sitemap and llms.txt.
+- Every answer page is linked from the site footer and the home page footer, and has its own social card.
+- `npm run indexnow` submits the live sitemap to IndexNow (Bing and the engines it shares with) after a site deploy.
+
+### Changed
+
+- HIPAA and BAA claims on the answer pages name Oya Cloud and the enterprise edition.
+
+## [1.0.230](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.230) · 2026-11-10
+
+### Added
+
+- oyabrowser.com/hipaa-compliant-browser and oyabrowser.com/vs/browserbase, each answering its question with a visible FAQ and matching structured data.
+- /llm.txt and /llm-full.txt serve the same files as /llms.txt and /llms-full.txt.
+
+### Changed
+
+- One description of Oya Browser everywhere: the site, llms.txt, the README, npm and the MCP registry now say it is a HIPAA-compliant browser, an AI browser on the desktop and an agentic browser for teams.
+
+## [1.0.229](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.229) · 2026-11-10
+
+### Added
+
+- Website notifications: a site asks once with a Show notifications? box, Allow or Block is remembered per site and profile (forget it under History and bookmarks), and an allowed site notifies from a background tab and from its service worker. Never for a tab an agent drives, a governed browser or incognito.
+
+## [1.0.228](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.228) · 2026-11-10
+
+### Fixed
+
+- macOS: a site asking for a security key or phone passkey (Google's "Use a security key", for example) no longer hangs and blocks every later passkey prompt on the page with "Something went wrong"; it is declined the way a closed passkey dialog is, so Touch ID passkeys and other sign-in options keep working.
+
+## [1.0.227](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.227) · 2026-11-10
+
+### Fixed
+
+- After signing in with Google in a popup, Gmail now reliably moves into a normal tab instead of sometimes staying in the popup window.
+- Right-clicking an image offers Save Image and Copy Image, plus Open Image in New Tab and Copy Image Address when the image has a web address (Google search results included).
+
+## [1.0.226](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.226) · 2026-11-09
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.225](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.225) · 2026-11-09
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.224](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.224) · 2026-11-09
+
+### Changed
+
+- New version-free download addresses, oyabrowser.com/download/mac and /download/windows, always serve the newest installer.
+- llms.txt, the install guide and the skill tell an agent to install the desktop app itself and ask the person only for the Connect click.
+
+## [1.0.223](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.223) · 2026-11-09
+
+### Changed
+
+- Every MCP tool now carries a title and read-only, destructive and open-world hints, which connector directories require and Claude's tool picker shows.
+
+## [1.0.222](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.222) · 2026-11-09
+
+### Changed
+
+- The docs at oyabrowser.com/docs are brought in line with the product: the first-launch flow and footer Connect, MCP setup for Claude Code, Codex, claude.ai and the desktop app, every MCP tool in a reference table, the console's tabs and shortcuts, and the REST API intro. A test now fails when a tool exists in the code but not in the docs.
+
+## [1.0.221](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.221) · 2026-11-09
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.220](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.220) · 2026-11-09
+
+### Changed
+
+- The cloud MCP endpoint answers `initialize` and `tools/list` without an API key, so registries and agents can read the tool list before signing up. Tool calls, resources and streams still need a key.
+- The MCP Registry listing carries an icon and points to the desktop app first.
+- llms.txt and the README tell agents to install the desktop app and connect to it directly, as their browser in place of Chrome, with Oya Cloud as the fallback.
+
+## [1.0.219](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.219) · 2026-11-09
+
+### Changed
+
+- Connected the landing sections into a story from the first task and reusable playbook to reported results, enterprise control and deployment.
+- Replaced the landing hero's technical positioning with plain-language portal automation and reusable-playbook copy.
+- Put the healthcare workflow first, with a task-specific prompt, visible saved playbook and inputs, followed by architecture and enterprise controls.
+- Excluded installed third-party agent skill assets from application linting.
+
+- Clarified how prompts become reusable playbooks and made the customer-reported productivity comparison easier to read.
+
+- Rebuilt the landing page around Oya's enterprise browser control plane, with an animated architecture overview, orchestration/governance/observability details, deployment choices and an interactive healthcare workflow with human takeover. Improved typography and isolated landing styles so navigation no longer restyles sign-in and other pages.
+
+## [1.0.218](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.218) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.217](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.217) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.216](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.216) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.215](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.215) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.214](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.214) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.213](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.213) · 2026-11-08
+
+### Changed
+
+- Maintenance and fixes.
+
+## [1.0.212](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.212) · 2026-11-08
+
+### Changed
+
+- Rewrote the README for developers: what Oya fixes, a record-and-replay example on the first screen, and a quickstart that installs the control plane locally and runs the examples against its Docker browser.
+- `new Oya({ model: { provider, name, apiKey } })` picks the model behind `ask()`, runs and replays in code, for that client only and never saved to the key. `oya init` is no longer needed to choose one.
+- A bare `oya.browser.start()` with no provider and nothing connected now starts an Oya Cloud browser where the deployment runs them, instead of answering 409. A connected desktop or Docker worker is still borrowed first.
+- `oya install --yes` picks up `GEMINI_API_KEY` (after `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`), whose free tier makes a first run cost nothing.
+- The no-model and no-key errors now say how to fix them in code first.
+
+### Fixed
+
+- Saving an agent run as a playbook no longer drops typing into a focused field, key chords, tab switches and other recorded steps. Replays had been ignoring new inputs while reporting success.
+- Read-only page scripts can no longer fill a field through bracket assignment, `execCommand` or the native value setter, which left no step to replay.
+- A playbook over 500 steps is refused instead of being saved cut short.
+- The local install no longer fails building the browser image: `docker compose` pulls the published one, and `docker-compose.build.yml` builds it for those with the engine. Updates pull the latest browser image.
+- After a local install, `start()` borrows the Docker browser worker instead of asking for Oya Cloud settings.
+- The Playwright example exits when done on a borrowed browser instead of hanging.
+
+## [1.0.211](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.211) · 2026-11-05
+
+### Changed
+
+- Added equal Technical setup choices for Oya sign-in, local agents and model API keys. Local-agent status now matches this browser, launch actions keep a practical GitHub test prompt ready, and Gemini, Claude API and OpenRouter keys receive a bounded provider test.
+- Simplified desktop setup into illustrated Technical, Non-technical and AI expert choices, with short instructions, confirmed connection progress, Claude Code subscription guidance and a visual control-plane walkthrough. Import and default-browser choices no longer interrupt first use.
+- Required timestamped Windows signing and verified installer/application signatures before release upload. Windows releases now fail when signing credentials are missing.
+
+### Fixed
+
+- Restored standard CDP browser-session attachment so clients can create independent page CDP sessions, with scoped events and cleanup that preserve other attachments. Iframe and nested worker sessions now keep independent identities for each page attachment. Approved page commands run concurrently within a fixed limit, so an unfinished response-body read cannot stall the crawl. Response fulfillment now unblocks intercepted navigations instead of waiting behind them.
+- Prepared Windows releases for protected Azure managed signing with GitHub OIDC, exact publisher verification and a non-publishing signing probe.
+- Corrected meeting microphone, camera and screen-sharing permission routing across browser windows. Added device-specific macOS recovery and distinguished permission denial from unavailable desktop sources.
+- Opened macOS development sessions through Launch Services so Oya receives its own microphone and camera consent, with private startup logs and explicit application lifetime.
+- Added local Chrome/Edge bookmarks and history import with explicit profile selection, partial-result reporting and no external SQLite dependency. Protected Windows signed-in sessions still require signing in directly in Oya.
+- Corrected Windows local-agent executable discovery and VS Code configuration paths while keeping credentials out of shell commands.
+
+## [1.0.210](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.210) · 2026-11-03
+
+### Added
+
+- Prepared AWS Marketplace account setup with server-side buyer resolution, encrypted authentication continuation and immutable account linkage. Registration remains disabled by default and pending until authoritative AWS subscription activation is implemented.
+
+### Fixed
+
+- Included the Keel activity migration in every hosted deployment path and added a regression guard against future migration omissions.
+
+## [1.0.209](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.209) · 2026-11-03
+
+### Added
+
+- Added a staff Keel tab for recently reporting installs, current reported license IDs, measured agent-hours and active projects, with daily coverage and explicit UTC windows. Legacy reports retain unavailable measurements rather than fabricated zeroes.
+
+### Fixed
+
+- Aligned admin charts and trends to completed UTC days, corrected distinct-account comparisons and full installation totals, and separated active fixed-price MRR from currency-specific paid invoice totals. Clarified customer allowance periods, reported versus issued licenses, and the responding server’s fleet scope. Independent refreshes preserve useful snapshots and support forms while credential changes discard protected results.
+
+## [1.0.208](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.208) · 2026-11-03
+
+### Fixed
+
+- Restricted business Slack lines and cards to account signups, API keys and payment outcomes. Browser sessions and CDP connections no longer produce business cards; desktop activity, downloads and self-hosted leads use the separate operational feed.
+
+## [1.0.207](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.207) · 2026-11-03
+
+### Security
+
+- Updated vulnerable runtime and development dependencies, including Electron. Adapted legacy build tooling to the patched minimatch implementation.
+
+### Added
+
+- Prepared a default-off macOS browser-passkey engine experiment with native request authorization, controller cancellation and per-credential transport checks. Native compilation, Apple provisioning and physical sign-in remain required; this does not enable phone passkeys in released apps.
+
 - Fixed passkey account selection being refused in a human-controlled tab while an agent works elsewhere. Account selection follows its real window and requesting document, without cancelling for unrelated iframe or same-page navigation.
 - Added page translation through the project's model, with confirmation before sending text, a disclosed same-site continuation limit, and Show original. Translation stops on navigation outside that scope, recording, or agent takeover; agent reads wait for the original page to be restored.
 
 - Fixed screen sharing being refused while microphone or camera permission was still being confirmed. Overlapping requests now wait briefly for their own consent, with navigation, profile and human-control checks retained.
 
-- Retained Mars property-slot caches for large dictionary objects, with fresh layout identities after structural changes. Deletions, redefinitions and independent page snapshots preserve ordinary property behavior.
-
-- Started Mars task-created requests before waiting for scripts created by the same task, allowing their downloads to overlap. Responses retain ordinary task scheduling, request admission and cancellation checks.
-
-- Forwarded Mars script functions through the running interpreter loop when invoked with the intrinsic `Function.prototype.call`, avoiding nested native interpreter entry. Increased the live function allowance to accommodate YouTube's connected components and player while retaining resource bounds.
-
-- Reduced Mars closure retention by keeping uncaptured function locals in activation registers. Nested lexical dependencies still share environment slots, with memoized analysis across lazy compilation and conservative handling of direct eval, mapped arguments and modules.
-
-- Made Mars native task checkpoints collect dead weak-key cycles under allocation or bound pressure, while saved-state replay retains snapshot semantics. Mutation observers now follow target reachability instead of retaining discarded target/callback cycles, deliver document-subtree changes and respect shadow boundaries. Resident task restoration uses maintained proxy presence and indexed identity checks.
-
-- Fixed Mars retaining every upgraded custom element as a permanent JavaScript root. Discarded elements can now release their closures; connected elements and script-referenced detached elements preserve their upgraded identity.
-
-- Shared Mars computed styles across document snapshots and unchanged cascades, reducing node movement and copy costs while isolating edits through copy-on-write. The document wire format stays unchanged. Layout fallback checks now index direct children once and only copy documents that need a fallback.
-
-- Reused Mars's V9 execution thread across in-process script tasks, retaining thread-local object-shape caches and each task's panic boundary.
-
-- Made Mars forced-layout mutation replay incremental: successful reads seal the journal prefix, subsequent reads apply its suffix, and commits reuse the latest validated document. Removed identities and whole-journal limits remain enforced across reads.
-
-- Indexed Mars's batch label ancestry and agent visibility lookups, removing repeated linear scans of reordered page nodes during presentation and inspection.
-
-- Fixed stale synchronous layout reuse after coalesced DOM attribute writes in Mars. Forced layouts now use the latest edits, and final writes no longer trigger a false script/document structure disagreement.
-
-- Removed head-of-line blocking in Mars's asynchronous network pool: waiting fetches now start on the next free worker instead of staying behind a slow request, while idle cache affinity and cache invalidation ordering are retained.
-
-- Accelerated Mars IndexedDB persistence with native value-brand dispatch and reusable encoders, removing per-object exception probes and function allocation from large response graphs. Stored graph identity and the existing persistence format are preserved.
-
-- Enabled Mars YouTube playback through native buffered Fetch body readers and MediaMetadata construction. Body locks, consumption, cloning and abort share native stream state; contiguous media samples now merge without artificial floating-point gaps.
-
-- Overlapped independent dynamically inserted classic-script downloads in Mars while preserving execution order, CSP admission and integrity checks. Batch duplicate detection now uses an indexed set instead of repeated scans.
-
-- Made Mars pages show sooner: the first paint lands before images and web fonts resolve and again when they do, the head's scripts download on the loader while the sheets arrive, classic scripts and their deferred functions compile on their own threads while the document is styled, and the scripts' own DOM paints before the lifecycle events. YouTube's home paints in under a second and publishes in about two.
-
-- Kept Mars's YouTube realm resident between timer and event tasks, so each one runs in place instead of restoring the page's state first; loads and module steps keep the copying path. Audio for content playback now sounds from the first frame: the native player applies the page's volume when it is built rather than on a later settings change.
-
-- Fixed Mars pages that stayed blank or failed to load: DOMContentLoaded now waits for the parser's module scripts (DuckDuckGo's results), a script V9 asks for again before it lands is no longer started twice (github.com and airbnb.com hit the delivered-bytes limit), `DOMParser.parseFromString` no longer stops the page on text that opens with a multibyte letter, and a script inserted with `async = false` runs after the ones inserted before it however their downloads land.
-
-- Fixed a Mars closure-capture miscompile: a parameter default that reads an outer name the function body also declares now reads the outer binding, as the default runs before the body's declarations exist.
-
-- Stopped Mars's macOS painter from drawing a box shadow at the viewport's edge for an element parked far off the page (Amazon's keyboard-shortcut menu): a shadow whose landing spot misses the clip is skipped.
-
-- Sped up Mars styling of large pages: the parsed-sheet cache resumes after the longest shared prefix of the sheet list, rule buckets key a compound selector by its rarest class (airbnb's atomic classes dropped from millions of candidates per cascade to thousands), and a page with due work ticks every 16 ms.
-
-- Reduced Mars V9 snapshot copying by sharing unchanged DOM maps and cached JSON between saved states and summaries. Writes keep retry isolation through copy-on-write, with unchanged serialized values and size checks.
-
-- Excluded hidden and pointer-transparent Mars boxes from DOM hit queries while preserving their layout measurements. Visible descendants of hidden containers now remain clickable, and DOM targeting shares native pointer eligibility.
-
-- Separated Mars SVG prototypes from HTMLElement so SVG-only read-only properties cannot block HTML component methods. This fixes the captured YouTube Polymer `prototype.transform` assignment failure while preserving SVG style/event behavior and namespace-aware wrappers.
-
-- Implemented Mars BroadcastChannel construction, structured messages, close and event delivery across tabs, frames and dedicated workers in one runtime. Native routing isolates exact origins and schemeful storage partitions, publishes effects only with committed page state, and bounds endpoints and queued messages.
-
-- Added opt-in, privacy-limited script request diagnostics for native failure stages and HTTP response statuses, retaining the original POST failure before uncertainty wrapping without changing web-visible fetch behavior.
-
-- Stopped resource `load` events at Document instead of sending them through Window capture. This corrects the captured DuckDuckGo web-vitals path that repeatedly registered page-load listeners before the document completed; the listener budget is unchanged.
-
-- Released Mars async setup and iterator temporary roots after ownership transfers to callers or pending reactions. Completed setup no longer retains disposable objects until the end of a script.
-
-- Added bounded listener-refusal counts and stages, with opt-in numeric startup logging, to distinguish registration pressure from restore or validation failures.
-
-- Replaced Mars's fixed 16,384-listener ceiling with a 16 MiB native/wire storage budget. Event names, index allocation and serialization costs share accounting across live admission and restoration; removals reclaim budget and dispatch copies consume work allowance.
-
-- Reported aggregate Mars page initialization/finalization failures once instead of copying them onto every script. True per-script failures retain their indices; empty-state recovery and resource limits stay enforced.
-
-- Scoped Mars intrinsic keyword width caches to each layout, publishing measured child constraints immediately and restoring enclosing widths after nested vertical layout. Earlier pages can no longer seed current-node measurements with stale widths.
-
-- Reclaimed Mars event listeners synchronously on native signal abort and collected unreachable listener targets before refusing a full listener table. Native signal identity prevents public property overrides from bypassing cleanup; listener storage remains bounded.
-
-- Corrected Mars inline-script CSP parsing for case-insensitive nonce/hash prefixes, exact payload matching, malformed source expressions and `strict-dynamic`. Explicit nonce/hash admission and intersection of all policies remain enforced.
-
-- Separated embedded Mars image payload admission from the 8 KiB network-address limit. Bounded data images retain normal decoding and CSP checks; oversized optional sources finish as image errors instead of aborting navigation, with aggregate source and request text limits.
-
-- Initialized Mars Window event-handler globals, including `onload`, so reads before assignment return null and strict assignments share the existing body-forwarded dispatch path. Forbidden native constructors now identify their actual interface without consulting page-controlled names.
-
-- Added one bounded Mars TLS reconnect after a raw handshake reset, preferring another already-validated address. The same TLS settings and certificate checks remain in force, no HTTP data is replayed, and per-candidate deadline leases interrupt negotiation at the original deadline.
-
-- Corrected Mars TLS HelloRetryRequest key shares: when a server requests a specific group, the next ClientHello contains exactly that share. Initial and cookie-only retries retain GREASE and existing TLS verification.
-
-- Removed blocking Mars close-save acknowledgements and shutdown joins from the AppKit event loop. Close attempts poll bounded save tickets, retain explicit retry/discard choices, and retire late replies; owned engine, library writer and demo-server cleanup is polled while native events continue.
-
-- Replaced Mars’s 64-IntersectionObserver cap with a shared 4 MiB native-state budget, pressure reclamation of unused observers, and consistent restore checks. Geometry sampling caches target measurements and charges work before allocation; callbacks and queued records remain real rather than silently dropped.
-
-- Expanded Mars script-visible metadata to a shared 8 MiB budget and 32,256 records, reserving script-node capacity. Complete records include tag and attribute-name costs; restored documents/environments enforce the same limits, and fresh head insertion avoids repeated full-head scans.
-
-- Fixed Mars clicks on painted descendants of links and buttons: native defaults resolve to the supported ancestor while JavaScript retains the original event target. Ancestor inline handlers participate in click admission, and frame hit testing now respects pointer-events.
-
-- Fixed Mars HTTP/1 handling of informational responses such as 100 Continue and 103 Early Hints: bounded interim headers are consumed before the final response, using one shared header budget. Protocol upgrades remain explicitly unsupported.
-
-- Fixed a Mars HTTP/1 connection reuse race: each completed request now stops and joins its deadline lease before returning the socket to the shared pool, preventing an old timer from closing a later request.
-
-- Made Mars transport failures identify DNS lookup, connection, TLS handshake, send or receive errors using typed causes, without exposing raw destination or payload details. Existing TLS checks, error codes, deadlines and retry rules remain intact.
-
-- Corrected Mars resident-state validation so pending fetches and observers are checked against the heap retained by V9, while the app validates their bounded page summaries. This addresses false `Invalid native fetch signal state` page failures without weakening full-state restore checks.
-
-- Added context-owned Blob image loading in Mars with generation snapshots, cancellation, origin/img-src checks, bounded actual raster decoding and clean Canvas pixels. Blob images never fall through to network/cache/prefetch; SVG, CSS backgrounds and unmatched responsive Blob candidates remain unsupported.
-- Added native pure CSS scale transitions and keyframes to Mars, including independent signed axes, zero scales, easing, interruption, direction and pause/fill behavior. Visual geometry and hit testing follow scaling while layout/resize measurements remain unchanged; mixed and 3D transform animation remains unfinished.
-- Made Mars HTTP fetch response bodies binary-safe through Relay and the native CORS coordinator. Fetch text readers use UTF-8 while legacy XHR/module decoding stays separate; cache, redirect, body-size and header filtering rules remain in force.
-- Completed Mars's Porter–Duff Canvas operators and lighter with transparent-source processing across the clipped destination, correct fractional clip interpolation and bounded work admission. Rectangles, paths, images and text share the implementation; artistic blend modes remain unfinished.
-- Implemented context-owned Blob URL fetches in Mars with fetch-time snapshots, native origin/CSP checks, exact binary responses and bounded single-range reads. Revocation after fetch preserves captured bytes; missing or foreign URLs fail without network fallback. Fetch now binds native dependent AbortSignals, cancels queued page/worker requests, preserves abort reasons and rejects aborted response reads.
-- Added bounded ResizeObserver delivery cycles to Mars with fresh layout between depth-gated broadcasts, skipped-notification ErrorEvents, five-argument window.onerror handling and one final intersection delivery. Deadline/round limits retain registrations and defer remaining work without restarting the settle loop immediately.
-- Extended Mars data-URL fetches to exact binary bytes through the new response transport, preserving text decoding, XHR text behavior, GET-only admission and existing size limits.
-- Added exact binary body transport and heap-accounted Response storage to Mars, with independent byte readers, shared immutable clone backing and UTF-8 replacement/BOM handling for text. Combined response limits and wire admission remain unchanged.
-- Added Mars Canvas destination-over, destination-out, source-atop and xor compositing alongside source-over, consistently across rectangles, paths, images and text. Modes persist through save/restore; unsupported full-surface operators and lighter remain unaccepted.
-- Extended Mars ResizeObserver to measured HTML/body wrappers, with percentage-resolved edges and in-flow content extents kept separate from positioned overflow. Dedicated wrapper metrics also survive forced-layout retries; incomplete layouts remain unmeasured.
-- Implemented real Mars Canvas line dashes with saved dash state, iterable conversion, signed offsets, transformed stroke geometry, closed-path joins and zero-length cap dots. Pattern storage, splitting, outlines and raster work remain bounded; quota failures cannot partially paint.
-- Reused one dense-array lookup per Mars array callback iteration, retaining generic behavior for holes, inherited values, descriptors, proxies and shared containers. Callback mutation ordering and execution budgets are unchanged; speedup is unmeasured.
-- Removed redundant WindowProxy probes from Mars worker property reads and reused immutable frame identity keys. This reduces avoidable interpreter work without changing execution deadlines; Google Search and the measured performance impact remain unresolved.
-- Replaced Mars's one-shot ResizeObserver with persistent measured registrations, selected-box change detection, queued callbacks, real disconnect/unobserve cleanup and native layout invalidation. Content/border metrics use resolved layout edges; root/body wrappers without native metrics and full resize-loop iteration remain unfinished.
-- Added one nested dedicated-worker level to Mars, with parent/child messages and ports, creator-policy source loading, shared live/pending capacity, queued initialization messages and recursive termination. Retransferring already linked worker ports and deeper worker trees remain explicitly unsupported.
-- Enforced required URL/URLSearchParams arguments and constructor-only invocation before conversion hooks run, while preserving explicit `undefined` values.
-- Implemented SVG-string Path2D construction in Mars through a shared bounded path parser. Canvas preserves completed commands before malformed syntax; numeric/resource failures remain explicit. Eye reuses the parser with whole-shape rejection, and retained paths feed real fill/stroke/clipping.
-- Corrected Mars URL API argument conversion and live URLSearchParams behavior: callbacks retain their receiver, conversions cannot overwrite their own list mutations, invalid URLs convert inputs once, and exhausted iterators stay done.
-- Connected transformed Mars DOM geometry and native clicks to shared affine bounds and quadrilateral hit testing. Layout offsets/sizes remain untransformed, while visual rectangles, sticky/fixed movement and rectangular clipping follow painting. Rounded clips, masks and exact occlusion remain unfinished.
-- Added bounded scripted grandchildren to Mars frames, with recursive messages/ports, distinct parent/top identities, nested painting and shared frame/source/context limits. Framing checks include every ancestor and the final redirected origin; child work keeps the true top-level network partition. Opaque/srcdoc scripting, descendant input and cross-frame DOM access remain unfinished.
-- Replaced Mars's inert Path2D facade with branded retained geometry, independent copies, transformed addPath and actual Canvas fill/stroke/clip overloads. Object/point quotas, GC cleanup and serialized-state checks bound storage; SVG-string construction remains explicitly unsupported.
-- Implemented timed pure CSS `rotate()` transitions and keyframes in Mars, preserving full authored turns, easing, delay, interruption, iteration and pause/fill behavior. Mixed transform lists, 3D and individual-transform animation remain unfinished.
-- Implemented real Canvas clipping in Mars with immutable sample masks and saved-state sharing. Rectangles, paths, images and text honor the clip; pixel writes/readback/export retain their specified bypass behavior, and fully clipped cross-origin draws still taint. Mask retention and raster work remain bounded.
-- Implemented CORS-enabled image acquisition in Mars for anonymous and credentialed images, with per-hop server validation, mode-aware generations/caches and Canvas origin-clean provenance. Failed CORS loads stay failures; ordinary cross-origin images remain tainted. CORS images bypass legacy credentialed prefetch and the URL-only HTTP cache.
-- Implemented real Canvas `roundRect` paths in Mars with numeric/point/iterable corner radii, overlap scaling, negative dimensions and bounded atomic path admission.
-- Added actual GIF first-frame and static WebP pixel sources for Mars Canvas on macOS through bounded native decoding, retaining origin taint and shared pixel accounting. Animated WebP, partial-first-frame GIF and non-macOS decoding remain explicitly unsupported.
-- Replaced Mars's fabricated IntersectionObserver visibility with measured viewport intersections, threshold changes, root margins and asynchronous record delivery. Native layout, resize and scrolling trigger bounded observer turns without idle polling or waking unrelated timers; element roots, ancestor clipping and visibility tracking remain unfinished.
-- Implemented real Canvas `arcTo` tangent geometry in Mars, including straight-line degeneracies, current-transform handling and bounded atomic path admission. Noninvertible transforms that require inverse mapping remain explicit refusals.
-- Implemented Canvas arcs and ellipses in Mars with real transformed geometry, directed/full-turn sweeps and atomic bounded subdivision. ArcTo, roundRect and clipping remain unfinished.
-- Implemented native CSS translation transitions in Mars for `transform` values using `none`, `translate`, `translateX` and `translateY`, including percentage offsets, easing and interruption. Visual geometry moves with painting while layout offsets remain untransformed; rotation, scale, skew and 3D interpolation remain unfinished.
-- Implemented Canvas quadratic and cubic Bezier curves in Mars with adaptive pixel-space flattening, construction-time transforms and atomic path-budget admission. Curves feed the existing real fill/stroke rasterizer; arcs, ellipses and clipping remain unfinished.
-- Extended Mars Blob workers to module entry scripts, preserving static/dynamic HTTP imports, constructor credentials, top-level await and queued-message ordering. Module sources require JavaScript MIME, and inherited CSP host matching uses the creator origin. Blob dependency sharing remains unfinished.
-- Implemented timed CSS opacity keyframes in Mars, including easing, delays, fractional/infinite iterations, direction, fill and pause/resume. Native painting samples animations without rewriting authored opacity; other animated properties, animation events and full animation API exposure remain unfinished.
-- Implemented real Canvas polygon fill/stroke in Mars, including winding rules, line caps/joins, strokeRect and transform-aware paths and pens. Path state survives save/restore correctly and raster work is bounded; curves, arcs, clipping and Path2D remain unfinished.
-- Implemented context-owned Blob object URLs and classic Blob workers in Mars, with immutable source capture, revocation, inherited CSP and bounded storage. Captured workers survive later URL revocation; Blob module workers and cross-context URL sharing remain unfinished.
-- Implemented HTTP(S) dedicated module workers in Mars with governed static/dynamic imports, `import.meta.url`, constructor credentials and top-level-await initialization. Early messages wait for entry evaluation; Blob URLs, nested workers and redirects remain outside this slice.
-- Implemented sampled CSS opacity transitions in Mars, with duration/delay/easing lists, interruption and reversal handling, and native frame scheduling. Transition values stay separate from authored styles; other properties, transition events and discrete transitions remain unfinished.
-- Implemented bounded PNG/JPEG image sources for Mars Canvas `drawImage`, including crop/scale overloads, decoded-pixel sharing and cross-origin taint propagation through readback, export and canvas copies. GIF/WebP/SVG/video sources and CORS-authorized clean cross-origin drawing remain outside this slice.
-- Improved Mars's everyday navigation with an address that can replace a pending load, toolbar Stop, and expandable script-failure details. Restored the tested DuckDuckGo search/result/Back journey through JavaScript MIME, script-completion, SVG, selection and vendor-keyframe fixes. Kept markup-handler CSP separate from eval policy and preserved committed script state when cancellation occurs before request admission. Full Ladybird parity and Google Search remain unresolved.
-- Extended Mars Canvas 2D with affine transforms, drawing-state save/restore, alpha, ImageData creation/writes and canvas-to-canvas copying. Added indexed/named sibling frame messaging with document-generation checks and transferred-port routing. Broader Ladybird compatibility and successful Google Search remain unverified.
-- Native Mars page and worker clocks now advance within synchronous JavaScript tasks, preventing time-based loops from waiting forever on a frozen timestamp. Deterministic standalone V9 timing and execution budgets are preserved.
-- Added bounded classic dedicated workers to Mars with isolated globals, synchronous imports, queued messages and MessagePort transfers. Module, blob and nested workers remain unsupported; Google Search verification is still in progress.
-- Added a bounded native macOS Canvas 2D slice to Mars: solid rectangles, text, pixel readback and PNG export, with the same bitmap used by desktop and agent painting. Corrected unavailable GPU adapter discovery and aligned request languages with JavaScript preferences. Full Canvas, WebGL/WebGPU and a GPU compositor remain unfinished.
-
-- Added V9 WebAssembly table64 support with BigInt JavaScript indices, 64-bit binary operations, and bounded growth.
-- Added opt-in V8 conformance runs for previously excluded directories, with explicit exclusion reports and confined `d8.file.exists` fixture snapshots.
-- Expanded V9 conformance coverage for supported shell flags and tests that request native syntax without using percent tokens; unsupported flags and intrinsics remain explicit.
-- Renamed the independent Rust browser to **Mars**, with separately reusable **Eye** document/rendering, **V9** JavaScript and **Relay** networking libraries in a Cargo workspace. Each engine owns its implementation and uses shared value contracts without depending on the desktop application. Existing agent protocols, saved-data identities and compatibility limits remain in force.
-- Added automatic semicolon insertion in the supported classic-script grammar of Rust V9. Completed statements accept optional punctuation at permitted boundaries while continued expressions and restricted line-break rules keep their meaning. The option demo now uses semicolonless page source; unsupported grammar and full browser compatibility remain unfinished.
-- Added bounded Rust V9 array-literal spread for owned arrays and primitive strings. Copied references keep their identities, sparse entries become explicit undefined values, and string iteration preserves UTF-16 code points and lone surrogates. The option demo now composes its real model with spread; general iterators and full browser compatibility remain unfinished.
-- Added supported-value `==` and `!=` comparisons plus bounded array `some` and `find` callbacks to Rust V9. A native **Choose an option** page selects numeric or language-code model entries through ordinary page scripts. Missing object conversion still fails explicitly; complete browser compatibility remains unfinished.
-- Extended the Rust browser's static reading with bounded font shorthand, line height, viewport lengths, centered block margins and light/dark canvas colors. Longer static paragraphs retain one document identity; resize and appearance changes preserve edits without refetching or rerunning scripts. Native error messages now show their complete text, with scrolling for long messages and fixed recovery controls. Full browser compatibility remains unfinished.
-- Added a bounded MCP stdio connection to the native Rust window, pinned to MCP 2025-11-25. Sixteen native tools share the same page, human ownership and exact revision checks. Disconnect closes only its launched window and services; full browser compatibility remains unfinished.
-- Added source-guided owned Rust flex layout and explicit content-box/border-box sizing. The forms demo places field groups beside one another and wraps them on narrow windows; bounded measurement, allocation and native frames share agent-visible geometry. Unsupported structural layouts reject publication; complete Blink/browser parity remains unfinished.
-- Added source-guided Rust V9 UTF-16 string length/indexing, trim and literal split, plus owned-array map, filter and join. Canonical methods retain callable identity across native events; sparse-array callbacks and failures share existing budgets and atomic publication. The greeting trims processed names while preserving entered text; complete engine and browser parity remain unfinished.
-- Added native Rust document references and programmatic click listeners for explicit ordinary buttons. Cached references read current permitted values, callbacks retain identity and order, and event facades share the existing atomic page transaction. Unsupported detached-node/default-action behavior fails explicitly; full browser parity remains unfinished.
-- Added source-guided Rust V9 assignment expressions, arithmetic compound stores, prefix/postfix updates, conditionals, `typeof` and `void`. Shared retained references preserve evaluation order and existing store protections; the native demo now uses ordinary counter syntax. Full engine and browser parity remain unfinished.
-- Added source-guided Rust V9 function/script `var` declarations, hoisting, optional initializers and supported var/function/parameter redeclarations. Global properties share declaration cells, loop closures retain shared var bindings, and failed native events preserve committed state. Full engine and browser parity remain unfinished.
-- Added source-guided Rust V9 `call`, `apply` and `bind`, shared function-method identity, supported function name/length metadata and saved bound callbacks. Bound references and function properties participate in candidate validation, quotas and collection; full engine and browser parity remain unfinished.
-- Added source-guided Rust V9 method receivers, `this`, lexical arrow receivers and directive-based strictness. Page-global data, captured receivers, Storage and document proposals remain bounded atomic candidates. The greeting form now retains its object controller through a saved arrow; full engine and browser parity remain unfinished.
-- Added source-guided Rust V9 arrow functions with simple parameters, expression/block bodies and lexical capture. Arrows reuse source-validated closure graphs and atomic native publication; the greeting controller now exercises both body forms. Implicit arguments-object, async and richer-parameter semantics remain unfinished.
-- Extended native Rust V9 with bounded standard `for` loops, scoped let/const headers, per-iteration let cells and completion-aware updates. The native counter now displays loop-computed sums; loop failures retain committed VM, heap, Storage and document state.
-
-- Added source-guided Rust V9 first-class functions, anonymous/named expressions, directly nested declarations and lexical closures with shared cells. Functions pass through callbacks, returns and object/array storage; captured for-let iterations retain distinct bindings. Bounded source-validated graphs survive native events and reclaim unreachable cycles at successful request boundaries. The greeting form now uses a saved private-state controller; full V8 and browser parity remain unfinished.
-- Added a native V9 counter/branch journey and pinned lexical semantics: functions isolate caller scopes, local bindings shadow function names, undefined resolves as a scalar, and event snapshots must match their source declarations. Failed bindings, heap, Storage and DOM candidates remain unpublished; full browser parity is still unfinished.
-
-- Added a default native macOS session profile backed by Keychain. Supported cookies survive app restarts, while secure-storage failures block navigation until retry or clear; **Clear Saved Cookies…** removes the saved and live jar after confirmation. Electron profile import and local storage remain unsupported.
-- Started the Rust native replacement for Oya's Electron browser for people and agents, with independent networking, document/layout and V9 services, a macOS native window, verified HTTPS, native agent tools, control handoff, history and operator-granted native screenshots. Current compatibility is still under development.
-- Replaced the native prototype's string-only language core with V8-source-guided scanning, UTF-16 strings, binary64 numeric state, arithmetic precedence, JavaScript scalar conversions and located errors. Pinned source references, attribution and selected adapted upstream cases document the first port; full engine and browser compatibility remain unfinished.
-- Extended the Rust V9 subset with flat identity-preserving objects and arrays, own-property reads/writes, parameterized functions, return values and conditional/loop control flow. Page heap state and DOM proposals commit together after native event validation; full V8 and current Oya compatibility remain unfinished.
-- Added ordered blocking classic scripts to the Rust browser. Up to eight inline or external scripts share page state and V9 work limits; external scripts use governed fetch, require JavaScript MIME and cannot redirect. Failures discard the candidate page and report the source-order script index.
-
 ### Fixed
 
-- Kept same-origin CORS-mode images usable when irrelevant CORS response headers are malformed; strict grant validation still applies to cross-origin responses.
-- Preserved accepted Mars MessagePort replies when their sender closes, released rejected transfers, and retained legacy handler sources across VM restoration. Promise executors now propagate fatal engine failures while ordinary JavaScript throws still reject their promises.
-- Replaced Mars's resident-script eviction with shared page, frame and worker admission leases, preserving active state and navigation rollback when capacity is reached.
-- Corrected Mars's dynamically inserted same-origin sandbox frames to use the existing scripted-frame path, preserving messaging identity, mixed-URL isolation, framing refusals and resource admission. Google Search still returns HTTP 429 in the live retest; full iframe compatibility remains unfinished.
 - Rate-limit buckets are reclaimed again once they are full and idle. The sweep used to reset a bucket's idle clock before checking it, so a bucket for every sign-in email and caller address the server had ever seen was kept until restart.
-- Corrected V9 typed-array `map` to recheck same-kind species destinations after callbacks and value conversion.
-- Corrected V9 Intl time-zone name validation, alias resolution and formatting at the requested instant.
-- Corrected V9 Unicode-set early errors for invalid negated string properties and malformed expressions.
-- Added Unicode 17 emoji string-property matching to V9 regular expressions, including set operations and longest-match ordering.
-- Corrected V9 strict global assignment through inherited properties, preserving setter and proxy behavior.
-- Corrected V9 Arabic number parts and numbering-system selection so page scripts receive localized digits and directional marks.
-- Corrected Mars V9 argument aliases, bound-function metadata, private brands, string protocols and normalization, numeric formatting, JSON revivers and proxy invariants. Added sparse array storage and species behavior, exact summation, Set algebra, Float16 storage, resizable buffers, genuine weak collection and isolated conformance realms. WebAssembly now validates and executes owned scalar, SIMD, GC, exception and atomic instructions. The optional V8 conformance runner now executes unchanged upstream scripts with their declared fixtures and asynchronous callbacks, records failures accurately, and can fail its command when any case fails; full V8 compatibility remains unfinished.
 - Usage counted in the last minute before the top of each hour is now recorded and billed. It used to be dropped when the hour rolled over before the next write.
 - A browser that reconnects, or that the server drops (Disconnect, a revoked key, a control-plane stop), now gives back what its connection held at once. It stops being billed, its persona is free for another browser and can be deleted, its waiting commands fail instead of timing out, and CDP clients relayed over it are disconnected instead of left waiting. A reconnect that is accepted bills the old connection's time up to the reconnect instead of dropping it.
 - Bound delayed socket, driver and operator cleanup to the registration being released, so a reconnect kept its own billing clock and persona slot. Released those resources before disconnect observers ran, and kept deferred vendor cleanup from releasing a replacement's slot.

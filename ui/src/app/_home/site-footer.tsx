@@ -1,28 +1,12 @@
-/**
- * The landing footer.
- */
-import Link from 'next/link';
-import { OyaWordmark } from '@/components/oya-logo';
-import { discord, foundersCall, repository } from './content';
-import styles from '../page.module.css';
+/** The footer every public page shares: the landing's own closing, so footers match across pages. */
+import { Closing } from './closing';
+import { SiteChrome } from './site-chrome';
 
-/** Wordmark and footer links. */
+/** The landing footer's links (each page ends with its own invitation), rendered with the landing's tokens on any public page. */
 export function SiteFooter() {
   return (
-    <footer className={styles.footer}>
-      <OyaWordmark />
-      <nav aria-label="Footer navigation">
-        <a href={`${repository}/tree/main/packages/sdk`}>SDK</a>
-        <Link href="/docs#download">Desktop</Link>
-        <a href={`${repository}/blob/main/docs/self-hosting.md`}>Self-host</a>
-        <Link href="/release-notes">Release notes</Link>
-        <Link href="/trust">Trust</Link>
-        <Link href="/privacy">Privacy</Link>
-        <Link href="/terms">Terms</Link>
-        <a href={repository}>GitHub</a>
-        <a href={discord}>Discord</a>
-        <a href={foundersCall}>Talk to Founders</a>
-      </nav>
-    </footer>
+    <SiteChrome>
+      <Closing invitation={false} />
+    </SiteChrome>
   );
 }

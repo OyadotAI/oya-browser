@@ -24,7 +24,7 @@ export default function AddProviderForm({ ctl }: { /** Control state and actions
         <button
           type="submit"
           disabled={!!ctl.busy}
-          className="px-3 py-1.5 rounded text-xs font-medium bg-accent text-bg disabled:opacity-40"
+          className="px-3 py-1.5 rounded text-xs font-medium bg-accent text-accent-foreground disabled:opacity-40"
         >
           {ctl.busy === 'add-provider' ? 'Adding…' : 'Add provider'}
         </button>

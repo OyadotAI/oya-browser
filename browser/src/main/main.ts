@@ -12,7 +12,7 @@
  * wires Electron's events to them. See ARCHITECTURE.md.
  */
 import { announceBookmarks } from './shell/bookmarks-bar.ts';
-import electron, { type BrowserView } from 'electron';
+import electron, { type BrowserView, type WebFrameMain } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -27,6 +27,7 @@ import { startLocalMcp } from './local-mcp/index.ts';
 /** Signing-bound WebAuthn group embedded by the build, empty for unsigned development. */
 declare const __OYA_WEBAUTHN_GROUP__: string;
 import { MediaPermissions } from './app/media-permissions.ts';
+import { NotificationPermissions } from './app/notification-permissions.ts';
 import { CallGuard } from './app/call-guard.ts';
 import { ScreenShare } from './app/screen-share.ts';
 import { ScreenPicker, ShareIndicator } from './screen-share/index.ts';
@@ -44,6 +45,9 @@ import type { AppServices } from './app/services.ts';
 import { ConfigStore } from './app/config-store.ts';
 import { Persona } from './app/persona.ts';
 import { DeepLinks } from './app/deep-links.ts';
+import { DesktopSignIn } from './connection/desktop-sign-in.ts';
+import { ModelSettings } from './connection/model-settings.ts';
+import { AgentLauncher } from './local-mcp/index.ts';
 import { Boot } from './app/boot.ts';
 import { Lifecycle } from './app/lifecycle.ts';
 import { Updater } from './app/updater.ts';
@@ -55,6 +59,12 @@ import {
 } from './app/constants.ts';
 import { DesktopDialogs, dialogPresenter } from './dialogs/index.ts';
 import { World, useFramePages, useStockWorld } from './native/index.ts';
+import {
+  useDebugChannel,
+  useDebugApplication,
+  useNativeMouse,
+  inspectDebugMouseSurface,
+} from './browser-debug/index.ts';
 import { Observer } from './observe/observer.ts';
 import { DesktopControl } from './control/control-state.ts';
 import { Translator } from './translate/index.ts';
@@ -69,7 +79,9 @@ import { CdpRelay } from './connection/cdp-relay.ts';
 import { ControlSocket } from './connection/socket.ts';
 import { CommandRunner } from './connection/commands.ts';
 import { Mirror } from './mirror/mirror.ts';
+import { LibraryImport } from './mirror/index.ts';
 import { ChatgptAuth, Onboarding } from './chatgpt/index.ts';
+import { ChatTabs } from './connection/chat-tabs.ts';
 import { BrowserWindows } from './windows/index.ts';
 import { IncognitoSession } from './incognito/index.ts';
 import { type AnalysisResult } from './shell/control-shield.ts';
@@ -164,6 +176,7 @@ ctx.passkeys = new Passkeys(ctx);
 const userFile = (name: string) => () => path.join(app.getPath('userData'), name);
 ctx.sitePermissions = new SitePermissionStore(new JsonFile(userFile(SITE_PERMISSIONS_FILE)));
 ctx.mediaPermissions = new MediaPermissions(ctx);
+ctx.notificationPermissions = new NotificationPermissions(ctx);
 ctx.callGuard = new CallGuard(ctx);
 ctx.screenPicker = new ScreenPicker(ctx);
 ctx.shareIndicator = new ShareIndicator(ctx);
@@ -183,7 +196,7 @@ ctx.notifications = new Notifications({
   changed: () => ctx.shell.send('notifications-changed', null),
 });
 ctx.dialogs = new DesktopDialogs(
-  () => ctx.control.snapshot().interactive,
+  (page) => (ctx.agentTab ? personMayUse(ctx, page) : ctx.control.snapshot().interactive),
   dialogPresenter(ctx),
   (message, url) => ctx.notifications.add(message, url),
 );
@@ -193,10 +206,30 @@ electron.ipcMain.on(STOCK_PERSONA.CHANNEL, (event) => {
 });
 useFramePages((frame) => electron.webContents.fromFrame(frame as Electron.WebFrameMain) ?? undefined);
 useStockWorld(electron.ipcMain);
+useDebugChannel(electron.ipcMain);
+useDebugApplication({
+  name: () => electron.app.getName(),
+  version: () => electron.app.getVersion(),
+  engine: () => process.versions.electron,
+});
+useNativeMouse(
+  (view) => {
+    const window = electron.BrowserWindow.fromWebContents(view.webContents);
+    if (!window || window.isDestroyed()) throw Error('The owned Oya window is no longer available.');
+    return {
+      window,
+      ...inspectDebugMouseSurface(window, view, ctx.shield?.view ?? null),
+      activate: () => electron.app.focus({ steal: true }),
+    };
+  },
+  path.resolve(__dirname, '../native/owned-pointer.node'),
+);
+
 ctx.workers = new WorkerCoverage(ctx, () => app.getPath('userData'));
 ctx.persona = new Persona(ctx);
 app.once('will-quit', () => ctx.persona.disposeStorage());
 ctx.library = new BrowsingLibrary(ctx);
+ctx.libraryImport = new LibraryImport(ctx);
 ctx.library.changed = () => announceBookmarks(ctx);
 ctx.downloads = new Downloads(ctx, new JsonFile(userFile(DOWNLOADS_FILE)));
 ctx.downloadBubble = new DownloadBubble(ctx);
@@ -208,31 +241,58 @@ ctx.recorder = new Recorder(ctx);
 ctx.socket = new ControlSocket(ctx);
 ctx.commands = new CommandRunner(ctx);
 ctx.deepLinks = new DeepLinks(ctx);
+ctx.desktopSignIn = new DesktopSignIn(ctx);
+ctx.modelSettings = new ModelSettings(ctx);
+app.once('will-quit', () => ctx.modelSettings.cancel());
+ctx.agentLauncher = new AgentLauncher(electron.shell);
+app.once('will-quit', () => ctx.agentLauncher.dispose());
+app.once('will-quit', () => ctx.desktopSignIn.cancel());
 ctx.routines = new Routines(ctx);
 ctx.translation = new Translator(ctx, () => ctx.windows?.each((scope) => scope.tabs.sendTabList()));
 ctx.world = new World({ analyzerScript, worldName: ISOLATED_WORLD });
 ctx.agentTab = new AgentTab(ctx, () => {
   ctx.screenPicker.sync();
   ctx.passkeys.sync();
+  ctx.dialogs.controlChanged();
   // A claim takes the tab from the person: its translation is undone before the agent reads it.
   void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
+  syncWindowChrome();
+});
+/** Redraws what each window shows about control after a claim: the shield, the find bar and the tab list. */
+function syncWindowChrome(): void {
   ctx.windows?.each((scope) => {
     scope.shield.sync();
     scope.findBar.sync();
     scope.tabs.sendTabList();
   });
-});
+}
+/**
+ * Runs each control-change step on its own. One that threw (a tab gone mid-update) used to skip the
+ * shield after it and fail the server message that carried the change, which ended the session.
+ */
+function eachAlone(steps: Array<() => void>): void {
+  for (const step of steps) {
+    try {
+      step();
+    } catch (error) {
+      console.error('[control] a control-change step failed:', error);
+    }
+  }
+}
+/** Keeps each chat in flight in its tab across a dropped socket. */
+const chatTabs = new ChatTabs(ctx);
 ctx.control = new DesktopControl({
   send: (message) => ctx.socket.send(message),
-  changed: (state) => {
-    ctx.agentTab.sync(state);
-    ctx.screenPicker.sync();
-    ctx.passkeys.sync();
-    void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required'));
-    ctx.dialogs.controlChanged();
-    ctx.shield.controlChanged(state);
-    ctx.windows?.each((scope) => scope.findBar.sync());
-  },
+  changed: (state) =>
+    eachAlone([
+      () => (chatTabs.note(), ctx.agentTab.sync(state), chatTabs.restore()),
+      () => ctx.screenPicker.sync(),
+      () => ctx.passkeys.sync(),
+      () => void ctx.translation.sync().catch(() => console.warn('[translation] original page restoration required')),
+      () => ctx.dialogs.controlChanged(),
+      () => ctx.shield.controlChanged(state),
+      () => ctx.windows?.each((scope) => scope.findBar.sync()),
+    ]),
 });
 ctx.cookies = new CookieSync({
   mark: cookieSyncMark(ctx),
@@ -256,15 +316,21 @@ ctx.relay = new CdpRelay({
 ctx.mirror = new Mirror(ctx);
 ctx.chatgpt = new ChatgptAuth(ctx);
 ctx.onboarding = new Onboarding(ctx);
+app.once('will-quit', () => ctx.onboarding.reset());
 ctx.stream = new LiveStream(ctx);
 ctx.actions = new PageDriver({
   config: ctx.config,
   navigate: (url) => ctx.tabs.navigateActive(url),
   // The agent's own tab while control is scoped to it; the active one otherwise.
   getActiveView: () => ctx.agentTab.view(),
+  diagnosticGuard: (view) => {
+    if (ctx.agentTab.view() !== view || ctx.control.snapshot().interactive)
+      throw Error('Browser lane or control ownership changed');
+  },
   pullCookiesFor: (url) => ctx.cookies.pullCookiesFor(url),
   injectScripts: (view) => ctx.protection.injectScripts(view),
-  worldEval: <T>(view: Parameters<World['evaluate']>[0], expression: string) => ctx.world.evaluate<T>(view, expression),
+  worldEval: <T>(view: Parameters<World['evaluate']>[0], expression: string, frame?: WebFrameMain) =>
+    ctx.world.evaluate<T>(view, expression, { frame }),
   sendResult: (id, ok, data, error, code) => ctx.commands.sendResult(id, ok, data, error, code),
   createTab: (url, activate) => ctx.agentTab.opened(ctx.tabs.createTab(url, activate && ctx.agentTab.following())),
   closeTab: (id) => ctx.tabs.closeTab(id),

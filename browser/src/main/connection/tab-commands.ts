@@ -83,14 +83,19 @@ async function playWorkflow(runner: CommandRunner, id: CommandId | undefined, pa
   runner.sendResult(id, true, { id: run.id, status: run.status, assertions: run.assertions || 0, error: run.error });
 }
 
+/** Records the lane's starting tab and opens a new tab in its lane without stealing human focus. */
+function createAgentTab({ tabs, agentTab }: CommandDeps, url: string): number {
+  agentTab.noteHome?.();
+  return agentTab.opened(tabs.createTab(url, agentTab.following()));
+}
+
 /** Opens a tab on a web address and answers once it is ready; any other address is the caller's way into this machine, and a tab that could not be protected is refused. */
 async function openTab(runner: CommandRunner, id: CommandId | undefined, params?: RemoteParams): Promise<void> {
-  const { tabs, actions, agentTab } = runner.deps;
+  const { tabs, actions } = runner.deps;
   const url = params?.url || 'about:blank';
   if (!isWebAddress(url)) return runner.sendResult(id, false, null, NOT_A_WEB_ADDRESS);
-  // Shown only when the person is watching the agent's tab: never pulled out from under their own.
   // With no address it opens on the start page, which the agent drives like a blank one, so a person never sees a bare about:blank.
-  const tabId = agentTab.opened(tabs.createTab(params?.url ? url : HOME_URL, agentTab.following()));
+  const tabId = createAgentTab(runner.deps, params?.url ? url : HOME_URL);
   const tab = tabs.list.find((t: ListedTab) => t.id === tabId);
   await whenProtected(tab);
   await actions.waitForTabReady(tab);
@@ -127,6 +132,25 @@ function closeRefusal(deps: CommandRunner['deps'], tabId: number): string | null
   return 'Not closed: an agent may close only tabs it opened itself with open_tab. Leave this tab open and use switch_tab or open_tab.';
 }
 
+/** What a read is told when the lane has no tab to read. */
+const NO_TAB = 'No tab of your own to read. Open one with open_tab first.';
+
+/**
+ * The page a lane may read what was logged and fetched on: a tab it took or opened itself, never
+ * the person's or another agent's. The console and network rings hold every tab's entries, so a
+ * read not held to this page handed an agent what the person's own tabs logged and which
+ * addresses they fetched. While agents are held to their own tabs, that is the lane's claimed tab.
+ * Otherwise (agents on the local MCP port), every lane acts on the shown tab, so it may read it
+ * only when it opened that tab with open_tab. Known limit: a lane that took over a tab the person
+ * had been using can read what that tab logged before it arrived.
+ */
+function ownPage(deps: CommandDeps): number | undefined {
+  const { agentTab, tabs } = deps;
+  if (agentTab.scoped() ? agentTab.id === null : !agentTab.openedByThisLane(tabs.activeTabId)) return undefined;
+  const view = agentTab.view();
+  return view && !view.webContents.isDestroyed() ? view.webContents.id : undefined;
+}
+
 /** Command → handler, for commands that do not need the active page. */
 export const TAB_COMMANDS: Record<string, TabHandler> = {
   ...LIBRARY_COMMANDS,
@@ -150,11 +174,15 @@ export const TAB_COMMANDS: Record<string, TabHandler> = {
     runner.sendResult(id, true, { tabs });
   },
   read_console: (runner, id, params) => {
-    const entries = runner.deps.observer?.readConsole(params || {}) || [];
+    const page = ownPage(runner.deps);
+    if (page === undefined) return runner.sendResult(id, false, null, NO_TAB);
+    const entries = runner.deps.observer?.readConsole({ ...params, webContentsId: page }) || [];
     runner.sendResult(id, true, { entries });
   },
   read_network: (runner, id, params) => {
-    const requests = runner.deps.observer?.readNetwork(params || {}) || [];
+    const page = ownPage(runner.deps);
+    if (page === undefined) return runner.sendResult(id, false, null, NO_TAB);
+    const requests = runner.deps.observer?.readNetwork({ ...params, webContentsId: page }) || [];
     runner.sendResult(id, true, { requests });
   },
   open_tab: openTab,

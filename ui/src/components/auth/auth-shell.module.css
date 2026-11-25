@@ -1,0 +1,97 @@
+/** A warm, solid authentication canvas keeps the form comfortably readable on a phone. */
+.shell {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 32px 16px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.frame {
+  width: min(100%, 460px);
+}
+.frame[data-wide='true'] {
+  width: min(100%, 1100px);
+}
+.brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.columns {
+  display: grid;
+  gap: 40px;
+  width: 100%;
+}
+.form,
+.pitch {
+  min-width: 0;
+}
+.card {
+  padding: 28px 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+.card h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+}
+.card :is(input, select) {
+  min-height: 46px;
+  font-size: 16px;
+}
+.card :is(button, a.btn-ghost, a.btn-primary) {
+  min-height: 44px;
+}
+.footer {
+  margin-top: 24px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 14px;
+}
+.pitch {
+  padding: 8px;
+}
+.pitch > * {
+  width: 100%;
+  max-width: none;
+}
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+@media (min-width: 900px) {
+  .shell {
+    padding: 64px 48px;
+  }
+  .frame[data-wide='true'] .columns {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 80px;
+  }
+  .frame[data-wide='true'] .form {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .pitch {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .card {
+    padding: 36px;
+  }
+}
+/* Text links on the sign-in pages: in the light theme the accent is ink like the text, so an underline marks them. */
+/* Only links inside a sentence: a link that is a whole card or button already looks like one. */
+.footer a,
+.card p a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

@@ -1,0 +1,77 @@
+/** Flat plan columns reuse the landing palette and stack before the details become cramped. */
+.section {
+  border-top: 1px solid var(--line);
+}
+.lead {
+  max-width: 640px;
+  margin-top: var(--space-content) !important;
+  color: var(--muted);
+}
+.plans {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: var(--space-grid);
+  border-block: 1px solid var(--line-strong);
+}
+.plan {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  overflow-wrap: break-word;
+  gap: var(--space-content);
+  padding: var(--space-panel);
+}
+.plan + .plan {
+  border-left: 1px solid var(--line-strong);
+}
+.plan :is(h2, h3) {
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+}
+.description,
+.note {
+  color: var(--muted);
+  font-size: 15px;
+}
+.price {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: clamp(40px, 4.5vw, 64px);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.055em;
+}
+.price span {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.plan ul {
+  display: grid;
+  gap: 12px;
+  margin-bottom: var(--space-content);
+  font-size: 15px;
+}
+.plan > a {
+  margin-top: auto;
+  max-width: 100%;
+  white-space: normal !important;
+}
+.note {
+  margin-top: var(--space-content) !important;
+}
+@media (max-width: 1023px) {
+  .plans {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan + .plan {
+    border-left: 0;
+    border-top: 1px solid var(--line-strong);
+  }
+}

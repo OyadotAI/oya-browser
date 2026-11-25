@@ -9,7 +9,7 @@
   gap: 6px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
@@ -24,12 +24,12 @@
 }
 /* Outdated: the one state allowed to draw the eye. */
 .update-pill.attention {
-  background: #e7f6e7;
-  border-color: #a8d5a8;
-  color: #246d21;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
 }
 .update-pill.attention:hover {
-  background: #d8efd8;
+  background: color-mix(in srgb, var(--accent-fill) 12%, var(--accent-soft));
 }
 .update-pill:disabled {
   cursor: default;
@@ -41,7 +41,7 @@
   gap: 6px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 500;
@@ -61,23 +61,6 @@
   background: var(--danger);
   flex-shrink: 0;
 }
-.conn-pill.ok .dot {
-  background: #22c55e;
-  box-shadow: 0 0 6px #22c55e80;
-}
-.conn-pill.trying .dot {
-  background: #f59e0b;
-  animation: pulse 1s infinite;
-}
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
 .conn-pill {
   height: 32px;
   border: 0;
@@ -92,8 +75,8 @@
   background: var(--secondary);
 }
 .conn-pill.ok .dot {
-  background: var(--accent);
-  box-shadow: none;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
 }
 #conn-label {
   overflow: hidden;
@@ -129,7 +112,7 @@
   color: var(--accent);
   background: var(--accent-soft);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 6px 12px;
   cursor: pointer;
   transition: filter 0.15s;
@@ -166,7 +149,7 @@
 /* Status: quiet text with a living dot; its action is a small capsule. */
 .conn-pill {
   gap: 6px;
-  border-radius: 999px;
+  border-radius: 0;
   color: var(--secondary);
   font-weight: 500;
 }
@@ -179,8 +162,10 @@
   height: 7px;
 }
 .conn-pill.ok .dot {
-  background: var(--logo-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--logo-green) 20%, transparent);
+  background: var(--accent-fill);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 3px color-mix(in srgb, var(--accent-fill) 20%, transparent);
 }
 
 /* ── The profile button: the account's initial, with the connection as a dot on it (Chrome's place, the toolbar's end) ── */
@@ -212,7 +197,7 @@
   outline: none;
 }
 .conn-pill.profile-button:focus-visible .profile-avatar {
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
 }
 /* The dot sits on the avatar's lower right, ringed in the toolbar's colour so it reads on any initial. */
 .conn-pill.profile-button .dot {
@@ -226,10 +211,16 @@
   box-shadow: 0 0 0 2px var(--chrome-bar, var(--bg));
 }
 .conn-pill.profile-button.ok .dot {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 2px var(--chrome-bar, var(--bg));
 }
 .conn-pill.profile-button.trying .dot {
   background: var(--amber);
+  box-shadow:
+    0 0 0 1px var(--accent-edge),
+    0 0 0 2px var(--chrome-bar, var(--bg));
   animation: profile-dot 1.4s var(--ease) infinite;
 }
 @keyframes profile-dot {

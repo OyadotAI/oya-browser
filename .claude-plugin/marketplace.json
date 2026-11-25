@@ -1,15 +1,15 @@
 {
   "name": "oya",
-  "description": "Oya's plugins for Claude Code: real Chrome browsers your agent can start, read and drive.",
+  "description": "Oya Cloud plugins for Claude Code. For local desktop browsing, use Connect in the Oya app.",
   "owner": {
     "name": "Oya",
-    "url": "https://getoya.ai"
+    "url": "https://oyabrowser.com"
   },
   "plugins": [
     {
       "name": "oya-browser",
-      "source": "./",
-      "description": "Real Chrome browsers for your agent: the Oya MCP server (start_browser, analyze_page, click, type…) plus a skill that teaches the workflow.",
+      "source": "./plugins/oya-browser",
+      "description": "Real Chrome browsers for agents. Oya Cloud MCP tools sign in with your Oya account; the free desktop app connects with no account or key.",
       "homepage": "https://oyabrowser.com",
       "repository": "https://github.com/OyadotAI/oya-browser",
       "keywords": [

@@ -9,7 +9,8 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { AuthLoading, AuthShell } from '@/components/auth/auth-shell';
-import { ENTERPRISE_SIGNUP, EnterpriseNudge } from '@/components/auth/enterprise-nudge';
+import { MarketplaceContext } from '@/components/auth/marketplace-context';
+import { ENTERPRISE_SIGNUP } from '@/components/auth/enterprise-nudge';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { DEVELOPER_PITCH, Pitch, type PitchContent } from '@/components/auth/pitch';
 import { ENTERPRISE_PITCH } from './sales';
@@ -41,20 +42,17 @@ interface SwitchProps {
   plan: Plan;
 }
 
-/** Developer or Enterprise, in the style of sign-in's mode switch. */
+/** Developer or Enterprise, at the top of the card like sign-in's mode switch. */
 function PlanSwitch({ plan }: SwitchProps) {
   return (
-    <nav
-      aria-label="Account type"
-      className="mb-8 grid w-full max-w-[380px] grid-cols-2 gap-1 rounded-lg border border-border p-1"
-    >
+    <nav aria-label="Account type" className="mb-6 grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
       {PLANS.map(([p, label]) => (
         <Link
           key={p}
           href={HREFS[p]}
           scroll={false}
           aria-current={plan === p ? 'page' : undefined}
-          className={`rounded-md px-3 py-1.5 text-center text-sm transition-colors ${plan === p ? 'bg-accent/10 text-text' : 'text-text-dim hover:text-text-muted'}`}
+          className={`rounded-md px-3 py-1.5 text-center text-sm transition-colors ${plan === p ? 'bg-accent-soft text-text' : 'text-text-dim hover:text-text-muted'}`}
         >
           {label}
         </Link>
@@ -88,21 +86,17 @@ export function SignupView({ siteKey }: ViewProps) {
   // Don't render until auth state is resolved
   if (auth.loading || auth.user) return <AuthLoading />;
   return (
-    <AuthShell
-      glow="indigo"
-      footer={SIGN_IN}
-      above={<PlanSwitch plan={plan} />}
-      pitch={<Pitch content={PITCHES[plan]} />}
-    >
+    <AuthShell glow="accent" footer={SIGN_IN} pitch={<Pitch content={PITCHES[plan]} />}>
+      <PlanSwitch plan={plan} />
       {plan === 'enterprise' ? (
         <SalesView />
       ) : (
         <>
           <h1 className="mb-1 font-display text-2xl font-bold text-text">Create your account</h1>
-          <p className="mb-8 text-sm text-text-muted">Get started with Oya Browser in seconds</p>
+          <p className="mb-6 text-sm text-text-muted">Get started with Oya Browser in seconds</p>
+          <MarketplaceContext />
           <OAuthButtons />
           <SignupForm fields={fields} form={form} captcha={captcha} onSubmit={submit} />
-          <EnterpriseNudge />
         </>
       )}
     </AuthShell>

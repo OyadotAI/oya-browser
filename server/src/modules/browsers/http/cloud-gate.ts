@@ -10,7 +10,8 @@ import * as keyConfig from '../../config/service.ts';
 import { claimUrl, isUnclaimedAgentKey } from '../../auth/service.ts';
 import { track } from '../../telemetry/index.ts';
 import { container } from '../../../app/container.ts';
-import { SERVER_RUN } from '../connection/constants.ts';
+import { CLOUD_PROVIDER, SERVER_RUN } from '../connection/constants.ts';
+import { isConfigured as sandboxConfigured } from '../../../drivers/sandbox.ts';
 import { MAX_PROVISION } from '../constants.ts';
 
 export { SERVER_RUN } from '../connection/constants.ts';
@@ -29,17 +30,27 @@ const requested = (req) => Math.min(Math.max(parseInt(req.body?.count) || 1, 1),
  * Refuses a server-run browser to an unclaimed agent key, and to a person
  * whose plan (or a self-hosted server whose license) does not cover it; the
  * plan's 402 says why. `fixed` names the provider when the route decides it.
+ * Where this server runs no Oya Cloud at all, nothing is counted: ten parallel starts
+ * used to get "needs Oya Cloud settings" for some and "needs a commercial license" for
+ * the rest, two answers for the one cause.
  */
 export function cloudNeedsPerson(fixed?: string) {
   return async (req, res, next) => {
     const key = getKey(req);
     const provider = fixed || String(req.body?.provider || keyConfig.providerFor(key));
-    if (!SERVER_RUN.has(provider)) return next();
+    if (!counted(key, provider)) return next();
     if (await isUnclaimedAgentKey(key)) return refuseAgent(res, key, provider);
     await container.billing.entitlements.admitCloud(key, requested(req));
     next();
   };
 }
+
+/**
+ * Whether a start on `provider` is a browser this server runs and so is counted. Oya
+ * Cloud on a server that runs none is not: the launcher answers which settings are missing.
+ */
+const counted = (key: string, provider: string) =>
+  SERVER_RUN.has(provider) && (provider !== CLOUD_PROVIDER || sandboxConfigured(key));
 
 /** The unclaimed agent key is sent to be claimed. */
 function refuseAgent(res, key: string, provider: string) {

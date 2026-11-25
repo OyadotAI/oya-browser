@@ -7,8 +7,10 @@ import assert from 'node:assert/strict';
 import {
   inLane,
   inOwnLane,
+  inCallerOrOwnLane,
   currentLane,
   laneFrom,
+  laneMiddleware,
   LaneMap,
 } from '../../../../../src/modules/browsers/connection/lane.ts';
 import { registry } from '../../../../../src/modules/browsers/registry.ts';
@@ -129,4 +131,34 @@ it('sends the end before the work reports done, so the next run never finds the 
   const sent = sends();
   const seenAtDone = await inOwnLane('b1', async () => 'ok').then(() => sent.length);
   assert.equal(seenAtDone, 1);
+});
+
+it("keeps a caller's lane for the work, and ends no lane the caller named", async () => {
+  const sent = sends();
+  const lane = await inLane('sdk-script', () => inCallerOrOwnLane('b1', async () => currentLane()));
+  assert.equal(lane, 'sdk-script');
+  assert.deepEqual(sent, []);
+});
+
+it('gives work a lane of its own, ended after, when no caller named one', async () => {
+  const sent = sends();
+  const lane = await inCallerOrOwnLane('b1', async () => currentLane());
+  assert.match(String(lane), /^[0-9a-f-]{36}$/);
+  assert.deepEqual(sent, [['b1', { type: 'lane_end', lane }]]);
+});
+
+it('runs the rest of a request in the lane its X-Oya-Agent header names', async () => {
+  const seen = await new Promise((resolve) =>
+    laneMiddleware({ headers: { 'x-oya-agent': 'sdk-1' } }, {}, async () => {
+      await new Promise((r) => setImmediate(r));
+      resolve(currentLane());
+    }),
+  );
+  assert.equal(seen, 'sdk-1');
+});
+
+it('runs a request that names no lane in none', () => {
+  let seen: string | undefined = 'unset';
+  laneMiddleware({ headers: {} }, {}, () => (seen = currentLane()));
+  assert.equal(seen, undefined);
 });

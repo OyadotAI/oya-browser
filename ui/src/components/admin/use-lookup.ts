@@ -1,52 +1,76 @@
-/** Customer lookup and safe refreshes that cannot replace a newer selection. */
+/** Customer selection owns its pending state and rejects results from older selections or credentials. */
 import { useRef, useState, type MutableRefObject } from 'react';
-import type { AdminState } from './use-admin';
+import type { AdminScope, AdminState } from './use-admin';
 import type { Found } from './types';
 
-/** What the last search found, or why it found nothing. */
+/** Standalone callers without authentication changes retain their existing public hook contract. */
+const DEFAULT_SCOPE: AdminScope = { current: true, authenticated: true };
+
+/** One selected account's state belongs to one authenticated lifetime. */
 interface Outcome {
-  /** Who was found. */ found: Found | null;
-  /** Why not. */ error: string;
-  /** Identifies the selection that produced this result. */ version: number;
+  /** Customer snapshot. */ found: Found | null;
+  /** Visible failure. */ error: string;
+  /** Latest selected email, displayed during lookup. */ pending: string;
+  /** Selection identity. */ version: number;
+  /** Credential lifetime that owns this result. */ scope: AdminScope;
 }
 
-/** One lookup with the selection it is permitted to update. */
+/** A dispatched lookup carries revocable selection and authentication ownership. */
 type Query = {
   /** Authenticated lookup. */ lookup: AdminState['lookup'];
-  /** Email to search. */ email: string;
-  /** Selection at dispatch. */ version: number;
-  /** Latest requested selection. */ latest: MutableRefObject<number>;
-  /** Applies the current result. */ keep: (o: Outcome) => void;
+  /** Selected address. */ email: string;
+  /** Selection identity. */ version: number;
+  /** Latest selected identity. */ latest: MutableRefObject<number>;
+  /** Credential lifetime. */ scope: AdminScope;
+  /** Applies visible outcome. */ keep: (value: Outcome) => void;
 };
 
-/** Drops stale successes and failures alike. */
-function keepCurrent(q: Query, found: Found | null, error = '') {
-  if (q.version === q.latest.current) q.keep({ found, error, version: q.version });
+/** Old successes and failures cannot replace a new account or authenticated session. */
+function keepCurrent(query: Query, found: Found | null, error = '') {
+  if (query.scope.current && query.version === query.latest.current)
+    query.keep({ found, error, pending: '', version: query.version, scope: query.scope });
 }
 
-/** Runs only a query that still belongs to the selected customer. */
-function current(q: Query) {
-  if (!q.email || q.version !== q.latest.current) return Promise.resolve();
-  return q.lookup(q.email.trim()).then(
-    (found) => keepCurrent(q, found),
-    (e) => keepCurrent(q, null, e instanceof Error ? e.message : 'No account with that email'),
+/** Pending state is visible immediately, rather than showing the previous customer's actions. */
+function current(query: Query) {
+  if (!query.email || !query.scope.current || query.version !== query.latest.current) return Promise.resolve();
+  return query.lookup(query.email).then(
+    (found) => keepCurrent(query, found),
+    (error) => keepCurrent(query, null, error instanceof Error ? error.message : 'Could not look up this account.'),
   );
 }
 
-/** Search generations and a refresh callback bound to the displayed result. */
-function useResults(lookup: AdminState['lookup']) {
-  const [outcome, keep] = useState<Outcome>({ found: null, error: '', version: 0 });
-  const latest = useRef(0);
-  const search = (email: string) => current({ lookup, email, version: ++latest.current, latest, keep });
-  const refresh = () =>
-    current({ lookup, email: outcome.found?.profile.email || '', version: outcome.version, latest, keep });
-  return { search, refresh, ...outcome };
+/** Selection is published before work starts so previous actions disappear immediately. */
+function selected(query: Query) {
+  query.keep({
+    found: null,
+    error: query.email ? '' : 'Enter a customer email.',
+    pending: query.email,
+    version: query.version,
+    scope: query.scope,
+  });
+  return current(query);
 }
 
-/** The search input and the selected customer's results. */
-export function useLookup(lookup: AdminState['lookup']) {
+/** Selection changes clear the previous account before dispatch; refresh stays bound to its selection. */
+function useResults(lookup: AdminState['lookup'], scope: AdminScope) {
+  const [outcome, keep] = useState<Outcome>({ found: null, error: '', pending: '', version: 0, scope });
+  const latest = useRef(0);
+  const query = (email: string, version: number) => ({ lookup, email, version, latest, scope, keep });
+  const search = (email: string) => selected(query(email.trim(), ++latest.current));
+  const refresh = () => current(query(outcome.found?.profile.email || '', outcome.version));
+  return { ...visible(outcome, scope), search, refresh };
+}
+
+/** A replacement credential immediately withholds the previous customer's protected data. */
+function visible(outcome: Outcome, scope: AdminScope) {
+  return outcome.scope === scope ? outcome : { found: null, error: '', pending: '', version: 0, scope };
+}
+
+/** Shared search input and customer view use the same selection owner. */
+export function useLookup(lookup: AdminState['lookup'], scope = DEFAULT_SCOPE) {
   const [email, setEmail] = useState('');
-  const results = useResults(lookup);
+  const results = useResults(lookup, scope);
   const search = (asked = email) => {
     setEmail(asked);
     return results.search(asked);
@@ -54,5 +78,5 @@ export function useLookup(lookup: AdminState['lookup']) {
   return { ...results, email, setEmail, search };
 }
 
-/** The lookup's state, shared by the search box and customer panel. */
+/** Public search and result controls. */
 export type LookupState = ReturnType<typeof useLookup>;

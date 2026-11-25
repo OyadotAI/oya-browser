@@ -1,0 +1,128 @@
+/**
+ * The layout every answer page shares: the answer first, then sections, then questions that are
+ * always visible (not collapsed), so a crawler and an assistant read every answer as plain text.
+ * The same questions go out as FAQPage structured data. Styled as the trust center is.
+ */
+import type { Metadata } from 'next';
+import styles from '../page.module.css';
+import trust from '../trust/trust.module.css';
+import answers from './answers.module.css';
+import { AnswerHero } from './answer-hero';
+import { AnswerSection } from './answer-section';
+import { AnswerInvitation } from './answer-action';
+import { CompareFit, CompareTable } from './compare-view';
+import { SiteHeader } from '../_home/site-header';
+import { SiteFooter } from '../_home/site-footer';
+import { SITE_NAME, SITE_ALTERNATE_TYPES, type QA } from '@/lib/site';
+import {
+  breadcrumbNode,
+  faqNode,
+  jsonLd,
+  jsonLdGraph,
+  techArticleNode,
+  type BreadcrumbItem,
+} from '@/lib/structured-data';
+import type { AnswerPageContent, AnswerSources } from './content';
+
+/** The card image every page shares; Next replaces openGraph and twitter whole, so it is repeated here. */
+const CARD_IMAGE = '/oya-ask-poster.jpg';
+
+/**
+ * The page's title, its answer as the description, and its canonical address, repeated in the
+ * social cards. Without its own cards a page inherits the home page's, so six pages would share one
+ * card title and an og:url that contradicts each canonical.
+ */
+export function answerMetadata({ title, lead, path }: Pick<AnswerPageContent, 'title' | 'lead' | 'path'>): Metadata {
+  const card = { title, description: lead, images: [CARD_IMAGE] };
+  return {
+    title,
+    description: lead,
+    alternates: { canonical: path, types: SITE_ALTERNATE_TYPES },
+    openGraph: { ...card, type: 'article', siteName: SITE_NAME, url: path },
+    twitter: { ...card, card: 'summary_large_image' },
+  };
+}
+
+/** Breadcrumb trail for an answer page, nesting /vs/* comparisons under Compare. */
+function answerBreadcrumbs(content: AnswerPageContent): BreadcrumbItem[] {
+  const middle: BreadcrumbItem[] = content.path.startsWith('/vs/') ? [{ name: 'Compare', path: '/vs' }] : [];
+  return [{ name: 'Home', path: '/' }, ...middle, { name: content.label, path: content.path }];
+}
+
+/** Combined TechArticle, BreadcrumbList and FAQPage structured data for an answer page. */
+function answerStructuredData(content: AnswerPageContent) {
+  return jsonLdGraph([
+    techArticleNode({
+      headline: content.title,
+      description: content.lead,
+      path: content.path,
+    }),
+    breadcrumbNode(answerBreadcrumbs(content)),
+    faqNode(content.faq),
+  ]);
+}
+
+/** Where the page's claims about other companies come from, with the date they were read. */
+function Sources({ checked, links }: AnswerSources) {
+  return (
+    <section className={trust.section} aria-labelledby="sources">
+      <h2 id="sources">Sources</h2>
+      <p>
+        What this page says about other companies comes from their own public pages, read on {checked}. Vendors change
+        their pages; check the source before you rely on a cell.
+      </p>
+      <ul className={answers.sources}>
+        {links.map(({ label, url }) => (
+          <li key={url}>
+            <a href={url} rel="noopener">
+              {label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The questions, each answer shown. */
+function Questions({ faq }: { /** The questions and answers. */ faq: QA[] }) {
+  return (
+    <section className={`${trust.section} ${answers.questions}`} aria-labelledby="questions">
+      <h2 id="questions">Questions</h2>
+      {faq.map(({ q, a }) => (
+        <div key={q}>
+          <h3>{q}</h3>
+          <p>{a}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/** An answer page. The structured data is a data block, never run, so it needs no CSP nonce. */
+export function AnswerPage({ content }: { /** What the page says. */ content: AnswerPageContent }) {
+  return (
+    <div className={styles.page}>
+      <SiteHeader />
+      <div className={styles.container}>
+        <main id="top" tabIndex={-1} className={`${trust.main} ${answers.answerMain}`}>
+          <AnswerHero content={content} />
+          {content.sections.map((section) => (
+            <AnswerSection key={section.heading} section={section} path={content.path}>
+              {section.table && <CompareTable table={section.table} sources={content.sources} />}
+              {section.fit && <CompareFit fit={section.fit} />}
+            </AnswerSection>
+          ))}
+          {content.sources && <Sources {...content.sources} />}
+          <AnswerInvitation content={content} />
+          <Questions faq={content.faq} />
+        </main>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: jsonLd(answerStructuredData(content)) }}
+        />
+      </div>
+      <SiteFooter />
+    </div>
+  );
+}

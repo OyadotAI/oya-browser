@@ -111,8 +111,13 @@ describe('BrowserConnection', () => {
     assert.deepEqual([b.apiKey, b.name, b.clientType, b.ws], ['k-conn', 'Mine', 'oya', ws]);
   });
 
+  it('an ordinary connection claiming a cloud provider stays outside remote MCP', async () => {
+    await connect(auth({ provider: 'oya-cloud' }));
+    assert.equal(registry.get(B).cloudVerified, false);
+  });
+
   it('tells the ops channel about a first desktop with its platform from a fixed list, never the text the client sent', async () => {
-    process.env.SLACK_OPS_WEBHOOK_SIGNUPS = 'https://hooks.example.test/signups';
+    process.env.SLACK_OPS_WEBHOOK_EVENTS = 'https://hooks.example.test/events';
     keyConfig.reset();
     const calls = stubFetch(() => json({}));
     try {
@@ -123,7 +128,7 @@ describe('BrowserConnection', () => {
       assert.match(lines[0], /^🖥️ Desktop connected: .* \(unknown\)$/);
       assert.ok(!lines[0].includes('evil'));
     } finally {
-      delete process.env.SLACK_OPS_WEBHOOK_SIGNUPS;
+      delete process.env.SLACK_OPS_WEBHOOK_EVENTS;
     }
   });
 
@@ -173,11 +178,42 @@ describe('BrowserConnection', () => {
     assert.equal(warned.length, 5, 'one warning per unusable list, none for an app that sent nothing');
   });
 
-  it('answers messages once authenticated', async () => {
+  it('answers messages once authenticated, and ignores prototype property names', async () => {
     const ws = await connect(auth());
+    ws.deliver({ type: 'toString' });
+    ws.deliver({ type: 'constructor' });
     ws.deliver({ type: 'ping' });
     await settle();
     assert.equal(ws.ofType('pong').length, 1);
+    assert.equal(ws.closed, null);
+  });
+
+  it('ignores pipelined messages sent before welcome finishes, and cleans up if registration fails mid-flight', async () => {
+    let resumeAdopt!: () => void;
+    mock.method(control(), 'adopt', () => new Promise<object>((r) => (resumeAdopt = () => r({}))));
+    const ws = new WireSocket();
+    new BrowserConnection(ws, { socket: { remoteAddress: '1.2.3.4' } });
+    ws.deliver({ type: 'auth', ...auth() });
+    await settle();
+    ws.deliver({ type: 'ping' });
+    await settle();
+    assert.equal(ws.ofType('pong').length, 0, 'pipelined ping before registration completes is ignored');
+    resumeAdopt();
+    await settle();
+    assert.equal(ws.ofType('auth_ok').length, 1);
+  });
+
+  it('unlists the browser and stops usage when cloud attribution fails after listing', async () => {
+    usage.reset();
+    mock.method(container.billing.entitlements, 'attribute', async () => {
+      throw new Error('billing down');
+    });
+    const released = mock.method(container.personas, 'release');
+    const ws = await connect(auth({ provider: 'oya-cloud' }));
+    assert.equal(ws.closed?.code, CloseCode.CONTROL_REJECTED);
+    assert.equal(registry.isConnected(B), false);
+    assert.equal(usage.current('k-conn').openBrowsers, 0);
+    assert.equal(released.mock.callCount(), 1);
   });
 
   it('ignores messages before authentication, and anything that is not a typed JSON message', async () => {
@@ -197,11 +233,38 @@ describe('BrowserConnection', () => {
     assert.deepEqual(ws.closed, { code: CloseCode.AUTH_TIMEOUT, reason: 'Auth timeout' });
   });
 
-  it('refuses a second auth on the same socket', async () => {
-    const ws = await connect(auth());
-    ws.deliver({ type: 'auth', ...auth() });
+  it('refuses a second auth on the same socket and releases its registration even while lingering', async () => {
+    usage.reset();
+    const solo = container.personas.create('k-conn', { name: 'solo-dup', maxConcurrent: 1 });
+    const ws = new WireSocket();
+    ws.lingering = true;
+    await connect(auth({ persona: solo.id }), ws);
+    ws.deliver({ type: 'auth', ...auth({ persona: solo.id }) });
     await settle();
     assert.deepEqual(ws.closed, { code: CloseCode.REJECTED, reason: 'Already authenticating' });
+    assert.equal(registry.isConnected(B), false);
+    assert.equal(usage.current('k-conn').openBrowsers, 0);
+    assert.equal(container.personas.activeCount(solo.id), 0);
+    ws.hangUp();
+  });
+
+  it('releases registration immediately if a lingering socket begins closing during post-enlist attribution', async () => {
+    usage.reset();
+    const solo = container.personas.create('k-conn', { name: 'solo-mid', maxConcurrent: 1 });
+    let finishAttr!: () => void;
+    mock.method(container.billing.entitlements, 'attribute', () => new Promise<void>((r) => (finishAttr = r)));
+    const ws = new WireSocket();
+    ws.lingering = true;
+    new BrowserConnection(ws, { socket: { remoteAddress: '1.2.3.4' } });
+    ws.deliver({ type: 'auth', ...auth({ persona: solo.id, provider: 'oya-cloud' }) });
+    await settle();
+    ws.readyState = 2; // WebSocket.CLOSING before 'close' arrives
+    finishAttr();
+    await settle();
+    assert.equal(registry.isConnected(B), false);
+    assert.equal(usage.current('k-conn').openBrowsers, 0);
+    assert.equal(container.personas.activeCount(solo.id), 0);
+    ws.hangUp();
   });
 
   it('refuses an unknown key without registering the browser', async () => {
@@ -350,6 +413,79 @@ describe('BrowserConnection', () => {
       assert.equal(registry.get(B).ws, second);
       assert.equal(container.personas.activeCount(solo.id), 1);
       assert.equal(open(), 1);
+    });
+
+    it('keeps the live persona slot and newer socket when a reconnect arrives mid-adopt', async () => {
+      const solo = container.personas.create('k-conn', { name: 'solo', maxConcurrent: 1 });
+      let finishFirst!: () => void;
+      let calls = 0;
+      mock.method(control(), 'adopt', async () => {
+        if (++calls === 1) await new Promise<void>((r) => (finishFirst = r));
+        return {};
+      });
+      const first = new WireSocket();
+      first.lingering = true;
+      lingering.push(first);
+      new BrowserConnection(first, { socket: { remoteAddress: '1.2.3.4' } });
+      first.deliver({ type: 'auth', ...auth({ persona: solo.id }) });
+      await settle();
+
+      const second = await connect(auth({ persona: solo.id }));
+      finishFirst();
+      await settle();
+
+      assert.equal(first.closed?.code, CloseCode.REPLACED);
+      assert.equal(registry.get(B).ws, second);
+      assert.equal(container.personas.activeCount(solo.id), 1);
+      assert.equal(open(), 1);
+    });
+
+    it('preserves the newer connection slot when a superseded mid-adopt handshake later rejects', async () => {
+      const solo = container.personas.create('k-conn', { name: 'solo', maxConcurrent: 1 });
+      let rejectFirst!: (err: Error) => void;
+      let calls = 0;
+      mock.method(control(), 'adopt', async () => {
+        if (++calls === 1) await new Promise<void>((_r, rej) => (rejectFirst = rej));
+        return {};
+      });
+      const first = new WireSocket();
+      first.lingering = true;
+      lingering.push(first);
+      new BrowserConnection(first, { socket: { remoteAddress: '1.2.3.4' } });
+      first.deliver({ type: 'auth', ...auth({ persona: solo.id }) });
+      await settle();
+
+      const second = await connect(auth({ persona: solo.id }));
+      rejectFirst(new Error('stale adopt failed'));
+      await settle();
+      first.hangUp();
+
+      assert.equal(registry.get(B).ws, second);
+      assert.equal(container.personas.activeCount(solo.id), 1);
+      assert.equal(open(), 1);
+    });
+
+    it('refuses another tenant claiming a browser_id whose handshake is still mid-adopt', async () => {
+      mock.method(control(), 'authenticate', async (token: string) => ({
+        key: token === 'oya_attacker' ? 'k-attacker' : 'k-conn',
+        role: 'operator',
+      }));
+      let finishFirst!: () => void;
+      mock.method(control(), 'adopt', async () => {
+        await new Promise<void>((r) => (finishFirst = r));
+        return {};
+      });
+      const first = new WireSocket();
+      new BrowserConnection(first, { socket: { remoteAddress: '1.2.3.4' } });
+      first.deliver({ type: 'auth', ...auth() });
+      await settle();
+
+      const attacker = await connect(auth({ api_key: 'oya_attacker' }));
+      assert.equal(attacker.closed?.code, CloseCode.REJECTED);
+
+      finishFirst();
+      await settle();
+      assert.equal(registry.get(B)?.ws, first);
     });
   });
 });

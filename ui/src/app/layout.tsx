@@ -16,7 +16,8 @@ import { ErrorReporting } from '@/components/error-reporting';
 import { sentryDsn } from '@/lib/sentry';
 import { validRb2bId } from '@/lib/rb2b';
 import { validMetaPixelId } from '@/lib/meta-pixel';
-import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION } from '@/lib/site';
+import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, SITE_ALTERNATE_TYPES } from '@/lib/site';
+import { jsonLd, siteStructuredData } from '@/lib/structured-data';
 import { THEME_SCRIPT } from '@/lib/theme-script';
 import './globals.css';
 
@@ -44,18 +45,11 @@ export const metadata: Metadata = {
   title: { default: `${SITE_NAME}, ${SITE_TAGLINE}`, template: `%s · ${SITE_NAME}` },
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
-  keywords: [
-    'AI agent browser',
-    'record and replay browser automation',
-    'browser automation without an LLM in the loop',
-    'undetected browser automation',
-    'agent browser sign-in and session reuse',
-    'MCP browser',
-    'browser fingerprint persona',
-    'Browserbase alternative',
-  ],
-  // <link rel="alternate"> to the plain-text docs: how an agent reading the HTML finds the version written for it.
-  alternates: { canonical: '/', types: { 'text/plain': '/llms.txt', 'application/json': '/openapi.json' } },
+  // <link rel="alternate"> to machine-readable docs and the feed so crawlers and agents find them from any page.
+  alternates: {
+    canonical: '/',
+    types: SITE_ALTERNATE_TYPES,
+  },
   openGraph: {
     type: 'website',
     siteName: SITE_NAME,
@@ -79,57 +73,7 @@ export const metadata: Metadata = {
  * No aggregateRating or review markup: inventing either would be fabricating
  * social proof, and search engines treat self-serving review markup as spam.
  */
-const STRUCTURED_DATA = {
-  '@context': 'https://schema.org',
-  '@graph': [
-    {
-      '@type': 'WebSite',
-      '@id': `${SITE_URL}/#website`,
-      url: SITE_URL,
-      name: SITE_NAME,
-      description: SITE_DESCRIPTION,
-      publisher: { '@id': `${SITE_URL}/#organization` },
-    },
-    {
-      '@type': 'Organization',
-      '@id': `${SITE_URL}/#organization`,
-      name: 'Oya',
-      url: SITE_URL,
-      logo: `${SITE_URL}/icon.png`,
-      sameAs: ['https://github.com/OyadotAI/oya-browser', 'https://www.npmjs.com/package/@oya-ai/browser'],
-    },
-    {
-      '@type': 'SoftwareApplication',
-      '@id': `${SITE_URL}/#app`,
-      name: SITE_NAME,
-      applicationCategory: 'DeveloperApplication',
-      applicationSubCategory: 'Browser automation',
-      operatingSystem: 'macOS, Windows',
-      url: SITE_URL,
-      downloadUrl: `${SITE_URL}/docs#download`,
-      softwareHelp: `${SITE_URL}/docs`,
-      // The page written for AI agents: setup in two SDK calls, and every API.
-      subjectOf: { '@type': 'TechArticle', url: `${SITE_URL}/llms.txt`, name: 'Oya Browser for AI agents' },
-      description: SITE_DESCRIPTION,
-      featureList: [
-        'Playbooks: record an agent run once, replay it with new inputs and no model in the loop',
-        'Every playbook exports as a readable Playwright module you own',
-        'A changed page is repaired into a draft playbook a person promotes',
-        'Automation inside the browser process, not attached over the debugging protocol',
-        'Desktop sign-in that carries cookies and localStorage to every browser on that persona',
-        'Personas: fingerprint, cookies and proxy as one identity that never changes',
-        'Hash-chained audit trail and host allow-listing',
-        'Live view with human takeover mid-run for CAPTCHA and 2FA',
-        "Agents set themselves up: an SDK call for their own key, one to pair the person's browser and logins",
-        'MCP endpoint for Claude Code, Claude Desktop and Cursor; a skill for OpenClaw, Codex and any SKILL.md agent',
-        'REST, WebSocket, JavaScript SDK, CLI and a CDP URL Playwright connects to',
-        'Runs on Oya Cloud, Browserbase, Steel, Anchor, Browser Use or your own Chrome',
-        'Self-hostable with one installer command',
-      ],
-      publisher: { '@id': `${SITE_URL}/#organization` },
-    },
-  ],
-};
+const STRUCTURED_DATA = jsonLd(siteStructuredData());
 
 /**
  * Where product analytics goes, read at request time from the server's own
@@ -172,11 +116,7 @@ export default async function RootLayout({ children }: PropsWithChildren) {
             __html: THEME_SCRIPT,
           }}
         />
-        <script
-          nonce={nonce}
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
-        />
+        <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: STRUCTURED_DATA }} />
       </head>
       <body className="antialiased">
         <AuthProvider>

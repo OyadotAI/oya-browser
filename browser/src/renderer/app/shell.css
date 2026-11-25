@@ -25,38 +25,6 @@ body {
 body.mode-setup {
   height: 100vh;
 }
-/* ── Fingerprint debug bar ── */
-.fp-bar {
-  display: none;
-  height: 20px;
-  padding: 0 12px 0 80px;
-  background: #18181b;
-  color: var(--secondary);
-  font-family: ui-monospace, 'SF Mono', monospace;
-  font-size: 12px;
-  align-items: center;
-  gap: 12px;
-  overflow: hidden;
-  white-space: nowrap;
-  border-bottom: 1px solid #27272a;
-}
-body.mode-browsing .fp-bar {
-  display: flex;
-}
-.fp-bar .fp-label {
-  color: #a78bfa;
-  font-weight: 600;
-}
-.fp-bar .fp-val {
-  color: var(--secondary);
-}
-.fp-bar .fp-sep {
-  color: var(--text);
-}
-.fp-bar .fp-none {
-  color: var(--secondary);
-  font-style: italic;
-}
 /* ── Browsing mode, toolbar + tab bar + fp bar ── */
 body.mode-browsing {
   height: 102px;
@@ -202,7 +170,7 @@ button:active:not(:disabled) {
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--border);
   transition: background 160ms var(--ease);
 }
@@ -219,10 +187,13 @@ button:active:not(:disabled) {
   transition: transform 180ms var(--spring, var(--ease));
 }
 .switch[aria-checked='true'] {
-  background: var(--accent);
+  background: var(--accent-fill);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
+/* On lime the thumb is ink: a paper thumb would be lost in it. */
 .switch[aria-checked='true']::after {
   transform: translateX(14px);
+  background: var(--on-accent);
 }
 /* ════════════════════════════════════════════════════════════════════════
    Finish: one material, one geometry and one motion across the browser.
@@ -240,16 +211,23 @@ h2,
 h3 {
   letter-spacing: -0.022em;
 }
-/* Focus: a soft ring of the accent, never a hard outline. */
+/*
+ * Focus: a thin line that can be read in either theme, with a soft ring of lime round it. The ring
+ * alone would not do: lime on paper is too faint to find. A heading given focus only so a screen
+ * reader starts there (tabindex="-1") is not a control, and gets no ring.
+ */
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 summary:focus-visible,
-[tabindex]:focus-visible,
+[tabindex]:not([tabindex='-1']):focus-visible,
 .dev-tab:focus-visible {
   outline: none;
-  box-shadow: var(--ring);
+  box-shadow: var(--glow);
+}
+[tabindex='-1']:focus-visible {
+  outline: none;
 }
 /* Press: a quick spring squeeze instead of a nudge down. */
 button {
@@ -277,7 +255,7 @@ button:active:not(:disabled) {
 }
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
-  border-radius: 10px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 22%, transparent) padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -285,7 +263,7 @@ button:active:not(:disabled) {
 }
 kbd {
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 7%, transparent);
   font:
     500 11px -apple-system,
@@ -293,11 +271,9 @@ kbd {
     sans-serif;
   letter-spacing: 0.04em;
 }
-/* ── Setup: a calm card under a soft Oya glow ── */
+/* ── Setup: a calm card on the flat page ── */
 body.mode-setup {
-  background:
-    radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--logo-green) 12%, transparent), transparent 70%),
-    var(--bg);
+  background: var(--bg);
 }
 /* A theme change lands at once; nothing fades between the two themes. */
 :root[data-theme-switching] *,

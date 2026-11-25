@@ -132,6 +132,7 @@ describe('signed-in routes', () => {
     ['GET', '/auth/keys'],
     ['POST', '/auth/keys'],
     ['POST', '/auth/keys/import'],
+    ['POST', '/auth/keys/claim'],
     ['DELETE', '/auth/keys/abc'],
   ]) {
     it(`${method} ${path} refuses a caller without a session token`, async () => {

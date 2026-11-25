@@ -9,7 +9,6 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
   z-index: 200;
   display: none;
   align-items: center;
@@ -23,7 +22,7 @@
 .reconnect-overlay {
   position: fixed;
   inset: 0;
-  background: #10191155;
+  background: var(--scrim);
   z-index: 200;
   display: flex;
   align-items: safe center;
@@ -42,7 +41,7 @@
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   box-shadow: var(--shadow);
 }
 .shell-dialog header {
@@ -139,7 +138,7 @@
 }
 .command:hover,
 .command:focus-visible {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: var(--hover);
   box-shadow: none;
 }
 .shell-dialog footer {

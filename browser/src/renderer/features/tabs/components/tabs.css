@@ -160,7 +160,7 @@ body.mode-browsing .tab-bar {
 .tab-icon .tab-mark {
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 .tab-icon svg.icon {
   width: 14px;
@@ -288,7 +288,9 @@ body.mode-browsing .tab-bar {
   height: 7px;
   border-radius: 50%;
   background: var(--oya);
-  box-shadow: 0 0 0 1.5px var(--chrome-bar);
+  box-shadow:
+    inset 0 0 0 1px var(--accent-edge),
+    0 0 0 1.5px var(--chrome-bar);
 }
 /* It pulses while commands are arriving; between them it stays lit, so a long model step does not hide it. */
 :root[data-agent-active='true'] .tab-item.agent .tab-icon::after {
@@ -297,6 +299,7 @@ body.mode-browsing .tab-bar {
 @keyframes tab-agent {
   50% {
     box-shadow:
+      inset 0 0 0 1px var(--accent-edge),
       0 0 0 1.5px var(--chrome-bar),
       0 0 6px 1px color-mix(in srgb, var(--oya) 70%, transparent);
   }
@@ -307,7 +310,7 @@ body.mode-browsing .tab-bar {
   position: absolute;
   inset: -3px;
   border: 1.5px solid var(--danger);
-  border-radius: 5px;
+  border-radius: 0;
 }
 /* ── Opening, closing and dragging ── */
 .tab-item.opening {
@@ -336,7 +339,7 @@ body.mode-browsing .tab-bar {
   border-radius: var(--tab-radius);
   background: var(--chrome-bar);
   box-shadow:
-    0 6px 16px #0000002e,
+    0 6px 16px color-mix(in srgb, var(--shadow-ink) 18%, transparent),
     0 0 0 0.5px var(--hairline);
   transition: box-shadow var(--tab-motion) var(--tab-ease);
 }
@@ -385,7 +388,7 @@ body.mode-browsing .tab-bar {
   z-index: 300;
   max-width: 340px;
   padding: 6px 12px;
-  border-radius: 10px;
+  border-radius: 0;
   background: var(--surface);
   box-shadow: var(--shadow);
   pointer-events: none;
@@ -437,7 +440,7 @@ body.mode-browsing .tab-bar {
   color: var(--text);
   font-weight: 500;
   box-shadow:
-    0 6px 16px #0000002e,
+    0 6px 16px color-mix(in srgb, var(--shadow-ink) 18%, transparent),
     0 0 0 0.5px var(--hairline);
   pointer-events: none;
   transition: none;

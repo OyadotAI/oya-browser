@@ -8,8 +8,8 @@ import { Status } from '../../platform/http-status.ts';
 import { consume } from '../../platform/limits.ts';
 import { clientAddress } from '../auth/service.ts';
 import { hosted } from '../billing/config.ts';
-import { parseKeelPing } from './keel-ping.ts';
-import { recordKeelPing } from './keel-repository.ts';
+import { parseKeelReport } from './keel-batch.ts';
+import { recordKeelReport } from './keel-repository.ts';
 
 /** Keel telemetry routes mounted under /api. */
 export const router = Router({ caseSensitive: true });
@@ -19,6 +19,6 @@ router.post('/telemetry/keel/ping', async (req, res) => {
   if (!hosted()) throw notFound('Route');
   if (!consume('installPing', `keel:${clientAddress(req)}`).allowed)
     throw new HttpError(Status.TOO_MANY_REQUESTS, 'Too many pings');
-  await recordKeelPing(parseKeelPing(req.body));
+  await recordKeelReport(parseKeelReport(req.body));
   res.json({ ok: true });
 });

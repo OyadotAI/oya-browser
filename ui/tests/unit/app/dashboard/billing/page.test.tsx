@@ -16,6 +16,9 @@ vi.mock('@/lib/api', () => ({
   billingUpcoming: vi.fn(),
   billingCheckout: vi.fn(),
   billingPortal: vi.fn(),
+  getLicense: vi.fn(() => Promise.resolve({ enabled: false, license: null })),
+  licenseCheckout: vi.fn(),
+  licensePortal: vi.fn(),
 }));
 
 /** A Developer plan halfway through its hours. */
@@ -101,7 +104,7 @@ describe('BillingPage', () => {
       until: null,
       included: { cloudSeconds: 3600, steps: 500, proxyBytes: 0, llmMicroUsd: 500000, overage: false },
     });
-    fireEvent.click(await screen.findByText('Startup $99/mo'));
+    fireEvent.click(await screen.findByText('Startup — $2,500/mo'));
     expect(await screen.findByText('The startup plan is not on sale yet.')).toBeTruthy();
     expect(screen.getByText(/^This month since /)).toBeTruthy();
   });

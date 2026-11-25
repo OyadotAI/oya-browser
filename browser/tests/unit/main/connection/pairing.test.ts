@@ -43,12 +43,12 @@ describe('pairFromLink', () => {
     assert.deepEqual([init.method, init.redirect, init.body], ['POST', 'error', '{"code":"abc"}']);
   });
 
-  it('imports the logins when the person leaves "import my logins" ticked, as it starts', async () => {
+  it('imports logins only when the person explicitly selects the initially unticked option', async () => {
     fakeClaim(200, { apiKey: 'k' });
     const asked: any[] = [];
     const ask = async (options) => (asked.push(options), { response: 1, checkboxChecked: true });
     assert.equal((await pairFromLink(LINK, ask)).importLogins, true);
-    assert.equal(asked[0].checkboxChecked, true);
+    assert.equal(asked[0].checkboxChecked, false);
   });
 
   it('leaves "import my logins" unticked, and reworded, once logins were imported', async () => {

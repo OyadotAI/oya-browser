@@ -2,8 +2,8 @@
  * Pure display rules for the Playbooks tab: step descriptions, names and run
  * status text.
  */
-import { NAME_PATTERN, REPLY_PLACEHOLDER, STATUS_CLASS } from './constants';
-import type { AttentionReason, RecordedStep, RunStatus } from './types';
+import { MS_PER_SECOND, NAME_PATTERN, REPLY_PLACEHOLDER, SECONDS_PER_MINUTE, STATUS_CLASS } from './constants';
+import type { AttentionReason, PlaybookRunRecord, RecordedStep, RunStatus } from './types';
 
 /** How each kind of step reads, given the element's best label. */
 const STEP_TEXT: Record<string, (s: RecordedStep, label: string) => string> = {
@@ -42,3 +42,14 @@ export const replyPlaceholder = (reason: AttentionReason) => REPLY_PLACEHOLDER[r
 
 /** How old the live view's frame is, or null before the first one. Read at render, like the view's clock. */
 export const frameAge = (frameAt: number | null) => (frameAt ? Date.now() - frameAt : null);
+
+/** How long a run took: "42s", or "3m 5s". */
+export function runDuration(run: PlaybookRunRecord): string {
+  const seconds = Math.max(0, Math.round((Date.parse(run.endedAt) - Date.parse(run.startedAt)) / MS_PER_SECOND));
+  const minutes = Math.floor(seconds / SECONDS_PER_MINUTE);
+  return minutes ? `${minutes}m ${seconds % SECONDS_PER_MINUTE}s` : `${seconds}s`;
+}
+
+/** A run's line: when it started, how long it took, and where. "9:00 AM · 42s · on b-1". */
+export const runLine = (run: PlaybookRunRecord) =>
+  `${new Date(run.startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${runDuration(run)} · on ${run.browserId}`;

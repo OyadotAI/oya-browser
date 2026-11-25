@@ -39,16 +39,13 @@ const CLIPS: Record<Step, Clip> = {
   },
 };
 
-/** The macOS window buttons, for the monitor's chrome. */
-const LIGHTS = ['#ff5f57', '#febc2e', '#28c840'];
-
-/** The window's title bar: traffic lights, the title, and a live marker. */
+/** The window's title bar: three neutral window dots, the title, and a live marker. */
 function TitleBar({ title }: { /** What it says. */ title: string }) {
   return (
     <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
       <span className="flex gap-1.5">
-        {LIGHTS.map((c) => (
-          <span key={c} className="h-2.5 w-2.5 rounded-full opacity-80" style={{ background: c }} />
+        {['close', 'minimise', 'zoom'].map((name) => (
+          <span key={name} className="h-2.5 w-2.5 rounded-full bg-text/20" />
         ))}
       </span>
       <span className="flex-1 text-center font-mono text-[11px] text-text-dim">{title}</span>

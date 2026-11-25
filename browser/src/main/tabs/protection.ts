@@ -41,7 +41,18 @@ export function exitProxy(profile: ProxyProfile | null | undefined, governed: Pr
   return proxy?.host ? { ...proxy, host: proxy.host } : null;
 }
 /** Native passkeys and consent remain browser-owned; direct unmanaged ICE stays native. */
-const NATIVE_INJECTION = { noPasskeyDialog: false, noPermissionPrompt: true, nativeWebRTC: false };
+const NATIVE_INJECTION = {
+  noPasskeyDialog: false,
+  noRoamingPasskeyDialog: false,
+  noPermissionPrompt: true,
+  nativeWebRTC: false,
+};
+/**
+ * Stock Electron on macOS answers Touch ID passkeys but has no dialog for a security key or a
+ * phone, so such a request hung and blocked every later one on the page. Windows Hello brings its
+ * own dialog, and the patched engine its own.
+ */
+const STOCK_LACKS_ROAMING_PASSKEY_DIALOG = process.platform === 'darwin';
 /** Host-only startup identity before an authenticated persona is available. */
 function initialNativeProfile(session: Session) {
   const locale = Intl.DateTimeFormat().resolvedOptions().locale;
@@ -109,15 +120,16 @@ export class Protection {
     const profile = this.profileForSession(session);
     const builder = this.deps.persona.active ? nativePolicyForPersona : nativePolicyForHost;
     const policy = builder(profile, session.getUserAgent());
-    const input = { profile: this.deps.persona.active ? profile : null, injection: this.injection() };
+    const input = { profile: this.deps.persona.active ? profile : null, injection: this.injection(session) };
     const sources = this.sessionSources(session, { ...input, userAgent: policy.userAgent });
     if (isNativeEngine(session)) this.sessions.configure(session as ProtectedSession, policy, sources);
     else this.configureStock(session, policy.userAgent, policy.languages, sources.page);
   }
-  /** Unmanaged, unproxied browsers keep native WebRTC; anything with an egress rule masks it. */
-  private injection(): typeof NATIVE_INJECTION {
+  /** Unmanaged, unproxied browsers keep native WebRTC; anything with an egress rule masks it. Stock macOS dismisses roaming passkey requests. */
+  private injection(session: Session): typeof NATIVE_INJECTION {
     const nativeWebRTC = !this.deps.governance.configuration && !exitProxy(this.deps.persona.active, null);
-    return { ...NATIVE_INJECTION, nativeWebRTC };
+    const noRoamingPasskeyDialog = STOCK_LACKS_ROAMING_PASSKEY_DIALOG && !isNativeEngine(session);
+    return { ...NATIVE_INJECTION, nativeWebRTC, noRoamingPasskeyDialog };
   }
   /** Stock Electron: the user agent through its own API, the page source through the tab preload. */
   private configureStock(session: Session, userAgent: string, languages: readonly string[], page: string): void {

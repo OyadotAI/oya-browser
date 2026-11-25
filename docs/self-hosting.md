@@ -8,10 +8,85 @@ multi-replica, governance, session lifecycle, roles and recovery, see
 curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
 ```
 
-It needs git, Docker (running) and Node 20+, and tells you which one is missing. It
-clones the repo into `~/oya-browser` (set `OYA_DIR` to change that) and starts the
-wizard there. Arguments pass through: `... | sh -s -- --dry-run`. From a checkout you
-already have, `make wizard` does the same.
+The wizard starts with **Where should Oya run?** Choose Docker on this machine,
+Kubernetes, Amazon ECS or Google Cloud/GKE. It uses the working
+[`deployments/`](../deployments/) examples to deploy the control plane, Postgres
+and a browser runtime together. Only that destination's questions are asked;
+image overrides, networking, replicas and an optional settings file are under
+**Advanced settings**.
+
+Questions show why a value is needed, an example, what Enter or a blank value does,
+and how to find it. Contexts, project IDs, registry references, certificate ARNs,
+database connection strings and every Advanced setting have their own guidance.
+Lookup commands are displayed, never executed for you. Credentials remain masked.
+
+The terminal shows four phases: **Target → Configure → Deploy → Verify**. Completed
+answers collapse to short rows; only the current question stays expanded. At small
+sizes, prose wraps and long identifiers remain intact. Short windows, `NO_COLOR`
+and redirected output use a numbered, append-only flow. Ctrl+C cancels, and EOF
+does not silently accept setup defaults.
+
+The bootstrap needs git and Node 20+. It clones into `~/oya-browser` (`OYA_DIR`
+changes this). Target preflight then checks Docker, buildx and the tools and
+credentials that example needs. Docker is used to build and resolve images for
+all four examples. Kubernetes also needs `kubectl` and `python3`; ECS needs AWS
+CLI v2; GKE needs `gcloud`, `kubectl`, `python3` and `gke-gcloud-auth-plugin`.
+Start Docker Desktop or the Docker daemon before deploying.
+
+```bash
+# Skip the target menu; destination questions still appear.
+oya install --target k8s
+oya install --target ecs
+oya install --target gcloud
+
+# Preview a destination. No checkout, plan or infrastructure is changed.
+oya install --target docker --dry-run
+```
+
+From a checkout, `make wizard` runs the locally built installer. Docker uses
+Postgres and Caddy, with a local certificate for `localhost` or automatic HTTPS
+for a real domain. Kubernetes uses an explicit context and either managed
+Postgres or an in-cluster trial database. ECS creates Fargate, RDS and the network;
+GKE creates Autopilot and Cloud SQL. Cloud resources are billable. Use the
+[deployment guides](../deployments/README.md) for prerequisites, backup and
+removal commands.
+
+A deploy is reported ready only after rollout, `/readyz`, and the example's
+browser smoke test (start, navigate, stop) pass. Kubernetes and GKE verify through
+a private port-forward; public DNS and certificate issuance may still be pending.
+ECS HTTPS also asks for the public URL matching your ACM certificate; point its
+DNS at the printed load balancer before verification, then retry if necessary.
+A failure keeps resources and prints scoped status, logs, keys and smoke commands.
+
+### Repeat a deployment
+
+Nonsecret answers are saved to `oya-install.json` as a version 2 plan. Replay
+asks no questions:
+
+```bash
+oya install --config oya-install.json
+oya install --config oya-install.json --dry-run
+```
+
+Kubernetes managed-Postgres credentials are supplied as `OYA_DEPLOY_DATABASE_URL`
+(or `DATABASE_URL`) in the environment during replay. They are never saved in
+JSON, shown in previews or passed as installer command arguments. Optional
+settings stay in your `oya.env` file and the target's secret store. The existing
+deployment scripts retain API keys, encryption secrets and data on redeploy.
+
+For example, save this as `oya-install.json` for an ECS HTTP trial:
+
+```json
+{
+  "version": 2,
+  "target": "ecs",
+  "options": { "region": "us-east-1", "stack": "oya-trial", "http-only": true }
+}
+```
+
+HTTP is unencrypted and intended for trials. For production use
+`"certificate-arn": "<your ACM ARN>"` instead of `"http-only"`, and add a top-level
+`"publicUrl": "https://oya.example.com"`.
 
 ## Updating
 
@@ -19,7 +94,9 @@ already have, `make wizard` does the same.
 curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/update.sh | sh
 ```
 
-For an install on Docker Compose (what `install.sh` sets up by default). It pulls the
+For the original SQLite/Docker quickstart (`install.sh --yes` or a version 1 configuration).
+For version 2 deployments, rerun `oya install --config oya-install.json`, which uses
+the example’s deploy/update path and preserves its secrets and data. It pulls the
 latest code into `~/oya-browser` (or `OYA_DIR`), rebuilds the server and browser images
 (and the governed browser image, `oya-browser:local`, when there is one), restarts
 everything with the settings already in `.env`, keeps the number of browser workers
@@ -40,29 +117,16 @@ That is SQLite, the server and one browser worker in Docker on this machine, at
 `http://localhost:3100`. An LLM is set up only if `OPENAI_API_KEY` or
 `ANTHROPIC_API_KEY` is in the environment. It ends with `OYA_BASE_URL=` and
 `OYA_API_KEY=` lines. With no terminal to ask on (an agent's shell), `install.sh`
-adds `--yes` itself; `OYA_YES=1` forces it. On macOS it starts Docker Desktop if it
-is installed but not running.
+adds `--yes` itself; `OYA_YES=1` forces it. Start Docker Desktop first on macOS.
 
-Six questions, then it writes the config, builds the images, brings the stack up and
-waits for `/readyz` before telling you it worked. It ends by printing an API key.
+Bare `--yes` preserves the original SQLite/Docker quickstart. Version 1 saved
+configurations also retain their original database, browser-provider and LLM
+interview behavior. To deploy the Postgres/Caddy Docker example unattended,
+use `oya install --target docker --yes` instead.
 
-```
-? Where should the control plane run?   › Docker on this machine
-? Which database?                       › SQLite      (zero config, one replica)
-? Where should browsers run?            › Docker browser workers here
-? Which LLM should agents use?          › Anthropic (Claude)
-? Public URL of this control plane?     › http://localhost:3100
-? Configure optional services now?      › No
-
-✔ wrote .env
-  waiting for /readyz… ready
-✔ http://localhost:3100 is up.
-```
-
-`--dry-run` shows the plan and writes nothing. Every answer is saved
-to `oya-install.json`, no secrets, so `make wizard ARGS="--config oya-install.json"`
-reproduces the same deployment without prompting, which is the CI path. Credentials come
-from the environment there.
+`--dry-run` shows a plan and writes nothing. For version 2 it checks local tools
+but skips credential-dependent cloud calls, reporting those checks as unverified.
+The shell bootstrap also skips cloning and updating the checkout during previews.
 
 The manual route still works if you would rather write `.env` yourself: copy
 [`server/.env.example`](../server/.env.example) and run `docker compose up`.
@@ -89,13 +153,12 @@ stops everything; the `oya-data` volume holds your personas and cookies, so keep
 
 | | Options |
 |:---|:---|
-| Control plane | Docker. For production on one Docker host, Amazon ECS, Kubernetes or Google Cloud, see [`deployments/`](../deployments): each has a `deploy.sh`. |
+| Control plane | Docker, Kubernetes, Amazon ECS, Google Cloud/GKE, through their existing [`deployments/`](../deployments/) scripts. Bare `--yes` keeps the SQLite/Docker quickstart. |
 | Database | `OYA_STORAGE`: SQLite (default), Postgres (`DATABASE_URL`, Supabase's included) or JSON files. |
 | Browsers | Docker workers, governed Docker (one container per session), a Kubernetes fleet (one pod per session), Oya Cloud, Browserbase, Steel, Anchor, Browser Use, or your own Chrome over CDP. |
 | LLM | Anthropic, OpenAI, Gemini, Gemini Enterprise (ex-Vertex AI), any OpenAI-compatible endpoint, or a local model (Ollama, vLLM, LM Studio). |
 
-Options the wizard cannot yet finish are listed and dimmed rather than hidden, so the
-menu never promises something that does not work.
+Only implemented deployment targets appear in the target menu.
 
 ## Databases
 
@@ -184,8 +247,8 @@ Everything is optional except the secrets you want to survive a restart.
 | `OYA_CLOUD_RUNTIME` | What runs Oya Cloud browsers: `daytona` (default), `docker`, `k8s` or `ecs`. See [Cloud browser runtimes](#cloud-browser-runtimes). |
 | `OYA_RESIDENTIAL_PROXY_URL` | A residential vendor gateway every Oya Cloud browser uses unless its persona has its own proxy. Never sent to desktop browsers, which could extract the credentials. `{session}` and `{geo}` in the username become a sticky per-persona session and its country. Traffic is counted in the sandbox, both directions, and metered per key as `residential_proxy_bytes`. |
 | `POSTHOG_KEY` / `POSTHOG_HOST` | Product analytics. Both must be set or nothing is sent; there is no default host. The key is a PostHog project write token, which the console shows to every visitor; never a personal PostHog key. |
-| `SLACK_OPS_WEBHOOK_SIGNUPS` / `SLACK_OPS_WEBHOOK_EVENTS` | Slack incoming webhooks for one-line ops messages: signups, keys, desktop downloads and desktop connections in the first; saved playbooks, CDP attaches and server errors in the second. Unset means no message. |
-| `SLACK_OPS_WEBHOOK_PRODUCT` | A Slack incoming webhook for product cards: one short block per event worth reading (event, who, what happened, when), such as a sign-up and how it was made, a key's first browser, a session of a minute or more and how long it ran, a playbook saved or replayed, a desktop installed or updated, and server errors. Routine events (update checks, reconnects, MCP tool calls) never post. Unset means no card. |
+| `SLACK_OPS_WEBHOOK_SIGNUPS` / `SLACK_OPS_WEBHOOK_EVENTS` | Slack incoming webhooks for concise lines. SIGNUPS is business-only: account and agent signups, agent-key claims, API-key creation, and successful or failed payments. EVENTS is optional operational activity: first desktop connections, installer downloads, qualifying self-hosted install leads, saved playbooks, CDP attaches, run failures and server errors. Configure EVENTS for a separate channel from `#new-accounts`; different webhook URLs can still post to the same Slack channel. Unset means no message. |
+| `SLACK_OPS_WEBHOOK_PRODUCT` | Business alerts as cards (event, who, details, when), with the same account, key and payment allowlist as SIGNUPS. Browser sessions, CDP attaches and other activity never produce cards here. Use SIGNUPS or PRODUCT for `#new-accounts`; setting both sends both presentations. Unset means no card. |
 | `RB2B_ID` | An RB2B account id. Loads RB2B's visitor identification on the public pages (landing, docs, sign-in, sign-up), never on the console or the live view. Unset means it never loads. |
 | `META_PIXEL_ID` | A Meta pixel id. Loads Meta's ad pixel on the same public pages, counts their page views and reports each sign-up as `CompleteRegistration`. Never on the console, the live view, the admin page or a claim link. Unset means it never loads. |
 
@@ -242,9 +305,12 @@ With `ecs.auth` set, the key's ECS browsers run on its own account, and none of 
 
 A self-hosted server runs up to 5 cloud browsers (browsers it launches in Docker, Kubernetes,
 ECS or Daytona) at once for free. The sixth start is refused with a 402 that says so. The
-desktop app and browsers you connect yourself are not counted. For more, write to
-**sales@getoya.ai** for a license key and set it as `OYA_LICENSE_KEY`. See the
-[license](../LICENSE.md).
+desktop app and browsers you connect yourself are not counted. To run more, buy a license at
+[oyabrowser.com/dashboard/billing](https://oyabrowser.com/dashboard/billing#self-hosted) (6 to 50
+browsers, $20 each a month or $240 a year) and set its key as `OYA_LICENSE_KEY`, then restart. Each
+renewal issues a new key; the old one keeps working 14 days past its period, so swap it in before
+then. A refunded or disputed payment revokes the license, and the server drops back to 5 at
+its next daily ping. For more than 50, [book a time with the founders](https://calendly.com/d/dvrm-r65-kkx/oya-founder-call). See the [license](../LICENSE.md).
 
 ## Telemetry
 
@@ -255,7 +321,7 @@ license id if it has one. Nothing else: no addresses, keys, users, URLs or page 
 be turned off; it is a condition of the [license](../LICENSE.md). A ping that fails is dropped and
 changes nothing.
 
-Apart from that ping, the server sends nothing to anyone unless you set the variables below; the CLI and SDK never send anything, and the desktop app tells only the server it connects to its version (when it connects and when it checks for an update). With `POSTHOG_KEY` and `POSTHOG_HOST` both set, it reports product events to that PostHog: `account_signed_up`, `api_key_created`, `browser_started`, `browser_stopped`, `playbook_saved`, `playbook_replayed`, `mcp_tool_called`, `cdp_attached`, `desktop_connected` (with the app version), `desktop_updated`, `download_served`, `update_checked`, `persona_created` and `server_error`, each with a few properties such as provider, step count, platform, version or the error reference. Downloads and update checks are counted under a fingerprint of the address and user agent, never the address itself, and create no person. The console reports pageviews, time on page, and on public pages the clicks it tags (download and call-to-action buttons, by name only). With `SLACK_OPS_WEBHOOK_SIGNUPS` or `SLACK_OPS_WEBHOOK_EVENTS` set, it posts one Slack line per signup, key created, desktop download, first desktop connection, playbook saved, CDP attach and server error; with `SLACK_OPS_WEBHOOK_PRODUCT` set, a short card for those and for a key's first browser, sessions of a minute or more, replays and desktop updates. Visited URLs, page content, cookies, API keys, key labels, persona and playbook names never leave the server this way; the sign-up email goes to PostHog's identify call and the Slack lines, nowhere else. Sending is best effort and never delays a request. Unset the variables and it stops.
+Apart from that ping, the server sends nothing to anyone unless you set the variables below; the CLI and SDK never send anything, and the desktop app tells only the server it connects to its version (when it connects and when it checks for an update). With `POSTHOG_KEY` and `POSTHOG_HOST` both set, it reports product events to that PostHog: `account_signed_up`, `api_key_created`, `browser_started`, `browser_stopped`, `playbook_saved`, `playbook_replayed`, `mcp_tool_called`, `cdp_attached`, `desktop_connected` (with the app version), `desktop_updated`, `download_served`, `update_checked`, `persona_created` and `server_error`, each with a few properties such as provider, step count, platform, version or the error reference. Downloads and update checks are counted under a fingerprint of the address and user agent, never the address itself, and create no person. The console reports pageviews, time on page, and on public pages the clicks it tags (download and call-to-action buttons, by name only). `SLACK_OPS_WEBHOOK_SIGNUPS` posts business alerts only: account and agent signups, agent-key claims, API-key creation, and successful or failed payments. `SLACK_OPS_WEBHOOK_PRODUCT` uses the same allowlist in card form, including payment amount and outcome. Choose one presentation for `#new-accounts`; enabling both sends both. Optional `SLACK_OPS_WEBHOOK_EVENTS` lines cover desktop connections, installer downloads, qualifying self-hosted leads, saved playbooks, CDP attaches and errors; point it at a separate operational channel. Different webhook URLs may still target the same channel, so verify the channel when configuring them. Browser sessions and other activity remain available in analytics. Visited URLs, page content, cookies, API keys, key labels, persona and playbook names never leave the server this way; the sign-up email goes to PostHog's identify call and the Slack lines, nowhere else. Sending is best effort and never delays a request. Unset the variables and it stops.
 
 Health: `/livez` is liveness, `/readyz` is readiness. `/api/health` answers `ok`
 unconditionally and is not a readiness probe.

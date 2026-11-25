@@ -1,0 +1,808 @@
+<!doctype html>
+<!--
+  The browser card MCP Apps hosts (Claude, ChatGPT) show for show_browser. It knows only the
+  browser's id, from the tool result; its snapshots come through the host's own MCP connection
+  (the app-only view_browser tool). Watch live requests a short-lived viewing link.
+  Protocol: MCP Apps 2026-01-26 (ui/initialize, tool-result notification, tools/call, ui/open-link,
+  size-changed). Self-contained: the host's sandbox loads no fonts, images or scripts from elsewhere.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oya browser</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #1a1a1a;
+        --paper: #f7f5f0;
+        --lime: #cdf01e;
+        --amber: #f5b14c;
+        --foreground: var(--paper);
+        --card: color-mix(in srgb, var(--paper) 5%, var(--ink));
+        --raised: color-mix(in srgb, var(--paper) 9%, var(--ink));
+        --sunken: color-mix(in srgb, var(--ink) 80%, #000);
+        --border: color-mix(in srgb, var(--paper) 12%, transparent);
+        --muted: color-mix(in srgb, var(--paper) 72%, var(--ink));
+        --dim: color-mix(in srgb, var(--paper) 48%, var(--ink));
+        --primary: var(--lime);
+        --fill-edge: transparent;
+        --warning: var(--amber);
+        --glow: color-mix(in srgb, var(--lime) 30%, transparent);
+        --aurora: color-mix(in srgb, var(--lime) 16%, transparent);
+        --shadow: 0 24px 48px -24px #000e, 0 2px 6px -2px #0008;
+        --scrim: color-mix(in srgb, var(--ink) 50%, transparent);
+        --sheen: color-mix(in srgb, var(--paper) 9%, transparent);
+      }
+      :root[data-theme='light'] {
+        color-scheme: light;
+        --foreground: var(--ink);
+        --card: #fffefb;
+        --raised: color-mix(in srgb, var(--ink) 4%, var(--paper));
+        --sunken: color-mix(in srgb, var(--ink) 8%, var(--paper));
+        --border: color-mix(in srgb, var(--ink) 12%, transparent);
+        --muted: color-mix(in srgb, var(--ink) 72%, var(--paper));
+        --dim: color-mix(in srgb, var(--ink) 46%, var(--paper));
+        --primary: var(--ink);
+        --fill-edge: var(--ink);
+        --warning: color-mix(in srgb, var(--amber) 42%, var(--ink));
+        --glow: color-mix(in srgb, var(--lime) 60%, transparent);
+        --aurora: color-mix(in srgb, var(--lime) 30%, transparent);
+        --shadow: 0 22px 40px -26px color-mix(in srgb, var(--ink) 50%, transparent), 0 1px 3px -1px #0002;
+        --scrim: color-mix(in srgb, var(--paper) 55%, transparent);
+        --sheen: color-mix(in srgb, #fff 35%, transparent);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+        color: var(--foreground);
+      }
+      body {
+        font:
+          12px/1.45 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        padding: 6px;
+        -webkit-font-smoothing: antialiased;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* A static border keeps the live frame distinct from the conversation. */
+      .frame {
+        position: relative;
+        border-radius: 22px;
+        padding: 1.5px;
+        background: var(--border);
+        box-shadow: var(--shadow);
+      }
+      .card {
+        position: relative;
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+        border-radius: 20.5px;
+        background:
+          radial-gradient(120% 70% at 0% 0%, var(--aurora), transparent 60%),
+          radial-gradient(80% 50% at 100% 0%, color-mix(in srgb, var(--aurora) 50%, transparent), transparent 70%),
+          var(--card);
+        overflow: hidden;
+      }
+
+      /* Header: the Oya mark, the browser's name, its state. */
+      .head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      .mark {
+        position: relative;
+        flex: none;
+        width: 40px;
+        height: 40px;
+        border-radius: 11px;
+        background: #1a1a1a;
+        box-shadow:
+          0 0 0 1px color-mix(in srgb, var(--paper) 10%, transparent) inset,
+          0 8px 20px -8px var(--glow);
+        display: grid;
+        place-items: center;
+      }
+      .mark svg {
+        width: 28px;
+        height: 28px;
+      }
+
+      .who {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 1px;
+      }
+      .name {
+        font-size: 15px;
+        font-weight: 650;
+        letter-spacing: -0.015em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brand {
+        color: var(--dim);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .brand b {
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .badge {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 11px 5px 9px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: color-mix(in srgb, var(--raised) 85%, transparent);
+        border: 1px solid var(--border);
+        backdrop-filter: blur(6px);
+      }
+      .badge i {
+        position: relative;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--dim);
+      }
+      .live .badge {
+        color: var(--foreground);
+        border-color: color-mix(in srgb, var(--lime) 45%, var(--border));
+      }
+      .live .badge i {
+        background: var(--lime);
+      }
+
+      .stalled .badge {
+        color: var(--warning);
+      }
+      .stalled .badge i {
+        background: var(--amber);
+      }
+
+      /* The browser window the page sits in. */
+      .window {
+        position: relative;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: var(--sunken);
+        overflow: hidden;
+        box-shadow: 0 1px 0 var(--sheen) inset;
+      }
+      .chrome {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        background: linear-gradient(var(--raised), color-mix(in srgb, var(--raised) 70%, var(--sunken)));
+        border-bottom: 1px solid var(--border);
+      }
+      .dots {
+        display: flex;
+        gap: 6px;
+        flex: none;
+      }
+      .dots i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--foreground) 18%, transparent);
+      }
+      .live .dots i:first-child {
+        background: var(--lime);
+        box-shadow: 0 0 8px var(--glow);
+      }
+      .address {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 5px 12px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--card) 80%, transparent);
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .address svg {
+        flex: none;
+        width: 11px;
+        height: 11px;
+        color: var(--lime);
+      }
+      :root[data-theme='light'] .address svg {
+        color: var(--ink);
+      }
+      .url {
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .shot {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        width: 100%;
+        overflow: hidden;
+        background: var(--sunken);
+      }
+      .shot img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        object-position: center;
+        opacity: 0;
+        transition: opacity 200ms ease;
+      }
+      .shot img.on {
+        opacity: 1;
+        transform: none;
+      }
+      /* A glass sheen across the page. */
+      .shot::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(160deg, var(--sheen), transparent 38%);
+      }
+      /* A soft sweep while the first frame is on its way. */
+      .shot::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          100deg,
+          transparent 30%,
+          color-mix(in srgb, var(--foreground) 8%, transparent) 50%,
+          transparent 70%
+        );
+        background-size: 220% 100%;
+        animation: sweep 1.6s linear infinite;
+      }
+      .shot.has::before {
+        display: none;
+      }
+      .veil {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: var(--scrim);
+        backdrop-filter: blur(4px) saturate(0.7);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.35s;
+      }
+      .veil span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 44px;
+        padding: 8px 16px;
+        border-radius: 999px;
+        font-weight: 650;
+        background: var(--card);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+      }
+      .veil span::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--dim);
+      }
+      .held .veil span::before {
+        background: var(--amber);
+      }
+      .held .veil,
+      .stopped .veil {
+        opacity: 1;
+      }
+      .stalled .shot img.on {
+        filter: saturate(0.4) brightness(0.85);
+      }
+      .stopped .shot img.on {
+        filter: grayscale(1) brightness(0.9);
+      }
+
+      /* Footer: who is driving, for how long, and the one action. */
+      .foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+      .driver {
+        flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .stalled .status {
+        color: var(--warning);
+      }
+      .meta {
+        display: flex;
+        gap: 6px;
+        color: var(--dim);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .chip {
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--raised) 70%, transparent);
+      }
+      .chip:empty {
+        display: none;
+      }
+      button {
+        position: relative;
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 700;
+        color: var(--ink);
+        background: linear-gradient(180deg, color-mix(in srgb, var(--lime) 80%, #fff), var(--lime));
+        border: 1px solid var(--fill-edge);
+        border-radius: 999px;
+        min-height: 44px;
+        padding: 8px 16px;
+        cursor: pointer;
+        overflow: hidden;
+        box-shadow:
+          0 1px 0 #fff6 inset,
+          0 10px 24px -10px var(--glow);
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.2s ease;
+      }
+      button::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(110deg, transparent 35%, #fff9 50%, transparent 65%);
+        transform: translateX(-120%);
+        transition: transform 0.6s ease;
+      }
+      button:hover {
+        transform: translateY(-1px);
+        box-shadow:
+          0 1px 0 #fff6 inset,
+          0 14px 30px -10px var(--glow);
+      }
+      button:hover::after {
+        transform: translateX(120%);
+      }
+      button:active {
+        transform: translateY(0);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 3px;
+      }
+      button svg {
+        width: 12px;
+        height: 12px;
+      }
+      .link {
+        user-select: all;
+        word-break: break-all;
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @keyframes sweep {
+        from {
+          background-position: 120% 0;
+        }
+        to {
+          background-position: -120% 0;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+      @media (max-width: 440px) {
+        .card {
+          padding: 12px;
+          gap: 11px;
+        }
+        .mark {
+          width: 34px;
+          height: 34px;
+        }
+        .mark svg {
+          width: 24px;
+          height: 24px;
+        }
+        .dots {
+          display: none;
+        }
+        .meta .chip + .chip {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="card" class="card-state">
+      <div class="frame">
+        <div class="card">
+          <div class="head">
+            <div class="mark" aria-hidden="true">
+              <!-- The Oya mark: a lime ring behind a paper ring, on charcoal (ui/src/app/icon.svg). -->
+              <svg viewBox="0 0 512 512" fill="none">
+                <circle cx="276" cy="276" r="160" stroke="#cdf01e" stroke-width="80" />
+                <circle cx="236" cy="236" r="160" stroke="#f7f5f0" stroke-width="80" />
+              </svg>
+            </div>
+            <div class="who">
+              <div class="name" id="name">Oya browser</div>
+              <div class="brand"><b>Oya Browser</b> · real Chrome for agents</div>
+            </div>
+            <div class="badge" id="badge"><i></i><span id="badge-text">Starting</span></div>
+          </div>
+          <div class="window">
+            <div class="chrome">
+              <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+              <div class="address">
+                <svg viewBox="0 0 12 12" aria-hidden="true">
+                  <rect x="2" y="5" width="8" height="6" rx="1.5" fill="currentColor" />
+                  <path d="M4 5V3.5a2 2 0 0 1 4 0V5" fill="none" stroke="currentColor" stroke-width="1.3" />
+                </svg>
+                <span class="url" id="url">about:blank</span>
+              </div>
+            </div>
+            <div class="shot" id="shot">
+              <img id="img" alt="The browser's page" />
+              <img id="img2" alt="" aria-hidden="true" />
+              <div class="veil"><span id="veil">A person is driving</span></div>
+            </div>
+          </div>
+          <div class="foot">
+            <div class="driver">
+              <div class="status">
+                <span id="status" role="status">Connecting to browser…</span>
+              </div>
+              <div class="meta">
+                <span class="chip" id="elapsed"></span>
+                <span class="chip" id="fresh"></span>
+              </div>
+            </div>
+            <button id="take" type="button" hidden aria-label="Watch live (opens new tab)">
+              Watch live
+              <svg viewBox="0 0 12 12" aria-hidden="true">
+                <path
+                  d="M4 2h6v6M10 2 3 9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="link" id="link" role="status" hidden></div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        /** How often a visible card asks for a fresh snapshot, and after how many failures in a row it says so. */
+        const EVERY_MS = 2000,
+          STALL_AFTER = 2;
+        /** How long a host may take to answer before the card counts the request as failed. */
+        const ANSWER_MS = 10000;
+        /**
+         * Unreachable answers in a row before the card says the browser stopped: a browser still
+         * booting gets about 3 minutes to dial in, one that was live about 10 seconds to reconnect.
+         */
+        const BOOT_TRIES = 90,
+          RECONNECT_TRIES = 5;
+        const $ = (id) => document.getElementById(id);
+        const state = {
+          id: '',
+          opening: false,
+          refreshing: false,
+          timer: 0,
+          failures: 0,
+          missing: 0,
+          lastFrame: 0,
+          firstFrame: 0,
+          intersecting: !('IntersectionObserver' in window),
+          retryPaused: false,
+          ended: false,
+          said: '',
+          front: 'img',
+          driver: 'The agent',
+        };
+        let next = 0;
+        const pending = new Map();
+
+        /** A JSON-RPC request to the host; it resolves with the host's result. */
+        function request(method, params) {
+          const id = ++next;
+          window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+          return new Promise((resolve, reject) => {
+            pending.set(id, { resolve, reject });
+            setTimeout(() => pending.delete(id) && reject(new Error('no answer')), ANSWER_MS);
+          });
+        }
+        /** A JSON-RPC notification to the host. */
+        const notify = (method, params) => window.parent.postMessage({ jsonrpc: '2.0', method, params }, '*');
+
+        /** The card's state: its class, badge and status line; the line is announced only when its words change. */
+        function say(words, mode, badge) {
+          $('card').className = 'card-state ' + (mode || '');
+          $('badge-text').textContent = badge;
+          if (!state.opening) actionLabel(mode === 'stalled' ? 'Reconnect' : 'Watch live');
+          if (state.said !== words) $('status').textContent = state.said = words;
+        }
+        /** Keep the accessible and visible labels in sync through retry and open states. */
+        function actionLabel(label) {
+          $('take').firstChild.textContent = label + ' ';
+          $('take').setAttribute('aria-label', label === 'Watch live' ? 'Watch live (opens new tab)' : label);
+        }
+        /** Light or dark, as the host says. */
+        const theme = (ctx) => ctx && ctx.theme && document.documentElement.setAttribute('data-theme', ctx.theme);
+
+        /** Who is driving, in the host's own name ("Claude is driving"); plain text, never markup. */
+        function host(result) {
+          const name = result && result.hostInfo && result.hostInfo.name;
+          if (typeof name === 'string' && /^[\w .-]{1,24}$/.test(name))
+            state.driver = name.replace(/^./, (c) => c.toUpperCase());
+          theme(result && result.hostContext);
+        }
+
+        /** The browser this card shows, from show_browser’s result. */
+        function onResult(result) {
+          const card = result && result.structuredContent;
+          if (result?.isError) return stop();
+          if (!card || typeof card.browserId !== 'string') return;
+          state.id = card.browserId;
+          if (card.name) $('name').textContent = card.name;
+          $('take').hidden = Boolean(card.pending);
+          schedule(0);
+        }
+
+        /** Asks again in `ms`, while the card is on screen and its browser runs. */
+        function schedule(ms) {
+          clearTimeout(state.timer);
+          if (canRefresh()) state.timer = setTimeout(refresh, ms);
+        }
+
+        /** Both the document and this card must be visible to request another snapshot. */
+        function canRefresh() {
+          return (
+            state.id &&
+            state.intersecting &&
+            document.visibilityState === 'visible' &&
+            !state.retryPaused &&
+            !state.ended
+          );
+        }
+
+        /** One snapshot through the host's MCP connection. */
+        async function refresh() {
+          if (state.refreshing || !canRefresh()) return;
+          state.refreshing = true;
+          try {
+            const result = await request('tools/call', { name: 'view_browser', arguments: { browser_id: state.id } });
+            show((result && result.structuredContent) || { state: 'failed' });
+          } catch {
+            show({ state: 'failed' });
+          } finally {
+            state.refreshing = false;
+            schedule(EVERY_MS);
+          }
+        }
+
+        /** The card for one answer: live, held by a person, gone, or failing. */
+        function show(view) {
+          if (view.state === 'live') return showLive(view);
+          if (view.state === 'held') return held();
+          if (view.state === 'unavailable') return unreachable();
+          state.missing = 0;
+          if (++state.failures >= RECONNECT_TRIES) {
+            state.retryPaused = true;
+            $('take').hidden = false;
+            return say('Couldn’t refresh the browser. Select Reconnect to try again.', 'stalled', 'Disconnected');
+          }
+          if (state.failures < STALL_AFTER) return;
+          const ago = state.lastFrame ? Math.round((Date.now() - state.lastFrame) / 1000) : 0;
+          if (!state.lastFrame) return say('Connecting to browser…', '', 'Starting');
+          say('⚠ Last frame ' + ago + 's ago. Retrying…', 'stalled', 'Retrying');
+        }
+
+        /** A person has taken over in the live page: the agent is paused until they hand it back. */
+        function held() {
+          state.failures = state.missing = 0;
+          $('take').hidden = false;
+          $('veil').textContent = 'A person is driving';
+          say('A person has control.', 'held', 'Paused');
+        }
+
+        /** A fresh picture, faded in over the last one, with the browser's name and address. */
+        function showLive(view) {
+          $('take').hidden = false;
+          if (typeof view.image === 'string' && view.image.startsWith('data:image/')) crossfade(view.image);
+          if (view.name) $('name').textContent = view.name;
+          $('url').textContent = view.url || 'about:blank';
+          $('url').title = view.url || '';
+          state.failures = 0;
+          state.missing = 0;
+          say(state.driver + ' has control', 'live', 'Live');
+          tick();
+        }
+
+        /** Unchanged snapshots update freshness without touching either visible image. */
+        function crossfade(src) {
+          state.lastFrame = Date.now();
+          state.firstFrame = state.firstFrame || state.lastFrame;
+          if ($(state.front).getAttribute('src') === src) return;
+          const back = $(state.front === 'img' ? 'img2' : 'img');
+          back.onload = () => {
+            back.classList.add('on');
+            $(state.front).classList.remove('on');
+            state.front = back.id;
+            $('shot').classList.add('has');
+          };
+          back.src = src;
+        }
+
+        /** The server cannot reach the browser: still booting, reconnecting, or stopped once it has been gone long enough. */
+        function unreachable() {
+          state.failures = 0;
+          if (++state.missing >= (state.lastFrame ? RECONNECT_TRIES : BOOT_TRIES)) return stop();
+          if (!state.lastFrame) return say('Waiting for the browser to start…', '', 'Starting');
+          say('⚠ Reconnecting to the browser…', 'stalled', 'Reconnecting');
+        }
+
+        /** The browser stopped: the last picture stays, greyed, and nothing more is asked. */
+        function stop() {
+          state.ended = true;
+          $('take').hidden = true;
+          $('veil').textContent = 'Session ended';
+          say('This browser has stopped.', 'stopped', 'Ended');
+          tick();
+        }
+
+        /** Seconds as 42s, 3m 05s or 1h 02m. */
+        function span(s) {
+          if (s < 60) return s + 's';
+          const m = Math.floor(s / 60);
+          if (m < 60) return m + 'm ' + String(s % 60).padStart(2, '0') + 's';
+          return Math.floor(m / 60) + 'h ' + String(m % 60).padStart(2, '0') + 'm';
+        }
+
+        /** The session's running time and how fresh the picture is, once a frame has arrived. */
+        function tick() {
+          if (!state.firstFrame) return;
+          const now = state.ended ? state.lastFrame : Date.now();
+          $('elapsed').textContent =
+            (state.ended ? 'Ran ' : 'Running ') + span(Math.round((now - state.firstFrame) / 1000));
+          const s = Math.round((Date.now() - state.lastFrame) / 1000);
+          const live = $('card').classList.contains('live');
+          $('fresh').textContent = live ? (s < 2 ? 'Updated just now' : 'Updated ' + s + 's ago') : '';
+        }
+        setInterval(tick, 1000);
+
+        /** Only a click requests a scoped URL; its credential never appears as copyable text. */
+        $('take').addEventListener('click', async () => {
+          if (!state.id || state.ended || state.opening) return;
+          if ($('card').classList.contains('stalled')) {
+            state.failures = 0;
+            state.retryPaused = false;
+            return schedule(0);
+          }
+          state.opening = true;
+          $('take').setAttribute('aria-disabled', 'true');
+          actionLabel('Opening…');
+          $('link').hidden = true;
+          try {
+            const reply = await request('tools/call', { name: 'watch_browser', arguments: { browser_id: state.id } });
+            const url = reply?._meta?.watchUrl;
+            if (!url || state.ended) throw new Error();
+            const opened = await request('ui/open-link', { url });
+            if (opened?.isError) throw new Error();
+          } catch {
+            $('link').textContent = 'Couldn’t open live view. Select Watch live to retry.';
+            $('link').hidden = false;
+          } finally {
+            state.opening = false;
+            $('take').removeAttribute('aria-disabled');
+            actionLabel($('card').classList.contains('stalled') ? 'Reconnect' : 'Watch live');
+          }
+        });
+
+        /** Messages from the host: answers, the tool result, theme changes. Anything else is not ours. */
+        window.addEventListener('message', (event) => {
+          const msg = event.data;
+          if (event.source !== window.parent || !msg || msg.jsonrpc !== '2.0') return;
+          if (msg.id != null && !msg.method && pending.has(msg.id)) {
+            const call = pending.get(msg.id);
+            pending.delete(msg.id);
+            return msg.error ? call.reject(msg.error) : call.resolve(msg.result);
+          }
+          if (msg.method === 'ui/notifications/tool-result') return onResult(msg.params);
+          if (msg.method === 'ui/notifications/host-context-changed') return theme(msg.params);
+          // A request this card does not handle still gets an answer, so the host never waits on it.
+          if (msg.id != null && msg.method) window.parent.postMessage({ jsonrpc: '2.0', id: msg.id, result: {} }, '*');
+        });
+
+        /** Snapshots only while someone can see the card. */
+        document.addEventListener('visibilitychange', () => schedule(0));
+        if ('IntersectionObserver' in window)
+          new IntersectionObserver((entries) => {
+            state.intersecting = entries.some((e) => e.isIntersecting);
+            schedule(0);
+          }).observe($('card'));
+
+        /** Tells the host the card's height whenever it changes, so a flexible host sizes the frame to fit, never clipping it. */
+        function reportSize() {
+          const send = () => {
+            const box = document.documentElement.getBoundingClientRect();
+            notify('ui/notifications/size-changed', { width: Math.ceil(box.width), height: Math.ceil(box.height) });
+          };
+          send();
+          if ('ResizeObserver' in window) new ResizeObserver(send).observe(document.body);
+        }
+
+        const app = { name: 'oya-browser-card', version: '1.0.0' };
+        request('ui/initialize', { protocolVersion: '2026-01-26', appInfo: app, appCapabilities: {} })
+          .then(host)
+          .catch(() => {})
+          .then(() => notify('ui/notifications/initialized', {}))
+          .then(reportSize);
+      })();
+    </script>
+  </body>
+</html>

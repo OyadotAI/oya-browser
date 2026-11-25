@@ -21,6 +21,7 @@ import { Status } from '../../platform/http-status.ts';
 import {
   CONNECT_PAGE,
   CONNECTOR_MAX_ROLE,
+  CONNECTOR_SUFFIX,
   DEFAULT_CLIENT_NAME,
   INVALID_GRANT,
   MAX_CLIENT_NAME,
@@ -39,7 +40,8 @@ function ownGrant(grant: Grant | null, client: OAuthClientInformationFull, redir
 const principalOf = (token: string) => authenticateToken(token).catch(() => null);
 
 /** The credential's name in the project's list, so the person can tell which app holds it. */
-const labelFor = (client: OAuthClientInformationFull) => `${client.client_name || DEFAULT_CLIENT_NAME} connector`;
+const labelFor = (client: OAuthClientInformationFull) =>
+  `${client.client_name || DEFAULT_CLIENT_NAME}${CONNECTOR_SUFFIX}`;
 
 /** Loopback hosts a native app may answer on over plain HTTP. */
 const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
@@ -73,7 +75,7 @@ async function credentialFor(grant: Grant, label: string) {
   const { project, role } = await roleIn(grant.userId, grant.projectId);
   if (!project || !role) throw new InvalidGrantError(INVALID_GRANT);
   const owner = project.ownerUser === grant.userId;
-  const options = { role: owner ? CONNECTOR_MAX_ROLE : role, label, expiresAt: null };
+  const options = { role: owner ? CONNECTOR_MAX_ROLE : role, label, expiresAt: null, connector: true };
   return control().credential(control().projectKey(project), options, owner ? null : grant.userId);
 }
 

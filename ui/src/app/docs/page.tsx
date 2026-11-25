@@ -58,7 +58,7 @@ function useDocsPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMobileMenuOpen(false), []);
   const nav = useDocsNavState(closeMenu);
-  const [search, inputRef] = useDocsSearch(closeMenu);
+  const [search, inputRef] = useDocsSearch(nav.navigate);
   useSlashToSearch();
   return { mobileMenuOpen, setMobileMenuOpen, closeMenu, nav, search, inputRef };
 }

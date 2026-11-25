@@ -15,15 +15,40 @@ const SECURITY_HEADERS = [
 ];
 
 /**
+ * The desktop install scripts are read as text by `curl | sh` and PowerShell's `irm`. Left to its
+ * extension, the .ps1 would go out as a download, and `irm` would hand back bytes, not a script.
+ */
+const INSTALL_SCRIPT_HEADERS = [{ key: "Content-Type", value: "text/plain; charset=utf-8" }];
+
+/**
  * Dev-only: Next blocks cross-origin requests to /_next dev assets, which a tunnel
  * always is. Reaching the console through one is how Slack's OAuth redirect and the
  * live-browser share links get exercised locally, so the tunnel hosts are allowed by
  * wildcard, free tunnel hostnames rotate, and pinning one means editing this file
  * every restart. Ignored entirely by `next build`.
  */
-const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com"];
+const DEV_TUNNEL_ORIGINS = ["*.ngrok-free.app", "*.ngrok.app", "*.trycloudflare.com", "host.docker.internal"];
+
+/**
+ * Short addresses buyers and assistants guess for the healthcare and comparison pages. Each one
+ * points permanently at the page that already ranks for it, so the guess lands and no second page
+ * competes with the first for the same search.
+ */
+const ALIASES: [string, string][] = [
+  ["/security", "/trust"],
+  ["/hipaa", "/baa"],
+  ["/healthcare", "/browser-for-healthcare"],
+  ["/use-cases/payer-portal-automation", "/payer-portal-automation"],
+  ["/use-cases/eligibility-verification", "/eligibility-verification-automation"],
+  ["/use-cases/prior-authorization", "/prior-authorization-automation"],
+  ["/use-cases/claim-status", "/claim-status-automation"],
+  ["/compare/:vendor", "/vs/:vendor"],
+];
 
 const nextConfig: NextConfig = {
+  async redirects() {
+    return ALIASES.map(([source, destination]) => ({ source, destination, permanent: true }));
+  },
   output: "standalone",
   devIndicators: false,
   allowedDevOrigins: DEV_TUNNEL_ORIGINS,
@@ -32,13 +57,10 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: __dirname,
   turbopack: { root: __dirname },
   async headers() {
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
-  },
-  // There is no pricing page; prices live in the landing page's FAQ. Ads and
-  // people type /pricing, so it lands there instead of a 404. Not permanent, so
-  // a real pricing page can take the path later.
-  async redirects() {
-    return [{ source: "/pricing", destination: "/#faq-title", permanent: false }];
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      { source: "/install-desktop.:shell(sh|ps1)", headers: INSTALL_SCRIPT_HEADERS },
+    ];
   },
 };
 

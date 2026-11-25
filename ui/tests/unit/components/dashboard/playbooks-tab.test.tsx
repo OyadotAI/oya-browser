@@ -92,12 +92,12 @@ describe('PlaybooksTab', () => {
     expect(apiMock.mock.calls.filter(([p]) => p === '/playbooks')).toHaveLength(2);
   });
 
-  it('cannot record without a running browser', async () => {
+  it('can record with no browser running, since recording starts one', async () => {
     serve([]);
     await setup();
     const record = screen.getByRole('button', { name: /Record a flow/ }) as HTMLButtonElement;
-    expect(record.disabled).toBe(true);
-    expect(record.title).toBe('Start a browser first');
+    expect(record.disabled).toBe(false);
+    expect(record.title).toBe('Do the task yourself in a live browser and keep it as a playbook');
   });
 
   it('promotes a healed draft', async () => {
@@ -208,5 +208,84 @@ describe('PlaybooksTab', () => {
     expect(await screen.findByText(/already exists here\. Rename or delete it/)).toBeTruthy();
     await userEvent.upload(screen.getByLabelText('Playbook export file'), new File(['nope'], 'b.json'));
     expect(await screen.findByText('b.json is not a playbook export (not JSON)')).toBeTruthy();
+  });
+  describe('run history', () => {
+    const RUNS = [
+      {
+        status: 'failed',
+        startedAt: '2026-01-01T00:02:00Z',
+        endedAt: '2026-01-01T00:03:05Z',
+        browserId: 'b-1',
+        error: 'No field <b>x</b>',
+      },
+      { status: 'succeeded', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:00:42Z', browserId: 'b-1' },
+    ];
+    /** Answers the list with `order`, and its runs with `runs`, or a refusal. */
+    function serveRuns(runs: unknown) {
+      apiMock.mockImplementation(async (path) => {
+        if (path === '/playbooks') return { playbooks: [order] };
+        if (path === '/playbooks/order/runs') {
+          if (runs instanceof Error) throw runs;
+          return { runs };
+        }
+        return {};
+      });
+    }
+    /** Opens the order playbook's runs. */
+    const openRuns = async () => {
+      const toggle = screen.getByRole('button', { name: 'Runs of order' });
+      await userEvent.click(toggle);
+      await act(async () => {});
+      return toggle;
+    };
+
+    it('opens under the row with each run’s words, duration and browser, and a failed run’s error as plain text', async () => {
+      serveRuns(RUNS);
+      await setup();
+      const toggle = await openRuns();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      const runs = within(screen.getByRole('region', { name: 'Runs of order' }));
+      expect(runs.getByText('Failed')).toBeTruthy();
+      expect(runs.getByText('Succeeded')).toBeTruthy();
+      expect(runs.getByText(/1m 5s · on b-1/)).toBeTruthy();
+      expect(runs.getByText(/42s · on b-1/)).toBeTruthy();
+      expect(runs.getByText('No field <b>x</b>')).toBeTruthy();
+    });
+
+    it('an open history reloads when the list sees a newer run', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let lastRun: unknown = null;
+      let runs: unknown[] = [];
+      apiMock.mockImplementation(async (path) => {
+        if (path === '/playbooks') return { playbooks: [{ ...order, lastRun }] };
+        if (path === '/playbooks/order/runs') return { runs };
+        return {};
+      });
+      await setup();
+      await openRuns();
+      expect(screen.getByText('No runs yet. Run it from here, the SDK or the desktop app.')).toBeTruthy();
+      runs = [RUNS[1]];
+      lastRun = { status: 'succeeded', endedAt: RUNS[1].endedAt };
+      await act(() => vi.advanceTimersByTimeAsync(PLAYBOOKS_POLL_MS));
+      expect(screen.getByText('Succeeded')).toBeTruthy();
+    });
+
+    it('says when a playbook has not run yet', async () => {
+      serveRuns([]);
+      await setup();
+      await openRuns();
+      expect(screen.getByText('No runs yet. Run it from here, the SDK or the desktop app.')).toBeTruthy();
+    });
+
+    it('says when the runs could not load, and retries', async () => {
+      serveRuns(new Error('down'));
+      await setup();
+      await openRuns();
+      expect(screen.getByRole('alert').textContent).toContain("Couldn't load runs.");
+      serveRuns(RUNS);
+      await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await act(async () => {});
+      expect(screen.getByText('Succeeded')).toBeTruthy();
+    });
   });
 });

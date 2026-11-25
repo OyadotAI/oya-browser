@@ -13,6 +13,9 @@ accessible, and consistent with this product. Read the current view code and act
 repository instructions, and `team-work`'s `references/designer.md`. Read the `frontend` skill
 when present, plus relevant installed design skills.
 
+The hard limits in that playbook bind every design and every review: five colours at most,
+readable type, the speed budget, one primary action. Report each as a measured value.
+
 Inspect the existing typography, tokens, controls, and image/icon assets before introducing a
 pattern. Cover normal use, first use, long content, failure/retry, disconnection, and permissions.
 Specify concrete labels, layout, overflow, keyboard behavior, focus, and small-window treatment.

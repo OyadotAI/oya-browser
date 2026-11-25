@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/OyadotAI/oya-browser/main/install.sh | sh
 #
-# Checks for git, Docker and Node, clones (or updates) the repo into
+# Checks for git and Node, clones (or updates) the repo into
 # $OYA_DIR (default ~/oya-browser), then runs the `oya install` wizard there.
 # Arguments pass through to the wizard:  ... | sh -s -- --dry-run
 #
@@ -16,6 +16,8 @@
 set -eu
 
 OYA_DIR="${OYA_DIR:-$HOME/oya-browser}"
+case "$OYA_DIR" in /*) ;; *) OYA_DIR="$PWD/$OYA_DIR" ;; esac
+export OYA_DIR
 REPO="https://github.com/OyadotAI/oya-browser.git"
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$1"; }
@@ -23,20 +25,14 @@ die() { printf '\033[1;31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required. $2"; }
 
 need git "Install it from https://git-scm.com/downloads"
-need docker "Install Docker Desktop (https://docs.docker.com/get-docker/) or Docker Engine."
-# Docker Desktop on macOS can be started for the caller; elsewhere the daemon
-# needs root, so say what to do instead.
-if ! docker info >/dev/null 2>&1 && [ "$(uname)" = Darwin ] && open -a Docker 2>/dev/null; then
-  say "Starting Docker Desktop"
-  tries=0
-  until docker info >/dev/null 2>&1 || [ "$tries" -ge 60 ]; do sleep 2; tries=$((tries + 1)); done
-fi
-docker info >/dev/null 2>&1 || die "Docker is installed but not running. Start it, then run this again."
 need node "Install Node 20 or newer from https://nodejs.org"
 node -e 'process.exit(+process.versions.node.split(".")[0] >= 20 ? 0 : 1)' \
   || die "Node $(node -v) is too old. Install Node 20 or newer from https://nodejs.org"
 
-if [ -d "$OYA_DIR/.git" ]; then
+case " $* " in *" --dry-run "*) preview=1 ;; *) preview=0 ;; esac
+if [ "$preview" = 1 ]; then
+  say "Preview only: checkout will not be cloned or updated"
+elif [ -d "$OYA_DIR/.git" ]; then
   say "Updating $OYA_DIR"
   git -C "$OYA_DIR" pull --ff-only --quiet || say "Could not update it; using it as it is"
 elif [ -e "$OYA_DIR" ]; then
@@ -46,7 +42,7 @@ else
   git clone --depth 1 --quiet "$REPO" "$OYA_DIR"
 fi
 
-cd "$OYA_DIR"
+if [ -d "$OYA_DIR" ]; then cd "$OYA_DIR"; fi
 # Piped into sh, stdin is this script; the wizard's questions need the terminal.
 # Without one (an agent, CI) nobody can answer them, so take the defaults.
 if [ "${OYA_YES:-}" != 1 ] && { : </dev/tty; } 2>/dev/null; then
@@ -54,5 +50,5 @@ if [ "${OYA_YES:-}" != 1 ] && { : </dev/tty; } 2>/dev/null; then
   exec npx -y @oya-ai/cli@latest install "$@" </dev/tty
 fi
 case " $* " in *" --yes "*) ;; *) set -- --yes "$@" ;; esac
-say "Installing with defaults: SQLite, Docker on this machine"
+say "Starting unattended setup (bare --yes uses SQLite and Docker on this machine)"
 exec npx -y @oya-ai/cli@latest install "$@" </dev/null

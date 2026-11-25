@@ -20,8 +20,8 @@ import {
   type Submission,
 } from '@/components/auth/use-auth-form';
 
-/** The three ways in: a person's account, a machine's API key, or an agent's setup. */
-export type LoginMode = 'account' | 'key' | 'agent';
+/** The two ways in: a person's credentials, or an API key. */
+export type LoginMode = 'account' | 'key';
 
 /**
  * Prove the server accepts the key before storing it, so a wrong key fails

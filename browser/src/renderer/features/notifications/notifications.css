@@ -6,7 +6,7 @@
   position: absolute;
   top: -3px;
   right: -4px;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 1px 4px;
   background: var(--text);
   color: var(--surface);
@@ -24,7 +24,7 @@
   position: fixed;
   inset: 0;
   z-index: 210;
-  background: #10191133;
+  background: color-mix(in srgb, var(--scrim) 60%, transparent);
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
@@ -39,7 +39,7 @@
   max-height: 100%;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow);

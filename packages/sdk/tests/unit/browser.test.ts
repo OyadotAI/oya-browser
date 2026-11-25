@@ -227,6 +227,14 @@ describe('Browser links', () => {
   });
 });
 
+describe('Browser lanes', () => {
+  it('names no lane for a browser it started, which no person shares', async () => {
+    const { b, calls } = await browser({ [CMD]: { body: { ok: true, data: {} } } });
+    await b.goto('https://example.test/');
+    assert.equal(calls[0].headers['X-Oya-Agent'], undefined);
+  });
+});
+
 describe('Browser.stop', () => {
   it('stop, close and await-using all stop the browser', async () => {
     const { b, calls } = await browser({ 'POST /api/browsers/b1/stop': { body: { id: 'b1', ok: true } } });
@@ -237,5 +245,25 @@ describe('Browser.stop', () => {
       calls.map((c) => c.path),
       Array(3).fill('/api/browsers/b1/stop'),
     );
+  });
+
+  it('encodes special characters in browser.id on every path and refuses path traversal', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers/b%201': { body: { id: 'b 1', provider: 'steel', persona: 'p1' } },
+      'POST /api/browsers/b%201/command': { body: { ok: true, data: {} } },
+      'POST /api/browsers/b%201/stop': { body: { id: 'b 1', ok: true } },
+    });
+    const b = await oya.browser.get('b 1');
+    await b.pressKey('Enter');
+    await b.stop();
+    assert.deepEqual(
+      calls.map((c) => c.path),
+      ['/api/browsers/b%201', '/api/browsers/b%201/command', '/api/browsers/b%201/stop'],
+    );
+    const { oya: badOya } = client({
+      'GET /api/browsers/ok': { body: { id: '../admin', provider: 'steel', persona: 'p1' } },
+    });
+    const bad = await badOya.browser.get('ok');
+    await assert.rejects(bad.status(), { status: 400 });
   });
 });

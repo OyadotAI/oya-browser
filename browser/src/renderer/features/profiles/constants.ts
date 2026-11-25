@@ -12,5 +12,5 @@ export const PROFILES_TEXT = {
   close: 'Close profiles',
 };
 
-/** How many avatar colours the profile rows cycle through (profiles.css has one per tone). */
-export const AVATAR_TONES = 6;
+/** How many avatar looks the profile rows cycle through (profiles.css has one per tone). */
+export const AVATAR_TONES = 5;

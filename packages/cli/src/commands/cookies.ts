@@ -3,9 +3,9 @@
  * to a file or a script, `import` from one, `copy` between personas, `clear`.
  * Subcommands dispatch through a command map.
  */
-import { chmodSync, writeFileSync } from 'node:fs';
 import type { Cookie, CookieFormat, Oya } from '@oya-ai/browser';
 import { flagStr, readJsonFile, type Flags } from '../args.ts';
+import { writePrivateFile } from '../config.ts';
 import { usage } from '../errors.ts';
 import { client, out } from '../context.ts';
 import { JSON_INDENT, PRIVATE_FILE_MODE } from '../constants.ts';
@@ -23,10 +23,9 @@ function formatOf(flags: Flags): CookieFormat {
   throw usage(`Unknown format "${format}". Use --format json or --format playwright.`);
 }
 
-/** Writes the jar where only its owner can read it, a file that was already there included: it holds sessions. */
+/** Writes the jar atomically owner-only without following a symlink: it holds sessions. */
 function writeJar(file: string, cookies: Cookie[]): void {
-  writeFileSync(file, JSON.stringify(cookies, null, JSON_INDENT) + '\n', { mode: PRIVATE_FILE_MODE });
-  chmodSync(file, PRIVATE_FILE_MODE); // an existing file keeps its old mode without this
+  writePrivateFile(file, JSON.stringify(cookies, null, JSON_INDENT) + '\n', PRIVATE_FILE_MODE);
 }
 
 /** `oya cookies export <persona>`: the jar on stdout, or in `--out`. Nothing is written unless the server sent a list. */

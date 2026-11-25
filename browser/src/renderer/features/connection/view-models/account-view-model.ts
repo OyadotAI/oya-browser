@@ -21,8 +21,6 @@ export interface AccountState {
   failure?: string;
   /** The account last shown, or null when only a key is known. */
   account: Account | null;
-  /** Whether the account page is on screen (it learns the account once the server can answer). */
-  visible: boolean;
 }
 
 /** What the card shows, worked out from its state. */
@@ -109,10 +107,12 @@ export function accountCard(state: AccountState): AccountCard {
 export class AccountViewModel extends ViewModel<AccountState> {
   /** The main process. */
   private readonly bridge: AccountBridge;
+  /** How many times the account has been asked for: only the latest answer is shown. */
+  private asked = 0;
 
   /** Knows nothing until loaded, following the connection. */
   constructor(bridge: AccountBridge) {
-    super({ config: {}, connected: false, account: null, visible: false });
+    super({ config: {}, connected: false, account: null });
     this.bridge = bridge;
     this.own(bridge.onWsStatus((status) => this.onStatus(status)));
   }
@@ -120,7 +120,7 @@ export class AccountViewModel extends ViewModel<AccountState> {
   /** Takes the settings and the live status, and asks who this browser is signed in as. */
   async load(config: Config, status: ConnectionStatus): Promise<void> {
     this.set({ config, connected: !!status.connected, failure: status.failure });
-    this.set({ account: await this.fetch() });
+    await this.learn();
   }
 
   /** The settings changed (a new name, a new server). */
@@ -128,16 +128,20 @@ export class AccountViewModel extends ViewModel<AccountState> {
     this.set({ config });
   }
 
-  /** The account page came on screen or left it. */
-  setVisible(visible: boolean): void {
-    this.set({ visible });
+  /** The connection came or went: learn the account each time the server can answer. */
+  onStatus(status: ConnectionStatus): void {
+    // Every new connection may be a different person (a pairing link retargets the key), so ask again,
+    // open page or not: the toolbar avatar and the profile menu show the account all the time.
+    const reconnected = !!status.connected && !this.state.connected;
+    this.set({ connected: !!status.connected, failure: status.failure });
+    if (reconnected) void this.learn();
   }
 
-  /** The connection came or went: learn the account once the server can answer. */
-  onStatus(status: ConnectionStatus): void {
-    this.set({ connected: !!status.connected, failure: status.failure });
-    if (!status.connected || this.state.account || !this.state.visible) return;
-    void this.fetch().then((account) => this.set({ account }));
+  /** Asks who this browser is; an answer overtaken by a later question is the previous account's, and dropped. */
+  private async learn(): Promise<void> {
+    const turn = ++this.asked;
+    const account = await this.fetch();
+    if (turn === this.asked) this.set({ account });
   }
 
   /** Opens the console's connect page: signing in there as someone else links this browser to them. */

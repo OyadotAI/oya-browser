@@ -155,3 +155,12 @@ test('replacing the popup native window cannot inherit its outstanding chooser',
   };
   assert.equal(await f.service.choose(f.details as any), undefined);
 });
+
+test('a popup opened from a strip tab whose own opener has closed still offers the passkey chooser', async () => {
+  const f = fixture();
+  f.tab.window = f.window;
+  f.tab.openerId = 3;
+  f.owner.tabs.list.push({ id: 3, openerId: 1 }); // tab 3 was opened by a link from tab 1, closed since
+  await f.service.choose(f.details as any);
+  assert.notDeepEqual(f.boxes, []);
+});

@@ -80,7 +80,7 @@ export function PasswordField({ autoComplete, placeholder, value, onChange, hint
           type="button"
           aria-label={shown ? 'Hide password' : 'Show password'}
           onClick={() => setShown((v) => !v)}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-dim hover:text-text-muted"
+          className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center text-text-dim hover:text-text-muted"
         >
           {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
@@ -122,7 +122,7 @@ export function SubmitButton({ busy, label, busyLabel }: SubmitProps) {
     <button
       type="submit"
       disabled={busy}
-      className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-lg shadow-accent/25 hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+      className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
     >
       {busy ? (
         <>

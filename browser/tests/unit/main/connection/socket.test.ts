@@ -213,12 +213,22 @@ describe('ControlSocket', () => {
     assert.deepEqual(FakeWs.made[1].sent, []);
   });
 
-  it('closes a session whose setup failed', async () => {
+  it('keeps the session when a control message handler throws, so the desktop is never stranded in agent mode', async () => {
     ctx.control.result = () => {
-      throw new Error('bad');
+      throw new Error('a listener threw');
     };
     ctx.socket.connect();
     FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'desktop_control_result' })));
+    await flush();
+    assert.deepEqual(FakeWs.made[0].closes, []);
+  });
+
+  it('closes a session whose setup failed', async () => {
+    ctx.persona.ensureLoginState = async () => {
+      throw new Error('bad');
+    };
+    ctx.socket.connect();
+    FakeWs.made[0].emit('message', Buffer.from(JSON.stringify({ type: 'auth_ok' })));
     await flush();
     assert.deepEqual(FakeWs.made[0].closes, [[4003, 'Session setup failed']]);
     FakeWs.made[0].emit('close', 4003);

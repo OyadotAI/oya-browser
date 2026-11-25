@@ -1,29 +1,195 @@
 /**
- * The last word on the page: the two next steps, once more.
+ * The page's closing footer: a clean bordered CTA card with a standard primary button,
+ * followed by the five-column directory and legal row. Carries the #download anchor.
  */
+import { Reveal } from '@/components/ui/reveal';
 import Link from 'next/link';
-import { ArrowUpRight } from 'lucide-react';
-import { foundersCall } from './content';
-import styles from '../page.module.css';
+import { Download } from 'lucide-react';
+import { ANSWER_PAGES } from '../_answers/content';
+import { OyaLogo } from '@/components/oya-logo';
+import { browserDownloads } from '@/lib/browser-downloads';
+import { PRODUCT_HUNT_BADGE, discord, foundersCall, repository } from './content';
+import { Arrow } from './arrow';
+import { CLOSING_MARK_SIZE, PRODUCT_HUNT_BADGE_HEIGHT, PRODUCT_HUNT_BADGE_WIDTH } from './constants';
+import styles from './closing.module.css';
 
-/** The closing call to action. */
-export function Closing() {
+/** The directory's columns: a heading and its links. */
+const COLUMNS: [string, [string, string][]][] = [
+  [
+    'Product',
+    [
+      ['Playbooks', '/#playbooks'],
+      ['Workflows', '/#workflows'],
+      ['Audit trail', '/#audit'],
+      ['Research', '/research'],
+    ],
+  ],
+  [
+    'Start',
+    [
+      ['Console', '/dashboard'],
+      ['Pricing', '/pricing'],
+      ['Docs', '/docs'],
+      ['Compare', '/vs'],
+      ['Book a demo', foundersCall],
+    ],
+  ],
+  [
+    'Company',
+    [
+      ['Security', '/trust'],
+      ['Questions', '/#faq'],
+      ['Release notes', '/release-notes'],
+      ['GitHub', repository],
+      ['Discord', discord],
+    ],
+  ],
+];
+
+/** The desktop downloads, one filled button per platform so they read as actions, not footer text. */
+function Downloads() {
   return (
-    <section className={styles.closing} aria-labelledby="closing-title">
-      <h2 id="closing-title">
-        Stop writing integrations
-        <br />
-        <span>for portals that don&apos;t want you.</span>
-      </h2>
-      <p>Start a browser in a minute, record the run your team already does by hand, and replay it on every case.</p>
-      <div className={styles.actions}>
-        <Link href="/dashboard" className={styles.primary} data-track="cta_clicked" data-track-label="closing_start">
-          Start building <ArrowUpRight size={17} aria-hidden="true" />
+    <nav className="span-2 footer__col" id="download" aria-label="Browser downloads">
+      <h3>Download</h3>
+      <ul>
+        {browserDownloads.map(({ platform, href }) => (
+          <li key={platform}>
+            <a
+              className="footer__download"
+              href={href}
+              download
+              data-track="download_clicked"
+              data-track-label={platform}
+            >
+              <Download size={16} aria-hidden="true" /> {platform}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+/** The answer pages, linked from the home page so crawlers reach them; the grid above is full, so they sit in the legal row. */
+function AnswerLinks() {
+  return (
+    <nav aria-label="Answers">
+      {ANSWER_PAGES.map(({ path, label }) => (
+        <Link key={path} href={path}>
+          {label}
         </Link>
-        <a href={foundersCall} className={styles.founders} data-track="cta_clicked" data-track-label="closing_founders">
-          Talk to Founders
-        </a>
+      ))}
+    </nav>
+  );
+}
+
+/** Official Product Hunt launch badge, rendered live so vote counts stay current and lazily so it never costs first paint. */
+function ProductHuntBadge() {
+  return (
+    <a
+      className={styles.productHunt}
+      href={PRODUCT_HUNT_BADGE.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-track="cta_clicked"
+      data-track-label="footer_product_hunt"
+    >
+      {/* Live remote SVG from Product Hunt cannot use next/image without disabling SVG safety or caching stale counts. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={PRODUCT_HUNT_BADGE.image}
+        alt={PRODUCT_HUNT_BADGE.alt}
+        width={PRODUCT_HUNT_BADGE_WIDTH}
+        height={PRODUCT_HUNT_BADGE_HEIGHT}
+        loading="lazy"
+        decoding="async"
+      />
+    </a>
+  );
+}
+
+/** The directory under the close: the mark and lede, the link columns, the downloads and the legal row. */
+function Directory({ launchBadge }: { /** Whether the launch badge sits under the lede. */ launchBadge: boolean }) {
+  return (
+    <div className="closing__links">
+      <div className="grid">
+        <div className="span-4 stack-4">
+          <Link className="nav__logo" href="/">
+            <OyaLogo size={24} /> Oya
+          </Link>
+          <p className="footer__lede">
+            Browser automation for healthtech and RCM companies. Built by engineers from Google; AWS Partner, AWS
+            Startups and Google for Startups.
+          </p>
+          {launchBadge && <ProductHuntBadge />}
+        </div>
+        {COLUMNS.map(([head, links]) => (
+          <div key={head} className="span-2 footer__col">
+            <h3>{head}</h3>
+            <ul>
+              {links.map(([label, href]) => (
+                <li key={label}>
+                  <a href={href}>{label}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        <Downloads />
       </div>
-    </section>
+      <div className="footer__legal">
+        <span>
+          &copy; 2026 Oya &nbsp; <Link href="/privacy">Privacy</Link> &nbsp; <Link href="/terms">Terms</Link>
+        </span>
+        <AnswerLinks />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The closing footer; pages that end with their own invitation leave the panel out so it is never said twice.
+ * Only the home page asks for the launch badge, so trust and legal pages make no third-party image request.
+ */
+export function Closing({
+  invitation = true,
+  launchBadge = false,
+}: {
+  /** Whether to show the founders invitation above the links. */ invitation?: boolean;
+  /** Whether to show the Product Hunt launch badge in the directory. */ launchBadge?: boolean;
+}) {
+  return (
+    <footer
+      className={styles.footer}
+      id="contact"
+      aria-labelledby={invitation ? 'close-h' : undefined}
+      aria-label={invitation ? undefined : 'Site footer'}
+    >
+      {invitation && (
+        <div className="closing__panel">
+          <Reveal className="wrap closing__cta">
+            <span className="closing__mark" aria-hidden="true">
+              <OyaLogo size={CLOSING_MARK_SIZE} />
+            </span>
+            <div className="section-head">
+              <h2 id="close-h">Scope your first workflow with the founders.</h2>
+              <p className="t-lead">Bring one portal task, an SOP or a screen recording.</p>
+            </div>
+            <a
+              className="btn btn--primary"
+              href={foundersCall}
+              data-track="cta_clicked"
+              data-track-label="closing_founders"
+            >
+              Book a demo
+              <Arrow />
+            </a>
+          </Reveal>
+        </div>
+      )}
+      <div className="wrap">
+        <Directory launchBadge={launchBadge} />
+      </div>
+    </footer>
   );
 }

@@ -47,7 +47,7 @@ export default function FleetRow({
       onClick={pick}
       onContextMenu={(e) => onMenu(e, r)}
       className={`group cursor-pointer border-b border-border/60 transition-colors ${
-        selected ? 'bg-accent/[0.08]' : 'hover:bg-text/[0.035]'
+        selected ? 'bg-accent-soft' : 'hover:bg-text/[0.035]'
       }`}
       aria-selected={selected}
     >

@@ -9,6 +9,8 @@ async function fixture(
   t: any,
   execute = async () => ({}),
   resolveRequest?: (target: string, id: string, cancel: boolean) => void,
+  passthrough?: (...args: any[]) => Promise<unknown>,
+  refuse = false,
 ) {
   const token = 'x'.repeat(32),
     calls: string[] = [];
@@ -19,11 +21,14 @@ async function fixture(
       targets: () => [{ targetId: 'a', type: 'page', title: '', url: 'https://example.test' }],
       execute,
       resolveRequest,
+      passesThrough: (method: string) => !!passthrough && method === 'Fetch.fulfillRequest',
+      passthrough,
       open: async () => 'a',
       close: async () => {},
     },
     beginCommand: () => {
       calls.push('begin');
+      if (refuse) throw new Error('A person is controlling this browser');
       return () => {
         calls.push('finish');
       };
@@ -35,8 +40,8 @@ async function fixture(
   await once(server, 'listening');
   t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
   const port = (server.address() as any).port;
-  const connect = async () => {
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/a`, {
+  const connect = async (browser = false) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/devtools/${browser ? 'browser' : 'page/a'}`, {
       headers: { authorization: `Bearer ${token}` },
     });
     await once(socket, 'open');
@@ -45,6 +50,50 @@ async function fixture(
   };
   return { port, token, calls, connect };
 }
+/** Correlate replies while allowing independent session events to arrive before them. */
+async function request(socket: WebSocket, message: any): Promise<any> {
+  return await new Promise((resolve) => {
+    const receive = (raw: any) => {
+      const reply = JSON.parse(String(raw));
+      if (reply.id !== message.id) return;
+      socket.off('message', receive);
+      resolve(reply);
+    };
+    socket.on('message', receive);
+    socket.send(JSON.stringify(message));
+  });
+}
+test('browser and page session success, errors and detach events retain their wire scope', async (t) => {
+  const f = await fixture(t),
+    socket = await f.connect(true),
+    events: any[] = [];
+  socket.on('message', (raw) => {
+    const message = JSON.parse(String(raw));
+    if (message.method) events.push(message);
+  });
+  const root = (await request(socket, { id: 1, method: 'Target.attachToBrowserTarget' })).result.sessionId;
+  const attachment = await request(socket, {
+    id: 2,
+    method: 'Target.attachToTarget',
+    params: { targetId: 'a', flatten: true },
+    sessionId: root,
+  });
+  assert.equal(attachment.sessionId, root);
+  const page = attachment.result.sessionId;
+  const success = await request(socket, { id: 3, method: 'DOM.getDocument', sessionId: page });
+  assert.deepEqual(success, { id: 3, sessionId: page, result: {} });
+  const failure = await request(socket, { id: 4, method: 'Browser.getVersion', sessionId: page });
+  assert.equal(failure.sessionId, page);
+  assert.match(failure.error.message, /browser endpoint/);
+  await request(socket, { id: 5, method: 'Target.detachFromTarget', params: { sessionId: page }, sessionId: root });
+  assert.deepEqual(events.at(-1), {
+    method: 'Target.detachedFromTarget',
+    params: { sessionId: page, targetId: 'a' },
+    sessionId: root,
+  });
+  socket.close();
+  await once(socket, 'close');
+});
 test('discovery refuses missing credentials and browser origins before revealing targets', async (t) => {
   const f = await fixture(t);
   const url = `http://127.0.0.1:${f.port}/json/list`;
@@ -96,7 +145,7 @@ test('disconnect drops queued work but never releases an in-flight native operat
   assert.equal(f.calls.filter((c) => c === 'finish').length, 1);
 });
 
-test('native request continuation unblocks held work without releasing or reacquiring its gate', async (t) => {
+test('native request continuation unblocks held work without releasing its gate, under its own admission', async (t) => {
   let resume!: () => void, start!: () => void;
   const started = new Promise<void>((r) => {
     start = r;
@@ -115,7 +164,7 @@ test('native request continuation unblocks held work without releasing or reacqu
       assert.equal(target, 'a');
       assert.equal(id, 'held-request');
       assert.equal(cancel, false);
-      assert.deepEqual(f.calls, ['client:1', 'begin']);
+      assert.deepEqual(f.calls, ['client:1', 'begin', 'begin']); // admitted, while the navigation still holds its own
       resume();
     },
   );
@@ -134,7 +183,76 @@ test('native request continuation unblocks held work without releasing or reacqu
   await complete;
   assert.equal(replies.get(1).error, undefined);
   assert.equal(replies.get(2).error, undefined);
-  assert.deepEqual(f.calls, ['client:1', 'begin', 'finish']);
+  // The resolution is admitted like any command, without waiting behind the held navigation.
+  assert.deepEqual(f.calls.filter((c) => c === 'begin').length, 2);
+  assert.deepEqual(f.calls.filter((c) => c === 'finish').length, 2);
+  socket.close();
+  await once(socket, 'close');
+});
+
+test('response fulfillment runs while its navigation holds the command gate', async (t) => {
+  let resume!: () => void, started!: () => void;
+  const begun = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const f = await fixture(
+    t,
+    async () => {
+      started();
+      await held;
+      return {};
+    },
+    undefined,
+    async (target, method) => {
+      assert.equal(target, 'a');
+      assert.equal(method, 'Fetch.fulfillRequest');
+      assert.deepEqual(f.calls, ['client:1', 'begin', 'begin']);
+      resume();
+      return {};
+    },
+  );
+  const socket = await f.connect();
+  const pending = request(socket, { id: 1, method: 'DOM.getDocument' });
+  await begun;
+  const fulfilled = await request(socket, {
+    id: 2,
+    method: 'Fetch.fulfillRequest',
+    params: { requestId: 'held-request', responseCode: 200, body: 'b2s=' },
+  });
+  assert.equal(fulfilled.error, undefined);
+  assert.equal((await pending).error, undefined);
+  assert.deepEqual(f.calls, ['client:1', 'begin', 'begin', 'finish', 'finish']);
+  socket.close();
+  await once(socket, 'close');
+});
+
+test('a held request cannot be answered while a person controls the browser', async (t) => {
+  let reached = false;
+  const f = await fixture(
+    t,
+    async () => ({}),
+    () => {
+      reached = true;
+    },
+    async () => {
+      reached = true;
+      return {};
+    },
+    true,
+  );
+  const socket = await f.connect();
+  for (const method of ['Fetch.fulfillRequest', 'Fetch.continueRequest', 'Fetch.failRequest']) {
+    const reply = await request(socket, {
+      id: 1,
+      method,
+      params: { requestId: 'held-request', responseCode: 200, errorReason: 'Failed' },
+    });
+    assert.match(String(reply.error?.message), /controlling/, method);
+  }
+  assert.equal(reached, false);
   socket.close();
   await once(socket, 'close');
 });

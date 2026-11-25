@@ -5,7 +5,7 @@
   align-items: center;
   gap: 2px;
   max-width: 480px;
-  border-radius: 5px;
+  border-radius: 0;
   transition: background-color var(--t-fast) var(--ease);
 }
 .download-chip.phase-saved {

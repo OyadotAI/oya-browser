@@ -51,6 +51,12 @@ export const OPEN_EXTERNAL_APP_CHOICE = 1;
 
 /** Explicit approval, with Block as the default media permission response. */
 export const ALLOW_MEDIA_CHOICE = 1;
+/** Recovery opens Settings only through its explicit second button; Escape dismisses. */
+export const MEDIA_SETTINGS_ACTION = { defaultId: 1, cancelId: 0 };
+/** Failed settings launches retain a single safe acknowledgement and the manual path. */
+export const MEDIA_MANUAL_ACTION = { buttons: ['OK'], defaultId: 0, cancelId: 0 };
+/** A stalled OS settings handoff must release the approval queue before later requests expire. */
+export const MEDIA_SETTINGS_OPEN_MS = 5_000;
 /** The end-call dialog's "Close Window" or "Quit" button; Cancel is 0, the default. */
 export const END_CALL_CHOICE = 1;
 /** Past this many sites, the end-call dialog names the first and counts the rest. */
@@ -124,3 +130,11 @@ export const PASSTHROUGH_REFUSED: Record<string, string> = {
 };
 /** The browser's own profile as a CDP browserContextId: Playwright needs one on every target. */
 export const DEFAULT_BROWSER_CONTEXT = 'default';
+/** The maintainer-authorized isolated experiment is never enabled by ordinary desktop launches. */
+export const BROWSER_PASSKEY_SWITCH = '--oya-native-passkeys';
+/** Native policy events must implement both admission and final-success checks before the app trusts them. */
+export const BROWSER_PASSKEY_PROTOCOL_VERSION = 1;
+/** Opaque native attempt identities never become unbounded stored renderer strings. */
+export const BROWSER_PASSKEY_REQUEST_ID_LIMIT = 128;
+/** Only canonical native transport metadata is accepted; it carries no credential identifiers. */
+export const BROWSER_PASSKEY_TRANSPORTS = ['usb', 'nfc', 'ble', 'internal', 'hybrid'] as const;

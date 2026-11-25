@@ -19,8 +19,13 @@ export { renderPlaywright } from './playwright.ts';
 export { create, promote, rename, list, remove } from './catalog.ts';
 export { exportPlaybook, importPlaybook, EXPORT_FORMAT, EXPORT_VERSION } from './transfer.ts';
 export { answerField } from './answer.ts';
+export { runsOf, lastRuns, type RunRecord } from './history.ts';
 import { play as replay } from './replay.ts';
+import { record, type RunRecord } from './history.ts';
+import { REDACT_MIN_LENGTH } from './constants.ts';
 import { track } from '../telemetry/index.ts';
+import { fingerprint } from '../../platform/audit.ts';
+import { getPlaybook } from '../config/service.ts';
 
 /** How a replay ended: the agent finished it (healed), a person did (handed over), the steps ran as saved (ok), or it threw. */
 export function outcomeOf(result, failed: boolean) {
@@ -34,11 +39,65 @@ function counted(apiKey, steps: number, result?, failed = false) {
   track.playbookReplayed(apiKey, { outcome: outcomeOf(result, failed), steps, healed: !!result?.healed });
 }
 
-/** Replays a playbook and counts the outcome, success or failure. */
+/** Where a replay ran and when it began, for its history. */
+interface RunStart {
+  /** The browser it ran on. */
+  browserId: string;
+  /** When it began, as an ISO time. */
+  startedAt: string;
+}
+
+/** What a finished replay's history entry is made from. */
+interface Finished extends RunStart {
+  /** Why it failed, if it did. */
+  err?: unknown;
+  /** The values it ran with (data and secrets), so one quoted in its error is kept out of the history. */
+  vars: Record<string, unknown>;
+}
+
+/**
+ * Keeps a finished replay in its playbook's history. Best effort: a failed write is
+ * logged and never fails the run. Left out: the editor's tester runs (unsaved edits,
+ * no playbook's runs), and a run whose playbook was deleted or renamed while it ran,
+ * which would otherwise hand its runs to the next playbook given that name.
+ */
+function remember(apiKey, pb, done: Finished) {
+  if (!pb?.name || pb.transient || !getPlaybook(apiKey, pb.name)) return;
+  void record(fingerprint(apiKey), pb.name, finished(done)).catch((e) =>
+    console.warn(`[playbooks] run history not saved: ${e.message}`),
+  );
+}
+
+/** The run as its history keeps it: how it ended, and why when it failed. */
+function finished({ err, vars, browserId, startedAt }: Finished): RunRecord {
+  const run = { browserId, startedAt, endedAt: new Date().toISOString() };
+  if (!err) return { status: 'succeeded', ...run };
+  return { status: 'failed', ...run, error: withoutValues(String((err as Error).message ?? err), vars) };
+}
+
+/**
+ * The text with every value the run was given blanked. An error can quote what was
+ * typed, and on a healthcare run any of it, a secret or a patient's name, can be
+ * sensitive, so the history never keeps one. The run's secrets arrive merged into
+ * `vars` (jobs.ts), so they are covered whether or not the playbook names them.
+ * Values shorter than REDACT_MIN_LENGTH are left: blanking every "1" would wreck
+ * the message and hide nothing.
+ */
+function withoutValues(text: string, vars: Record<string, unknown>) {
+  const values = Object.values(vars ?? {})
+    .filter((v) => typeof v === 'string' || typeof v === 'number')
+    .map(String)
+    .filter((v) => v.length >= REDACT_MIN_LENGTH)
+    .sort((a, b) => b.length - a.length);
+  return values.reduce((out, v) => out.split(v).join('[redacted]'), text);
+}
+
+/** Replays a playbook, counts the outcome and keeps it in the history, success or failure. */
 export function play(apiKey, browserId, pb, vars = {}, options = {}) {
   const steps = pb?.steps?.length ?? 0;
+  const start = { browserId, startedAt: new Date().toISOString(), vars };
   return replay(apiKey, browserId, pb, vars, options).then(
-    (result) => (counted(apiKey, steps, result), result),
-    (err) => (counted(apiKey, steps, undefined, true), Promise.reject(err)),
+    (result) => (counted(apiKey, steps, result), remember(apiKey, pb, start), result),
+    (err) => (counted(apiKey, steps, undefined, true), remember(apiKey, pb, { ...start, err }), Promise.reject(err)),
   );
 }

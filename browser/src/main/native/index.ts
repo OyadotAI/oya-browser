@@ -1,5 +1,5 @@
 /** Native browser operations shared by internal callers and external protocol adapters. */
-export { evaluatePage, capturePage, screenshotOptions, type NativePage } from './page.ts';
+export { evaluatePage, capturePage, screenshotOptions, type NativePage, type CaptureViewport } from './page.ts';
 export { World, type WorldDeps, type EnsureOptions, type EvalOptions } from './world.ts';
 export { evaluateFrame, useFramePages, type NativeAgentFrame } from './frames.ts';
 export { useStockWorld, runInWorld } from './stock-world.ts';

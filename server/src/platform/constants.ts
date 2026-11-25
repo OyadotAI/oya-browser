@@ -131,6 +131,12 @@ export const DEFAULT_AGENT_SIGNUPS_PER_DAY = 3;
 export const DEFAULT_INSTALL_PINGS_PER_HOUR = 4;
 /** Password sign-in attempts one email may make in an hour, so a password cannot be guessed online. */
 export const DEFAULT_LOGINS_PER_HOUR = 10;
+/**
+ * Console credentials one person may mint per project per minute. The console renews every 45
+ * minutes, so this only ever stops a tab caught in a renewal loop, which on 2026-11-21 minted ~40 a
+ * second and starved the project's other writes (a delete answered 503).
+ */
+export const DEFAULT_CONSOLE_ACCESS_PER_MIN = 10;
 /** Minutes in an hour. */
 export const MINUTES_PER_HOUR = 60;
 /** Minutes in a day, for limits counted per day on a per-minute bucket. */
@@ -346,6 +352,28 @@ export const CARD_MAX_CHARS = 1500;
 /** Shortest unbroken base64url run scrubbed from error reports as a possible key: an API key is 32. */
 export const SECRET_MIN_CHARS = 32;
 
+// ── Client addresses ──
+
+/** Proxies that append to X-Forwarded-For when OYA_TRUSTED_PROXY_HOPS is unset: one, the ingress, as a plain self-host runs. */
+export const DEFAULT_TRUSTED_PROXY_HOPS = 1;
+/**
+ * How many X-Forwarded-For hops, counted from the right, our own proxies
+ * appended; the caller is the leftmost of them. Production sits behind
+ * Cloudflare and ingress-nginx, which hand the pod "<client>, <node>", so it
+ * sets 2. Read here and nowhere else; a bad value falls back to the default.
+ */
+export const trustedProxyHops = () =>
+  Math.floor(positiveOr(Number(process.env.OYA_TRUSTED_PROXY_HOPS), DEFAULT_TRUSTED_PROXY_HOPS));
+
+/**
+ * A header our own reverse proxy sets to the caller's address and overwrites
+ * whatever the client sent, read before X-Forwarded-For when set. Production
+ * sets OYA_CLIENT_IP_HEADER=x-real-ip: ingress-nginx writes it from the TCP
+ * peer, or from CF-Connecting-IP only when the peer is Cloudflare. Unset by
+ * default, because without such a proxy the header is whatever the client wrote.
+ */
+export const clientIpHeader = () => (process.env.OYA_CLIENT_IP_HEADER || '').trim().toLowerCase();
+
 // ── Postgres ──
 
 /** Postgres connections per process unless DATABASE_POOL_MAX says otherwise. */
@@ -354,6 +382,26 @@ export const DEFAULT_POOL_MAX = 10;
 export const PG_CONNECT_TIMEOUT_MS = 10_000;
 /** Idle Postgres connections are closed after this. */
 export const PG_IDLE_TIMEOUT_MS = 30_000;
+/**
+ * How long one statement may wait for its answer unless OYA_PG_QUERY_TIMEOUT_MS
+ * says otherwise. Without it, queries whose answers a network blip lost held
+ * every pool connection forever and storage stayed down until a restart
+ * (2026-11-20). Generous on purpose: control prune and audit verification run
+ * on this pool and must not be cut short.
+ */
+export const DEFAULT_PG_QUERY_TIMEOUT_MS = 60_000;
+/** Milliseconds a statement may wait for its answer; read here and nowhere else. */
+export const pgQueryTimeoutMs = () =>
+  positiveOr(Number(process.env.OYA_PG_QUERY_TIMEOUT_MS), DEFAULT_PG_QUERY_TIMEOUT_MS);
+/** `value` when it is a number above zero, else `fallback`: a typo like -5 must not fail every query at once. */
+const positiveOr = (value: number, fallback: number) => (Number.isFinite(value) && value > 0 ? value : fallback);
+/**
+ * Idle time before TCP keepalive starts probing a Postgres socket. A backstop
+ * for a peer that vanished outright; it cannot see a proxy that stays up and
+ * answers probes while the database behind it is gone, which the query
+ * timeout covers.
+ */
+export const PG_KEEPALIVE_DELAY_MS = 10_000;
 /**
  * How DATABASE_URL's TLS is read when OYA_DB_TLS is unset: `libpq`, its own
  * sslmode as psql reads it (`require` encrypts without verifying). Set

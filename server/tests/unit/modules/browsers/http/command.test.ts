@@ -201,6 +201,15 @@ describe('chat', () => {
     assert.match(res.body.error, /^data must map names/);
   });
 
+  it('reads null data and secrets as none, as the Python SDK sends them', async () => {
+    const res = await talk({ messages: 'hi', data: null, secrets: null });
+    assert.deepEqual(
+      [res.statusCode, res.body],
+      [400, { error: 'messages array required' }],
+      'got past the data check',
+    );
+  });
+
   it('refuses a schema that is not a JSON object', async () => {
     for (const schema of ['object', [1], null]) {
       const res = await talk({ messages: [], schema });
@@ -373,6 +382,44 @@ describe('chat', () => {
     } finally {
       delete process.env.OPENAI_API_KEY;
     }
+  });
+
+  /** Chats on B while the first model call sees the caller hang up, then answers; returns the answer and the model calls made. */
+  async function hungUpChat(body: object) {
+    const res = new FakeResponse();
+    const reply = (content: string) =>
+      new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }));
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      res.emit('close');
+      return reply(fetch.mock.callCount() ? 'all done' : '');
+    });
+    process.env.OPENAI_API_KEY = 'sk-test';
+    const request = { params: { browserId: B }, body: { messages: [{ role: 'user', content: 'go' }], ...body } };
+    await chat(fakeRequest(request), res).finally(() => delete process.env.OPENAI_API_KEY);
+    return { text: JSON.parse(res.ended).text, calls: fetch.mock.callCount() };
+  }
+
+  it('a lane without a resume token still stops when the caller hangs up, as desktops already installed expect', async () => {
+    const { text, calls } = await hungUpChat({ lane: 'tab-1' });
+    assert.equal(text, STOPPED_TEXT);
+    assert.equal(calls, 1);
+  });
+
+  it('a lane with a resume token keeps running when the caller hangs up', async () => {
+    const { text, calls } = await hungUpChat({ lane: 'tab-1', resume: 'run-1' });
+    assert.notEqual(text, STOPPED_TEXT);
+    assert.ok(calls > 1);
+  });
+
+  it('a lane that is not a name is no run to resume: it stops on hang-up like any other chat', async () => {
+    const { text } = await hungUpChat({ lane: 'not a lane', resume: 'run-1' });
+    assert.equal(text, STOPPED_TEXT);
+  });
+
+  it('refuses a resume token that is not a short name', async () => {
+    const res = await talk({ messages: [{ role: 'user', content: 'go' }], lane: 'tab-1', resume: 'no spaces allowed' });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.body.error, /resume/);
   });
 
   it('commits to 200 and reports a failed chat in the body', async () => {

@@ -9,9 +9,13 @@ import { useFrameStream } from './use-frame-stream';
 import { useRecorderState, type Recorder } from './recorder';
 import { pollStatus, restoreStopped, sendAction, whenLive } from './record-status';
 
-/** Picks up a stopped recording left on this browser, unless a start or stop overtook the check. */
+/**
+ * Picks up a stopped recording left on this browser, unless a start or stop overtook
+ * the check. With no browser yet (Record starts one) there is nothing to pick up.
+ */
 function useRestoreStopped({ browserId, apiKey, revision, setState }: Recorder) {
   useEffect(() => {
+    if (!browserId) return;
     const version = revision.current;
     return whenLive(restoreStopped(apiKey, browserId), (saved) => {
       if (saved && version === revision.current) setState(saved);

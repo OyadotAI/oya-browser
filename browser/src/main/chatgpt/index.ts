@@ -5,3 +5,5 @@
 export { ChatgptAuth } from './auth.ts';
 export { Onboarding, type OnboardingStatus } from './onboarding.ts';
 export { answerModelRequest } from './relay.ts';
+export { SetupAttempt } from './attempt.ts';
+export { openOutside } from './outside.ts';

@@ -31,10 +31,10 @@ export function ImpersonationBanner() {
   return (
     <div
       role="alert"
-      className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-amber-500 px-4 py-1.5 text-xs font-medium text-black"
+      className="sticky top-0 z-50 flex items-center justify-center gap-3 bg-yellow px-4 py-1.5 text-xs font-medium text-ink"
     >
       <span>Logged in as {email}. Every action is logged under you.</span>
-      <button onClick={exit} className="rounded border border-black/40 px-2 py-0.5 hover:bg-black/10">
+      <button onClick={exit} className="rounded border border-ink/40 px-2 py-0.5 hover:bg-ink/10">
         Exit
       </button>
     </div>

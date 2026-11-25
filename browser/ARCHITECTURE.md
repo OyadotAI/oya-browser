@@ -300,6 +300,13 @@ old CDP-backed tests alone does not satisfy these gates.
   IPC contract every side imports), and the modules the server imports too:
   `src/workflow/`, `src/page/`, `src/anonymity/`. `src/dev/launch.ts` is the
   dev launcher Node runs directly; it is not built.
+- Interactive macOS development launches use Launch Services (`open -n -W`)
+  with the same branded bundle identity, inherited environment and argument
+  boundaries, so native privacy consent belongs to Oya. Startup output stays in
+  separate owner-only files in the printed `oya-development-*` temporary folder.
+  That process is a waiter, not Oya: Ctrl+C stops the waiter; close Oya to quit
+  the GUI. Its result is not an application exit status. Imported
+  `developmentExecutable()` and `--prepare` retain direct fixture-launch behavior.
 - ES modules, named exports only. Imports name the file with its `.ts`
   extension: Node runs the sources directly in tests (and in the server) by
   stripping types, and electron-vite bundles them for the app.
@@ -616,6 +623,18 @@ per-browser endpoint to make the target unambiguous.
   motion. It offers a native takeover confirmation, deduplicated while open and
   rate-limited for pointer motion. Blocked input is never replayed after takeover.
 
+## Windows release signing
+
+`build/windows-signing.cjs` merges the existing package build with Microsoft Artifact Signing
+options after validating the protected environment's identity, endpoint and publisher metadata.
+It removes competing local-certificate options while preserving required signing and update
+signature verification. The OIDC identity has only the exact Public Trust profile's signer role;
+its GitHub environment requires review of the concrete run and permits only main/preflight and
+version-tag/release refs. `build/verify-release-ref.cjs` binds the release to current main before
+authentication. The manual preflight compiles and signs an owned harmless PE, verifies its exact
+subject and timestamp and never publishes an artifact. Paid subscription and publisher validation
+are external prerequisites; missing configuration never enables unsigned distribution.
+
 ## Tests
 
 | Command                                                       | Runs                                                                                          |
@@ -758,10 +777,20 @@ saved before asking macOS, so an OS denial does not repeat the site's Allow
 dialog. Permission checks still require macOS to report the device as granted.
 Every check and
 request still passes `app/media-gate.ts` before the store is read and again
-after each prompt: it rejects other origins, agent-driven tabs, background tabs
-and governed runtimes, and a document replaced during a prompt. "Forget site
+after each prompt. `app/media-owner.ts` resolves the exact requester window rather
+than the application's selected agent target; its selected human-owned tab may
+ask even when another window is the application target. The original window,
+session, profile and document remain bound across approval; transferring a tab
+invalidates pending consent. Unregistered/private requesters, other origins,
+agent-driven or unselected tabs and governed runtimes are refused. Site and
+recovery dialogs belong to the requester window. "Forget site
 permissions" in the library menu clears the current profile's grants. Screen
 sharing (`app/screen-share.ts`) goes through the same gate and site consent.
+`app/media-recovery.ts` explains observed denial separately for each device and
+document, opens only a fixed device-specific Settings pane after a deliberate
+action, and retains manual instructions if the OS opener fails. Restricted
+permissions receive managed-device guidance; unknown native failures are not
+described as confirmed denial. Recovery never grants permission or retries a call.
 Every getDisplayMedia request then opens Oya's source picker (`main/screen-share/`):
 Oya tabs, application windows and entire screens have native previews, with no
 default selection. Empty or undecodable captures show a placeholder instead of a
@@ -771,8 +800,13 @@ Capture waits for first paint, preserves live tab owners and existing viewport
 sizes, excludes the temporary surface from the window list, and detaches every
 borrowed view before destroying it. When macOS reports denied access, a bounded native enumeration runs
 before refusal, allowing the OS to register Oya and request permission. Persistent
-denial offers the exact Screen Recording settings pane, including manual-add and
-restart instructions; it never grants a stream. Desktop choices are rechecked for
+denial refuses the shared media preflight and offers the exact Screen Recording
+settings pane, including manual-add and restart instructions; it never grants a
+stream. Oya-tab sharing is also unavailable while that preflight is refused:
+stock Electron exposes no safe distinction between modern display requests and
+legacy desktop constraints at that stage. After preflight succeeds, enumeration
+errors and empty lists preserve available Oya tabs without falsely diagnosing an
+OS denial. Desktop choices are rechecked for
 OS access before delivery. Picker recovery IPC accepts only its live main frame and
 a fixed settings URL. Native owner teardown cancels even if an ownership guard throws.
 Cancel or Escape returns no stream. A remembered site grant
@@ -837,6 +871,10 @@ window/display enumeration is stubbed in this hermetic test. It does not validat
 real hardware or macOS privacy dialogs. The overlap fixture additionally exercises
 native microphone/camera requests arriving with a screen request, cancellation
 and retry, and revocation by reload, profile change or agent takeover.
+The requester-window fixture uses the production window-service router with two
+native Oya windows, combined fake microphone/camera tracks and usable video
+pixels. It checks permission-query transitions from prompt to granted and an
+explicit tab share while a different window remains the application target.
 
 ### Session restore
 

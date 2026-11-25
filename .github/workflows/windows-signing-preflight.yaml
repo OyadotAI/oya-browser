@@ -1,0 +1,58 @@
+# Prove protected Azure federation and timestamped Windows signing without publishing assets.
+name: Windows signing preflight
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: windows-signing-preflight
+  cancel-in-progress: true
+jobs:
+  native-checks:
+    # Unsigned, credential-free checks also run on a selected preparation ref.
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test signing configuration and release refusal paths
+        run: node --test browser/tests/unit/build/windows-signing.test.cjs browser/tests/unit/build/verify-release-ref.test.cjs
+      - name: Test Windows signature refusal paths
+        shell: pwsh
+        run: ./browser/build/test-windows-signatures.ps1
+      - name: Compile the owned unsigned signing probe
+        shell: pwsh
+        run: ./browser/build/test-windows-signing-probe.ps1
+  signing-configuration:
+    if: github.ref == 'refs/heads/main'
+    needs: native-checks
+    environment: windows-signing
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      AZURE_SIGNING_PROFILE_NAME: ${{ vars.AZURE_SIGNING_PROFILE_NAME }}
+      WINDOWS_PUBLISHER_NAME: ${{ vars.WINDOWS_PUBLISHER_NAME }}
+      WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_SIGNER_SUBJECT }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Test Windows signature refusal paths
+        shell: pwsh
+        run: ./browser/build/test-windows-signatures.ps1
+      - uses: ./.github/actions/windows-signing
+      - name: Sign and verify an owned executable
+        shell: pwsh
+        run: ./browser/build/preflight-windows-signing.ps1

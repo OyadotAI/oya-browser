@@ -7,6 +7,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { hash, projectId } from '../../../../../src/modules/control/service.ts';
+import { CONNECTOR_MARK_SINCE } from '../../../../../src/modules/control/service/constants.ts';
 import { patchRow, putRow, readySession, scratchService } from '../../../support/control.ts';
 
 const A = 'key-a',
@@ -80,7 +81,25 @@ describe('authenticate', () => {
       credentialId: c.id,
       sessionId: null,
       memberUser: null,
+      connector: false,
     });
+  });
+
+  it('marks a credential OAuth issued for a chat app as a connector', async () => {
+    const c = await service.credential(A, { label: 'Claude connector', connector: true });
+    assert.equal((await service.authenticate(c.token)).connector, true);
+  });
+
+  it('keeps a service account a person names "... connector" a service account, once connectors carry their mark', async () => {
+    const c = await service.credential(A, { label: 'Zapier connector' });
+    await patchRow(service, 'credential', hash(c.token), { createdAt: CONNECTOR_MARK_SINCE });
+    assert.equal((await service.authenticate(c.token)).connector, false);
+  });
+
+  it('knows a connector issued before the mark existed by its label', async () => {
+    const c = await service.credential(A, { label: 'Claude connector' });
+    await patchRow(service, 'credential', hash(c.token), { createdAt: CONNECTOR_MARK_SINCE - 1 });
+    assert.equal((await service.authenticate(c.token)).connector, true);
   });
 
   it('answers null for a token it has never issued', async () => {

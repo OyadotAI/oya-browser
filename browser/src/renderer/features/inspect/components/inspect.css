@@ -27,18 +27,13 @@
   font-size: 12px;
   font-weight: 600;
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 .dev-entry .dir.in {
   background: var(--accent-soft);
-  color: var(--accent-hover);
-}
-.dev-entry .dir.out {
-  background: #dcfce7;
-  color: #16a34a;
+  color: var(--accent);
 }
 .dev-entry .msg-type {
-  color: #27272a;
   font-weight: 500;
 }
 .dev-entry .body {
@@ -71,7 +66,7 @@
   padding: 8px 10px;
   background: var(--muted-surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   color: var(--secondary);
   font-size: 12px;
   font-weight: 500;
@@ -162,7 +157,7 @@
   font-weight: 600;
   background: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--secondary);
   cursor: pointer;
 }
@@ -171,8 +166,7 @@
 }
 .net-filter.active {
   background: var(--accent-soft);
-  color: var(--accent-hover);
-  border-color: #93c5fd;
+  color: var(--accent);
 }
 .net-log {
   flex: 1;
@@ -203,7 +197,7 @@
   font-weight: 600;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--secondary);
   cursor: pointer;
   flex-shrink: 0;
@@ -305,7 +299,7 @@
 .action-btn {
   min-height: 30px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   font-size: 12.5px;
@@ -323,7 +317,7 @@
 .action-field {
   height: 30px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: 0;
   font-family: inherit;
   font-size: 12.5px;
 }
@@ -337,7 +331,7 @@
   margin: 0 16px 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 0;
   font: 11.5px/1.55 var(--mono);
   color: var(--text);
   word-break: normal;
@@ -452,7 +446,7 @@
   padding: 3px 8px;
   overflow: hidden;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--text) 6%, transparent);
   color: var(--text);
   font-size: 11.5px;
@@ -460,7 +454,7 @@
   white-space: nowrap;
 }
 .action-element:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--hover);
 }
 .action-more {
   margin: 10px 0 0;
@@ -518,7 +512,8 @@
   color: var(--accent);
 }
 .dev-entry .dir.out {
-  color: var(--info, #6cb4ff);
+  color: var(--info);
+  background: var(--info-soft);
 }
 .net-empty {
   margin: 24px 16px;

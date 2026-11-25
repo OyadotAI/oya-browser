@@ -17,7 +17,11 @@ export function closeDownloadOnlyTab(deps: Pick<AppServices, 'tabs'>, contents: 
 }
 
 /** Whether the person may use the tab whose page is `contents`; a page that is no tab (a popup window) counts as new. */
-export function personMayUse(deps: Pick<AppServices, 'tabs' | 'agentTab'>, contents: WebContents | undefined): boolean {
-  const tab = deps.tabs.list.find((t) => t.view.webContents === contents);
+export function personMayUse(
+  deps: Pick<AppServices, 'tabs' | 'agentTab'> & Partial<Pick<AppServices, 'windows'>>,
+  contents: WebContents | undefined,
+): boolean {
+  const scope = (contents && deps.windows?.ownerOfContents(contents)?.tabs) ?? deps.tabs;
+  const tab = scope.list.find((t) => t.view.webContents === contents);
   return deps.agentTab.humanMay(tab ? tab.id : null);
 }

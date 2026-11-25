@@ -1,25 +1,23 @@
 /**
- * The sign-in page's body: Google or GitHub, an account (email and password)
- * or, for a self-hosted deployment without accounts, an API key. Under the
- * card, the same two ways forward as sign-up: a free account, or a sales call
- * for teams.
+ * The sign-in page's body: credentials (Google, GitHub, or email and password)
+ * or, for a self-hosted deployment without accounts, an API key. Agents need no
+ * tab here: they set up through the installer. Teams reach sales from sign-up's
+ * Enterprise tab.
  */
 'use client';
 
 import Link from 'next/link';
 import { AuthLoading, AuthShell } from '@/components/auth/auth-shell';
-import { EnterpriseNudge } from '@/components/auth/enterprise-nudge';
+import { MarketplaceContext } from '@/components/auth/marketplace-context';
 import { OAuthButtons } from '@/components/auth/oauth-buttons';
 import { DEVELOPER_PITCH, Pitch } from '@/components/auth/pitch';
 import { AccountForm, KeyForm, ModeSwitch } from './login-forms';
-import { AgentSetup } from './agent-setup';
 import { useLogin, type LoginMode } from './use-login';
 
 /** The line under the heading, per mode. */
 const SUBTITLES: Record<LoginMode, string> = {
   account: 'Sign in to your account to continue',
   key: 'Paste an API key from this deployment',
-  agent: 'Give your AI agent a browser',
 };
 
 /** The page's settings from the server. */
@@ -43,10 +41,10 @@ export function LoginView({ siteKey }: ViewProps) {
   );
   return (
     <AuthShell glow="accent" footer={footer} pitch={<Pitch content={DEVELOPER_PITCH} />}>
+      <ModeSwitch fields={fields} form={form} />
       <h1 className="mb-1 font-display text-2xl font-bold text-text">Welcome back</h1>
       <p className="mb-6 text-sm text-text-muted">{SUBTITLES[fields.mode]}</p>
-      <ModeSwitch fields={fields} form={form} />
-      {fields.mode === 'agent' && <AgentSetup />}
+      <MarketplaceContext />
       {fields.mode === 'key' && <KeyForm fields={fields} form={form} onSubmit={submitKey} />}
       {fields.mode === 'account' && (
         <>
@@ -54,7 +52,6 @@ export function LoginView({ siteKey }: ViewProps) {
           <AccountForm fields={fields} form={form} captcha={captcha} onSubmit={submitAccount} />
         </>
       )}
-      <EnterpriseNudge />
     </AuthShell>
   );
 }

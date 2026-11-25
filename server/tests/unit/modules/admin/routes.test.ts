@@ -43,7 +43,7 @@ describe('admin routes', () => {
   });
 
   it('answers the overview and the license list', async () => {
-    assert.ok((await call('get', '/admin/overview', {})).body.accounts);
+    assert.ok((await call('get', '/admin/overview', { query: { version: '2' } })).body.accounts);
     assert.deepEqual((await call('get', '/admin/licenses', {})).body, { licenses: [] });
   });
 
@@ -90,4 +90,14 @@ it('records the admin and adjustment details for both guarded billing mutations'
     assert.equal(entry.target_id, 'billing-target');
     assert.ok(entry.meta.reason);
   }
+});
+
+it('requires the corrected private overview version instead of serving misleading legacy money fields', async () => {
+  await assert.rejects(call('get', '/admin/overview', {}), { status: 409, code: 'admin_reload_required' });
+});
+
+it('serves finance independently behind the same staff guards', async () => {
+  const response = await call('get', '/admin/revenue', {});
+  assert.equal(response.body.mrr.state, 'not_configured');
+  assert.equal(response.body.mrr.values, null);
 });

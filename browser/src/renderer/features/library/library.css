@@ -82,14 +82,14 @@
     width: 100%;
     padding: 13px 14px;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: 0;
     background: transparent;
     color: var(--secondary);
     text-align: left;
     font-size: 14px;
   }
   .collection[aria-current='true'] {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--on-accent);
     font-weight: 600;
   }
@@ -122,7 +122,7 @@
     background: transparent;
     color: var(--secondary);
     text-align: left;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 10px 14px;
     font-size: 12px;
   }
@@ -184,7 +184,7 @@
     border: 1px solid var(--border);
     color: var(--secondary);
     font-size: 11px;
-    border-radius: 6px;
+    border-radius: 0;
     padding: 8px 10px;
   }
   .search-box {
@@ -194,7 +194,7 @@
     padding: 0 16px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 9px;
+    border-radius: 0;
     color: var(--secondary);
   }
   .search-box:focus-within {
@@ -277,14 +277,14 @@
     color: inherit;
     border: 0;
     background: transparent;
-    border-radius: 4px;
+    border-radius: 0;
   }
   .site-icon {
     width: 35px;
     height: 38px;
     flex-shrink: 0;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 0;
     display: grid;
     place-items: center;
     color: var(--accent);
@@ -322,7 +322,7 @@
     border: 0;
     color: var(--secondary);
     padding: 8px;
-    border-radius: 5px;
+    border-radius: 0;
     font-size: 21px;
   }
   .save-page[aria-pressed='true'] {
@@ -364,7 +364,7 @@
   .download-remove {
     padding: 6px 8px;
     border: 0;
-    border-radius: 5px;
+    border-radius: 0;
     background: transparent;
     color: var(--secondary);
     font: inherit;
@@ -395,7 +395,7 @@
     color: var(--accent);
     border: 1px solid var(--border);
     padding: 10px 20px;
-    border-radius: 6px;
+    border-radius: 0;
     font-size: 12px;
   }
   #empty {
@@ -437,7 +437,7 @@
   }
   ::-webkit-scrollbar-thumb {
     background: var(--border);
-    border-radius: 4px;
+    border-radius: 0;
   }
   @media (max-width: 850px) {
     & {

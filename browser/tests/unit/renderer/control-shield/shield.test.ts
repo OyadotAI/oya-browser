@@ -69,7 +69,7 @@ describe('the control shield page', () => {
       [...boxes()].map((b) => b.dataset.id),
       ['1', '2'],
     );
-    assert.equal(boxes()[0].style['--c'], '#39ed35');
+    assert.equal(boxes()[0].style['--c'], '#cdf01e');
     assert.equal(boxes()[0].style.transform, 'translate3d(10px, 20px, 0)');
     assert.equal(boxes()[0].textContent, '1');
     assert.ok(!page.document.body.classList.contains('scanning'));
@@ -183,7 +183,7 @@ describe('the control shield page', () => {
         w: 50 + pad * 2,
         h: 20 + pad * 2,
         mode: 'destination-out',
-        fill: '#000',
+        fill: '#1a1a1a',
         alpha: 1,
       });
     });
@@ -291,7 +291,7 @@ describe('the control shield page', () => {
       page.oyaShield({ phase: 'act', text: 'Clicking', box });
       const [ring] = page.$('targets').children;
       assert.equal(ring.style.transform, 'translate3d(10px, 20px, 0)');
-      assert.equal(ring.style['--c'], '#6cb4ff');
+      assert.equal(ring.style['--c'], '#f7f5f0');
       mock.timers.tick(C.SHIELD_TARGET_MS);
       assert.equal(page.$('targets').children.length, 0);
     });
@@ -338,7 +338,7 @@ describe('the control shield page', () => {
         ['--fx', '--fy', '--dx', '--dy', '--d'].map((name) => spark.style[name]),
         ['60px', '20px', '965px', '705px', `${lag}ms`],
       );
-      assert.equal(spark.style['--c'], '#6cb4ff');
+      assert.equal(spark.style['--c'], '#f7f5f0');
     });
 
     it('sends at most SHIELD_SPARKS_MAX, spread over the page, and clears them with the outlines', () => {

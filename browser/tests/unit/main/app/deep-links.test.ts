@@ -18,6 +18,36 @@ describe('DeepLinks', () => {
     links = new DeepLinks(ctx);
   });
 
+  it('sends a connect-an-agent link from the OS to its dialog, never to pairing', async () => {
+    const asked = [];
+    links.ask = async (options) => (asked.push(options), { response: 0 });
+    links.onOpenUrl({ preventDefault() {} }, 'oya://agent-connect?agent=not-an-agent');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(asked[0].message, 'This link names an agent Oya does not know');
+    assert.ok(!ctx.config.saves);
+  });
+
+  it('a connect-an-agent link opened by a page inside Oya asks nothing and changes nothing', async () => {
+    const asked = [];
+    links.ask = async (options) => (asked.push(options), { response: 1 });
+    assert.equal(await links.applyDeepLink('oya://agent-connect?agent=claude-code'), false);
+    assert.deepEqual(asked, []);
+    assert.ok(!ctx.config.saves);
+  });
+
+  it('a connect-an-agent link that arrived before the window is answered once the window exists', async () => {
+    const asked = [];
+    links.ask = async (options) => (asked.push(options), { response: 0 });
+    const window = ctx.shell.window;
+    ctx.shell.window = null;
+    links.onOpenUrl({ preventDefault() {} }, 'oya://agent-connect?agent=not-an-agent');
+    assert.deepEqual(asked, []);
+    ctx.shell.window = window;
+    await links.drain([]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(asked.length, 1);
+  });
+
   it('opens external HTTP links in new tabs without retargeting the account', async () => {
     ctx.shell.browsingMode = true;
     const opened = [];
@@ -90,13 +120,25 @@ describe('DeepLinks', () => {
     links.retarget({ apiKey: 'k2', serverUrl: 'wss://a.test/ws', persona: 'p' });
     assert.equal(ctx.socket.browserId, null);
     assert.deepEqual(ctx.config.values, {
+      account: null,
       apiKey: 'k2',
+      claimUrl: '',
       serverUrl: 'wss://a.test/ws',
       persona: 'p',
       signedOut: false,
       keyFromApp: true,
     });
     assert.equal(ctx.config.saves, 2);
+  });
+
+  it('forgets the remembered account when the key changes, and keeps it otherwise', () => {
+    Object.assign(ctx.config.values, { account: { email: 'ada@example.com' }, claimUrl: 'https://a.test/claim/1' });
+    links.retarget({ apiKey: ctx.config.values.apiKey, serverUrl: ctx.config.values.serverUrl, persona: 'p' });
+    assert.deepEqual(ctx.config.values.account, { email: 'ada@example.com' });
+    assert.equal(ctx.config.values.claimUrl, 'https://a.test/claim/1');
+    links.retarget({ apiKey: 'other', serverUrl: ctx.config.values.serverUrl, persona: 'p' });
+    assert.equal(ctx.config.values.account, null);
+    assert.equal(ctx.config.values.claimUrl, '', 'the previous key had its own claim page');
   });
 
   it('changes nothing when the person cancels the pairing', async () => {

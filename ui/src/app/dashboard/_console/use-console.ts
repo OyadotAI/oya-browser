@@ -55,15 +55,16 @@ function useData({ apiKey, project, live, patch }: Base) {
 /** The console's data. */
 type Data = ReturnType<typeof useData>;
 
-/** Adopts a credential; a different project also clears everything shown for the last one. */
+/** Adopts a credential; switching away from a loaded scope clears everything shown for the last one. */
 function switchProject(h: ProjectHandle, live: Liveness, reset: () => void, credential: string, id: string | null) {
   // The credential in force now, so a response for a previous project is dropped instead of painted over the new one.
+  const [prevKey, prevId] = [live.keyRef.current, h.projectRef.current];
   live.keyRef.current = credential;
   h.setApiKey(credential);
-  if (h.projectRef.current === id) return;
+  if (prevId === id && (id !== null || prevKey === credential)) return;
   h.projectRef.current = id;
   h.setProject(id);
-  reset();
+  if (prevKey || prevId !== null) reset();
 }
 
 /** Clears every feed and the project's view state. */
@@ -104,12 +105,15 @@ function usePolling({ apiKey, live }: Base, { fetchBrowsers, fetchFleet, fetchPe
   return now;
 }
 
-/** Drops browsers that left the fleet from the selection. */
-function usePruneSelection({ selected, checked }: ConsoleView, { browsers, loadError }: Data, patch: Base['patch']) {
-  useEffect(
-    () => pruneSelection(browsers, { selected, checked }, loadError, patch),
-    [browsers, selected, checked, loadError, patch],
-  );
+/** Drops browsers that left the fleet from the selection once the table has loaded. */
+function usePruneSelection(
+  { selected, checked }: ConsoleView,
+  { browsers, browsersLoaded, loadError }: Data,
+  patch: Base['patch'],
+) {
+  useEffect(() => {
+    if (browsersLoaded) pruneSelection(browsers, { selected, checked }, loadError, patch);
+  }, [browsers, browsersLoaded, selected, checked, loadError, patch]);
 }
 
 /** Load-time and data-driven effects: restore, Slack return, polling, selection pruning. Returns the clock. */

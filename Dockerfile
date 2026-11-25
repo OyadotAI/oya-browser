@@ -11,6 +11,8 @@ COPY ui/ ./
 COPY CHANGELOG.md /CHANGELOG.md
 # The trust page is built from the generated HIPAA evidence pack.
 COPY compliance/evidence.json /compliance/evidence.json
+# The build type-checks the colour guards, which import the shared colour checker at the repository root.
+COPY tooling/colours/ /tooling/colours/
 RUN npm run build
 
 # ── Stage 2: Production server ──

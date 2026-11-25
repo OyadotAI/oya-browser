@@ -122,10 +122,10 @@ describe('signing in with Oya', () => {
     assert.match(app.setup.state.error, /not valid/);
   });
 
-  it('enters browsing on "Just browse for now"', () => {
+  it('enters browsing on "No AI for now, just browse"', () => {
     const app = build();
     app.setup.skip();
-    assert.equal(app.fake.called('enterBrowsing').length, 1);
+    assert.equal(app.fake.called('finishOnboarding').length, 1);
   });
 });
 

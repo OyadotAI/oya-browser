@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { useEffect, useRef } from 'react';
 import { HelpCircle } from 'lucide-react';
 import FleetStrip from '@/components/dashboard/fleet-strip';
 import FleetTable from '@/components/dashboard/fleet-table';
@@ -45,26 +46,40 @@ function Notices({ c }: Props) {
   );
 }
 
-/** The tab bar and the shortcut-help button. */
+/** Keeps the open tab in view when the tab row scrolls sideways on a phone. */
+function useActiveTabInView(tab: string) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // jsdom has no scrollIntoView, hence the optional call.
+    row.current?.querySelector('[aria-current="true"]')?.scrollIntoView?.({ inline: 'nearest', block: 'nearest' });
+  }, [tab]);
+  return row;
+}
+
+/** The tab bar and the shortcut-help button; the tabs scroll sideways on narrow screens, help stays pinned. */
 function TabBar({ c }: Props) {
+  const row = useActiveTabInView(c.view.tab);
   return (
     <div className="flex items-center gap-1 border-b border-border px-4 lg:px-6">
-      {TABS.map((t) => (
-        <button
-          key={t.key}
-          onClick={() => c.patch({ tab: t.key })}
-          className={`flex items-center gap-2 border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
-            c.view.tab === t.key
-              ? 'border-accent text-text'
-              : 'border-transparent text-text-muted hover:text-text-secondary'
-          }`}
-        >
-          <t.icon className="h-4 w-4 shrink-0" />
-          {t.label}
-        </button>
-      ))}
+      <div ref={row} className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => c.patch({ tab: t.key })}
+            aria-current={c.view.tab === t.key ? 'true' : undefined}
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2.5 text-[13.5px] font-medium transition-colors ${
+              c.view.tab === t.key
+                ? 'border-accent text-text'
+                : 'border-transparent text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <t.icon className="h-4 w-4 shrink-0" />
+            {t.label}
+          </button>
+        ))}
+      </div>
       <button
-        className="btn-icon ml-auto"
+        className="btn-icon shrink-0"
         onClick={() => c.patch({ showHelp: true })}
         title="Keyboard shortcuts (?)"
         aria-label="Keyboard shortcuts"
@@ -102,11 +117,13 @@ function BrowsersTab({ c }: Props) {
 /** The open tab's content. */
 function TabContent({ c }: Props) {
   const { view, patch, apiKey, project } = c;
+  const scope = project ?? apiKey;
   return (
     <div className="min-w-0 flex-1">
       {view.tab === 'browsers' && <BrowsersTab c={c} />}
       {view.tab === 'personas' && (
         <PersonasTab
+          key={scope}
           apiKey={apiKey}
           browsers={c.browsers}
           personas={c.personas}
@@ -119,12 +136,12 @@ function TabContent({ c }: Props) {
         />
       )}
       {view.tab === 'playbooks' && (
-        <PlaybooksTab key={project ?? ''} apiKey={apiKey} browsers={c.browsers} personas={c.personas} now={c.now} />
+        <PlaybooksTab key={scope} apiKey={apiKey} browsers={c.browsers} personas={c.personas} now={c.now} />
       )}
-      {view.tab === 'routines' && <RoutinesTab key={project ?? ''} apiKey={apiKey} now={c.now} personas={c.personas} />}
+      {view.tab === 'routines' && <RoutinesTab key={scope} apiKey={apiKey} now={c.now} personas={c.personas} />}
       {view.tab === 'control' && (
         <div className="h-full min-w-0 overflow-hidden">
-          <ControlTab key={project ?? ''} apiKey={apiKey} />
+          <ControlTab key={scope} apiKey={apiKey} />
         </div>
       )}
     </div>
@@ -135,15 +152,16 @@ function TabContent({ c }: Props) {
 function SelectedBrowser({ c }: Props) {
   const { view, patch } = c;
   if (!(view.tab === 'browsers' && view.selected)) return null;
+  const scope = c.project ?? c.apiKey;
   return (
     <div
-      className="fixed inset-0 z-40 flex justify-end bg-black/50 lg:static lg:z-auto lg:bg-transparent"
+      className="fixed inset-0 z-40 flex justify-end bg-ink/50 lg:static lg:z-auto lg:bg-transparent"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) patch({ selected: null });
       }}
     >
       <BrowserPanel
-        key={`${c.project}:${view.selected}`}
+        key={`${scope}:${view.selected}`}
         apiKey={c.apiKey}
         browserId={view.selected}
         onClose={() => patch({ selected: null })}

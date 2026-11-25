@@ -41,7 +41,7 @@ describe.each(PAGES)('%s', (title, Page) => {
 
   it('is linked from the site footer', () => {
     render(<Page />);
-    const footer = screen.getByRole('navigation', { name: 'Footer navigation' });
+    const footer = screen.getByRole('contentinfo', { name: 'Site footer' });
     const name = title === 'Privacy Policy' ? 'Privacy' : 'Terms';
     expect(within(footer).getByRole('link', { name }).getAttribute('href')).toBe(
       title === 'Privacy Policy' ? '/privacy' : '/terms',

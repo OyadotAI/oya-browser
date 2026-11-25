@@ -14,6 +14,7 @@ const { router } = await import('../../../../src/modules/playbooks/routes.ts');
 const keyConfig = await import('../../../../src/modules/config/service.ts');
 const { control } = await import('../../../../src/modules/control/service.ts');
 const { allowKey, callRoute, scriptedBrowser } = await import('../../support/agent.ts');
+const { getConnection } = await import('../../../../src/platform/storage/index.ts');
 
 const KEY = 'playbook-routes-key';
 const BROWSER = 'b-pb-routes';
@@ -119,6 +120,53 @@ describe('playbook routes', () => {
     assert.deepEqual((await as('GET', '/playbooks')).body.playbooks, []);
   });
 
+  describe('run history', () => {
+    beforeEach(async () => {
+      await getConnection().delete('playbook_runs', {});
+    });
+    /** Lets the background history write land. */
+    const landed = () => new Promise((r) => setTimeout(r, 20));
+
+    it('lists a played playbook’s runs and its last run, and says null for one never run', async () => {
+      await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'played', steps: STEPS });
+      await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'idle', steps: STEPS });
+      await as('POST', `/browsers/${BROWSER}/playbooks/played/play`, { variables: { email: 'b@c' } });
+      await landed();
+      const runs = await as('GET', '/playbooks/played/runs');
+      assert.deepEqual([runs.status, runs.body.runs.map((r) => r.status)], [200, ['succeeded']]);
+      const listed = Object.fromEntries((await as('GET', '/playbooks')).body.playbooks.map((p) => [p.name, p.lastRun]));
+      assert.equal(listed.played.status, 'succeeded');
+      assert.equal(listed.idle, null);
+    });
+
+    it('answers 404 for the runs of a playbook the caller does not have', async () => {
+      assert.equal((await as('GET', '/playbooks/ghost/runs')).status, 404);
+    });
+
+    it('leaves lastRun out of the list when the history cannot be read, rather than calling it never run', async () => {
+      await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'p', steps: STEPS });
+      const db = getConnection();
+      const real = db.select.bind(db);
+      mock.method(db, 'select', async (table: string, ...rest) => {
+        if (table === 'playbook_runs') throw new Error('db down');
+        return real(table, ...rest);
+      });
+      const [pb] = (await as('GET', '/playbooks')).body.playbooks;
+      assert.equal('lastRun' in pb, false);
+    });
+
+    it('moves runs with a rename, and a new playbook with a deleted one’s name starts with none', async () => {
+      await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'a', steps: STEPS });
+      await as('POST', `/browsers/${BROWSER}/playbooks/a/play`, { variables: { email: 'b@c' } });
+      await landed();
+      await as('PATCH', '/playbooks/a', { name: 'b' });
+      assert.equal((await as('GET', '/playbooks/b/runs')).body.runs.length, 1);
+      await as('DELETE', '/playbooks/b');
+      await as('POST', `/browsers/${BROWSER}/playbooks`, { name: 'b', steps: STEPS });
+      assert.deepEqual((await as('GET', '/playbooks/b/runs')).body.runs, []);
+    });
+  });
+
   it('answers a missing playbook with 404 on delete', async () => {
     assert.equal((await as('DELETE', '/playbooks/ghost')).status, 404);
   });
@@ -133,6 +181,17 @@ describe('playbook routes', () => {
       for (let i = 0; i < 60 && (await as('GET', `/runs/${submitted.body.id}`)).body.status === 'running'; i++)
         await new Promise((r) => setTimeout(r, 250));
       assert.equal((await as('GET', `/runs/${submitted.body.id}`)).body.status, 'succeeded');
+    });
+
+    it('reads null data and secrets on a run as none, as the Python SDK sends them', async () => {
+      const res = await as('POST', `/browsers/${BROWSER}/runs`, {
+        prompt: 'x',
+        playbook: 'y',
+        data: null,
+        secrets: null,
+      });
+      assert.equal(res.status, 400);
+      assert.match(res.body.error, /exactly one of prompt or playbook/, 'got past the data check');
     });
 
     it('refuses a run with both a prompt and a playbook', async () => {

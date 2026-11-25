@@ -14,11 +14,13 @@ import {
   ACTION_NAME,
   CLAIMABLE_PROVIDERS,
   CLOUD_PROVIDER,
+  CloseCode,
   DEFAULT_PROVIDER,
   MAX_ANNOUNCED_ACTIONS,
   MAX_BROWSERS_PER_KEY,
   SERVER_RUN,
 } from './constants.ts';
+import { releaseBrowser } from './release.ts';
 import { container } from '../../../app/container.ts';
 
 /** The persona fields registration uses. */
@@ -41,6 +43,8 @@ export interface Registration {
   ws: any;
   /** The credential as presented, kept for live-view re-checks. */
   authToken: string;
+  /** Authenticated before this socket can claim the previous registration. */
+  cloudVerified?: boolean;
 }
 
 /**
@@ -53,16 +57,18 @@ export function providerOf(browserId: string, claimed?: string) {
 }
 
 /** A managed browser must present the enrolment token its session was created with. */
-async function checkEnrolment(browserId: string, token?: string) {
+export async function checkEnrolment(browserId: string, token?: string) {
   const durable = await control().store.get('session', browserId);
+  if (durable?.hostedProvider || durable?.cleanup?.kind === 'vendor')
+    throw new Error('Hosted vendor connection required');
   if (durable?.enrollmentHash && durable.enrollmentHash !== hash(String(token || ''))) {
     throw new Error('Managed browser enrollment token required');
   }
+  return Boolean(durable?.enrollmentHash);
 }
 
 /** The control plane adopts the session under the key and persona caps. */
-export async function adopt(reg: Registration, provider: string, enrollmentToken?: string) {
-  await checkEnrolment(reg.browserId, enrollmentToken);
+export async function adopt(reg: Registration, provider: string) {
   await control().adopt(reg.apiKey, {
     id: reg.browserId,
     provider,
@@ -92,16 +98,31 @@ async function noteDesktop(reg: Registration, msg) {
     track.desktopUpdated(reg.apiKey, { platform, from, to: version });
 }
 
-/** Lists the browser and starts counting it. */
-export async function list(reg: Registration, provider: string, msg) {
+/** Lists the browser in the registry and starts its usage clock synchronously. */
+export function enlist(reg: Registration, provider: string, msg) {
+  clearConcurrent(reg.browserId, reg.apiKey);
   addToRegistry(reg, provider, msg);
-  if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
+  usage.browserConnected(reg.apiKey, reg.browserId, SERVER_RUN.has(provider));
   metrics.wsConnections.inc({ outcome: 'ok' });
   metrics.browsersConnected.set({}, registry.browsers.size);
-  const inCloud = SERVER_RUN.has(provider);
-  usage.browserConnected(reg.apiKey, reg.browserId, inCloud);
+}
+
+/** Records desktop telemetry and cloud billing attribution once listed. */
+export async function list(reg: Registration, provider: string, msg) {
+  if (provider === DEFAULT_PROVIDER) await noteDesktop(reg, msg);
   // Before the welcome: the proxy it is given depends on its owner's plan.
-  if (inCloud) await container.billing.entitlements.attribute(reg.apiKey);
+  if (SERVER_RUN.has(provider)) await container.billing.entitlements.attribute(reg.apiKey);
+}
+
+/** Releases an earlier registration if a concurrent handshake reached the registry first. */
+function clearConcurrent(browserId: string, apiKey: string) {
+  const existing = registry.get(browserId);
+  if (!existing) return;
+  if (existing.apiKey !== apiKey) throw new Error('browser_id registered to a different key');
+  releaseBrowser(browserId, existing, 'reconnected');
+  try {
+    existing.ws.close(CloseCode.REPLACED, 'Replaced by new connection');
+  } catch {}
 }
 
 /**
@@ -121,10 +142,11 @@ function announcedActions(announced: unknown): string[] | null {
 }
 
 /** The registry entry: what the dashboard and the command path see of the browser. */
-function addToRegistry({ apiKey, browserId, persona, ws, authToken }: Registration, provider: string, msg) {
+function addToRegistry(reg: Registration, provider: string, msg) {
+  const { apiKey, browserId, persona, ws, authToken, cloudVerified } = reg;
   const name = msg.browser_name || 'Browser';
   const actions = announcedActions(msg.actions);
   const offered = { cdp: msg.cdp === true, profileSync: msg.profile_sync === true, actions };
-  registry.add(browserId, { ws, apiKey, name, clientType: 'oya', persona, provider, ...offered });
+  registry.add(browserId, { ws, apiKey, name, cloudVerified, clientType: 'oya', persona, provider, ...offered });
   registry.get(browserId).authToken = authToken;
 }

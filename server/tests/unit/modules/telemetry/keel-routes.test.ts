@@ -43,6 +43,7 @@ describe('POST /api/telemetry/keel/ping', () => {
     process.env.STRIPE_SECRET_KEY = 'sk_test';
     limits.reset();
     await getConnection().delete('keel_usage', {});
+    await getConnection().delete('keel_installs', {});
     await getConnection().delete('installs', {});
   });
   afterEach(() => {
@@ -53,8 +54,10 @@ describe('POST /api/telemetry/keel/ping', () => {
   it('records only anonymous report fields separately from Oya Browser installs', async () => {
     assert.deepEqual(await post({ ...PING, path: '/private/repo' }), { status: 200, body: { ok: true } });
     const [row] = await getConnection().select('keel_usage', {});
-    const { received_at, ...report } = row;
+    const { received_at, runtime_ms, project_ids, ...report } = row;
     assert.deepEqual(report, PING);
+    assert.equal(runtime_ms, null);
+    assert.equal(project_ids, null);
     assert.ok(Number.isFinite(Date.parse(received_at)));
     assert.deepEqual(await getConnection().select('installs', {}), []);
   });
@@ -91,6 +94,24 @@ describe('POST /api/telemetry/keel/ping', () => {
     assert.equal(answer.status, 400);
     assert.equal(answer.body.field, 'steps');
     assert.deepEqual(await getConnection().select('keel_usage', {}), []);
+  });
+
+  it('validates the entire v2 batch before storing its first day', async () => {
+    const { day, steps, ...identity } = PING;
+    const report = { day, steps, runtime_ms: 1000, project_ids: ['a'.repeat(64)] };
+    const body = { schema_version: 2, ...identity, reports: [report, { ...report, day: 'not-a-day' }] };
+    assert.equal((await post(body)).status, 400);
+    assert.deepEqual(await getConnection().select('keel_usage'), []);
+    assert.deepEqual(await getConnection().select('keel_installs'), []);
+  });
+
+  it('accepts a measured batch and separately accepts presence without inventing daily usage', async () => {
+    const { day, steps, ...identity } = PING;
+    const body = { schema_version: 2, ...identity, reports: [{ day, steps, runtime_ms: 1000, project_ids: [] }] };
+    assert.equal((await post(body)).status, 200);
+    assert.equal((await post({ ...body, license_id: null, reports: [] })).status, 200);
+    assert.equal((await getConnection().select('keel_usage')).length, 1);
+    assert.equal((await getConnection().select('keel_installs')).length, 1);
   });
 
   it('rate limits Keel separately from Oya Browser pings', async () => {

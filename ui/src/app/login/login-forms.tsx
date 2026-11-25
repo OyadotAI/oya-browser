@@ -25,15 +25,14 @@ interface FormProps {
 
 /** The modes' labels. */
 const MODES: Array<[LoginMode, string]> = [
-  ['account', 'Human'],
-  ['key', 'Machine'],
-  ['agent', 'Agent'],
+  ['account', 'Credentials'],
+  ['key', 'API'],
 ];
 
-/** Switches between human, machine and agent sign-in, clearing any error. */
+/** Switches between credentials and API-key sign-in, clearing any error. */
 export function ModeSwitch({ fields, form }: Omit<FormProps, 'onSubmit'>) {
   return (
-    <div className="mb-6 grid grid-cols-3 gap-1 rounded-lg border border-border p-1">
+    <div className="mb-6 grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
       {MODES.map(([m, label]) => (
         <button
           key={m}
@@ -43,7 +42,7 @@ export function ModeSwitch({ fields, form }: Omit<FormProps, 'onSubmit'>) {
             form.setError('');
           }}
           className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
-            fields.mode === m ? 'bg-accent/10 text-text' : 'text-text-dim hover:text-text-muted'
+            fields.mode === m ? 'bg-accent-soft text-text' : 'text-text-dim hover:text-text-muted'
           }`}
         >
           {label}

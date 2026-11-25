@@ -13,7 +13,17 @@ import { localPlugin, baseRules, designRules, docRules, MAX_COMPONENT_LINES } fr
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'coverage/**', 'next-env.d.ts', 'playwright-report/**', 'test-results/**']),
+  globalIgnores([
+    '.next/**',
+    'out/**',
+    'build/**',
+    'coverage/**',
+    'next-env.d.ts',
+    'playwright-report/**',
+    'test-results/**',
+    // The tasteskill kit, served as plain files; never edited, so never linted.
+    'public/assets/**',
+  ]),
   {
     files: ['src/**/*.{ts,tsx}'],
     plugins: { local: localPlugin, jsdoc },

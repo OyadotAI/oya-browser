@@ -48,7 +48,7 @@ export default function LiveView({
   const [ripple, setRipple] = useState<Ripple | null>(null);
   const { captured, ...handlers } = useLiveInput({ img, wrap, send, onInput, interactive, hover, setRipple });
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-black">
+    <div className="overflow-hidden rounded-lg border border-border bg-ink">
       <LiveToolbar
         {...{ frameSrc, fps, frameAgeMs, hover, fit }}
         onHover={() => setHover(!hover)}

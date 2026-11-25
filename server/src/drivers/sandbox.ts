@@ -17,7 +17,8 @@
  * Sandboxes are named oya-browser-<browserId>, so the sandbox for a browser is
  * addressable without storing anything, a restart can still find and delete it.
  */
-import { control } from '../modules/control/service.ts';
+import { randomUUID } from 'node:crypto';
+import { control, hash } from '../modules/control/service.ts';
 import { HttpError } from '../platform/errors.ts';
 import { Status } from '../platform/http-status.ts';
 import * as config from './sandbox/config.ts';
@@ -71,8 +72,10 @@ export async function createSandbox({ apiKey, name, persona, browserId }: any = 
   const { worker, settings } = runtimeFor(apiKey);
   browserId ||= await reserveBrowser(apiKey, persona);
   // Cleanup follows the runtime the sandbox was made on, not whatever is configured later.
-  await control().update(apiKey, browserId, { cleanup: { kind: 'sandbox', browserId, runtime: worker.id } });
-  const made = await worker.create(settings, specFor(settings, { apiKey, name, persona, browserId }));
+  const enrollment = randomUUID();
+  const cleanup = { kind: 'sandbox', browserId, runtime: worker.id };
+  await control().update(apiKey, browserId, { cleanup, enrollmentHash: hash(enrollment) });
+  const made = await worker.create(settings, specFor(settings, { apiKey, name, persona, browserId, enrollment }));
   await markProvisioned(apiKey, browserId);
   return { browserId, sandboxId: made.id, sandboxName: PREFIX + browserId, runtime: worker.id };
 }

@@ -72,3 +72,22 @@ export const CONTROL_BUSY = 'control_busy';
 
 /** Indentation of a downloaded playbook export, so it reads and diffs well. */
 export const EXPORT_INDENT = 2;
+
+/** Milliseconds in a second, for a run's duration. */
+export const MS_PER_SECOND = 1000;
+/** Seconds in a minute, for a run's duration. */
+export const SECONDS_PER_MINUTE = 60;
+
+/** The words of the run history under a playbook's row. */
+export const RUNS_TEXT = {
+  heading: 'Runs',
+  toggle: (name: string) => `Runs of ${name}`,
+  empty: 'No runs yet. Run it from here, the SDK or the desktop app.',
+  loadFailed: "Couldn't load runs.",
+  retry: 'Retry',
+  loading: 'Loading runs…',
+  status: { succeeded: 'Succeeded', failed: 'Failed' } as Record<string, string>,
+} as const;
+
+/** A run's badge colour, by how it ended. */
+export const RUN_BADGE_CLASS: Readonly<Record<string, string>> = { succeeded: 'text-accent', failed: 'text-red' };

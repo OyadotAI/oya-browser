@@ -3,11 +3,16 @@
  * but callable directly as analyzePage() without chrome.runtime messaging.
  */
 
+/* global __OYA_ANALYZER_SEMANTICS_ONLY__ */
 (function () {
   'use strict';
 
-  if (window.__acAnalyzerLoaded) return;
-  window.__acAnalyzerLoaded = true;
+  const semanticsOnly = typeof __OYA_ANALYZER_SEMANTICS_ONLY__ !== 'undefined' && __OYA_ANALYZER_SEMANTICS_ONLY__;
+  if (semanticsOnly && window.__acDiagnosticSemantics) return;
+  if (!semanticsOnly) {
+    if (window.__acAnalyzerLoaded) return;
+    window.__acAnalyzerLoaded = true;
+  }
 
   // Attribute used to tag indexed elements. The loader substitutes a random
   // name per document: a constant blooming across the DOM is visible to any
@@ -38,6 +43,11 @@
   // this share of the viewport. A chat widget or popover leaves the page readable.
   const MODAL_SELECTOR = '[aria-modal="true"], .artdeco-modal__content, [data-testid="sheetDialog"]';
   const MODAL_MIN_SHARE = 0.5;
+
+  // The whole box a dialog is drawn in. A match that is only the dialog's body
+  // (LinkedIn's .artdeco-modal__content) widens to the nearest of these, so the
+  // header and the footer with Save and Cancel are read with it.
+  const DIALOG_BOX_SELECTOR = '[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"], .artdeco-modal';
 
   // A panel that scrolls its own content (Gmail, Slack, a chat list) is reported
   // when it covers this share of the viewport and has this much more to scroll.
@@ -151,7 +161,10 @@
   let elementMap = [];
   const elementRefs = new Map(); // id → DOM node (survives React re-renders)
 
-  window.analyzePage = function (options = {}) {
+  /** The last analysis's elements, unchanged, so the shield can outline them again without renumbering ids an agent holds; null before any. */
+  if (!semanticsOnly) window.__acLastElements = () => (elementMap.length ? { ok: true, data: { elements: elementMap } } : null);
+
+  if (!semanticsOnly) window.analyzePage = function (options = {}) {
     // Bypass ClientRects noise from fingerprint spoofing during analysis
     // Runs in an isolated world, so the page's patched getBoundingClientRect
     // does not apply here and measurements are already unnoised.
@@ -198,7 +211,7 @@
         const rect = m.getBoundingClientRect();
         // Must be visible: has size and is not display:none/visibility:hidden
         if (rect.width > 0 && rect.height > 0 && !isHardHidden(m) && isShownOnTop(m, rect) && isModal(m, rect)) {
-          activeModal = m;
+          activeModal = wholeDialog(m);
           break;
         }
       }
@@ -231,6 +244,7 @@
     textLast = null;
     pinnedCache = new Map();
     clipCache = new Map();
+    opacityCache = new Map();
     const top = { region: '' };
     walk(root, top);
     flush(top);
@@ -238,12 +252,14 @@
     const onScreenIds = new Set();
     for (const el of elementMap) {
       const ref = elementRefs.get(el.id);
-      const dom = ref?.isConnected ? ref : queryShadow(el.selector);
+      const found = ref?.isConnected ? ref : queryShadow(el.selector);
+      // A styled toggle hides its real input and draws its label: the label is where it is seen and clicked.
+      const dom = found && shownToggleLabel(found);
       if (dom) {
         const rect = dom.getBoundingClientRect();
-        el.visible = inViewport(rect, getIframeOffset(dom));
+        el.visible = inViewport(rect, getIframeOffset(dom)) && !transparentAncestor(dom);
         if (el.visible && !pinnedAt(dom) && rectOnScreen(rect, dom)) onScreenIds.add(el.id);
-        if (el.visible && isCovered(dom, rect)) {
+        if (el.visible && isCovered(dom)) {
           el.covered = true;
           el.state = el.state ? el.state + ' covered' : 'covered';
         }
@@ -278,12 +294,8 @@
         ? `${Math.round((panel.scrollTop / (panel.scrollHeight - panel.clientHeight)) * 100)}% (${Math.round(panel.scrollTop)}px of ${panel.scrollHeight}px); the content scrolls inside a panel`
         : '',
       elements: `${elementMap.length} total, ${visibleCount} visible`,
-      modal: activeModal
-        ? `${activeModal.getAttribute('aria-label') || activeModal.getAttribute('aria-labelledby') || 'unnamed'} (only this dialog was read)`
-        : '',
-      covered: coveredCount
-        ? `${coveredCount} visible elements are behind something drawn over them (close it first)`
-        : '',
+      modal: activeModal ? `${ariaName(activeModal) || 'unnamed'} (only this dialog was read)` : '',
+      covered: coveredCount ? `${coveredCount} visible elements could not be reached at any sampled point` : '',
       focused: focusedId || '',
     };
     const { rows, anchored } = capRows(blocks);
@@ -345,7 +357,9 @@
   function capRows(rows) {
     const anchored = rows.some((row) => row.screen === true);
     if (rows.length <= MAX_BLOCKS) return { rows, anchored };
-    const kept = capOrder(rows).slice(0, MAX_BLOCKS).sort((a, b) => a - b);
+    const kept = capOrder(rows)
+      .slice(0, MAX_BLOCKS)
+      .sort((a, b) => a - b);
     return { rows: kept.map((i) => rows[i]), anchored };
   }
 
@@ -353,22 +367,82 @@
    * Whether something else is drawn over the element's centre, such as a cookie
    * banner or an overlay. A click there lands on that instead.
    */
-  function isCovered(dom, rect) {
-    let x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+  function isCovered(dom) {
+    const win = dom.ownerDocument.defaultView;
+    const onScreen = [...dom.getClientRects()].some(
+      (r) =>
+        r.width !== 0 &&
+        r.height !== 0 &&
+        r.right > 0 &&
+        r.bottom > 0 &&
+        r.left < win.innerWidth &&
+        r.top < win.innerHeight,
+    );
+    return onScreen && reachablePoint(dom) === null;
+  }
+
+  /** A zero-size checkbox or radio is seen through its label; any other element is itself. */
+  function shownToggleLabel(dom) {
+    if (dom.tagName !== 'INPUT' || !/^(checkbox|radio)$/.test(dom.type)) return dom;
+    const r = dom.getBoundingClientRect();
+    if (r.width && r.height) return dom;
+    const label = [...(dom.labels || [])].find((l) => l.getBoundingClientRect().width > 0);
+    return label || dom;
+  }
+
+  /** Whether a parent is fully transparent (a banner faded out): nothing inside it can be seen. The element's own opacity is not counted, since transparent file and toggle inputs sit over what they draw. */
+  function transparentAncestor(dom) {
+    for (let n = dom.parentElement || dom.getRootNode()?.host; n; n = n.parentElement || n.getRootNode()?.host) {
+      if (!opacityCache.has(n)) opacityCache.set(n, getComputedStyle(n).opacity === '0');
+      if (opacityCache.get(n)) return true;
+    }
+    return false;
+  }
+
+  /** Whether `hit` is `target` itself, inside it, or its own label (a floating label over a field focuses that field). */
+  function hitReaches(hit, target) {
+    if (hit === target || target.contains(hit)) return true;
+    const label = hit.closest?.('label');
+    return !!label && label.control === target;
+  }
+
+  /** A reachable client-rect centre, clipped to its own viewport and checked through every frame. */
+  function reachablePoint(dom) {
+    const win = dom.ownerDocument.defaultView;
+    for (const rect of dom.getClientRects()) {
+      const left = Math.max(0, rect.left),
+        top = Math.max(0, rect.top);
+      const right = Math.min(win.innerWidth, rect.right),
+        bottom = Math.min(win.innerHeight, rect.bottom);
+      if (right <= left || bottom <= top) continue;
+      const point = { x: (left + right) / 2, y: (top + bottom) / 2 };
+      const reached = pointReaches(dom, point.x, point.y);
+      if (reached) return reached;
+    }
+    return null;
+  }
+
+  /** Descendants count as the target; ancestors, gaps and sticky headers do not bypass overlays. */
+  function pointReaches(dom, x, y) {
     for (let target = dom; target;) {
       const root = target.getRootNode();
       const hit = root.elementFromPoint?.(x, y);
-      if (hit && hit !== target && !target.contains(hit) && !hit.contains(target) && !isStickyHeader(hit)) return true;
-      if (root.host) { target = root.host; continue; }
+      if (!hit || !hitReaches(hit, target)) return null;
+      if (root.host) {
+        target = root.host;
+        continue;
+      }
+      if (target.ownerDocument === document) return { x, y };
       const frame = target.ownerDocument.defaultView?.frameElement;
-      if (!frame) return false;
+      if (!frame) return null;
       const r = frame.getBoundingClientRect();
       x = r.left + (x + frame.clientLeft) * (frame.offsetWidth ? r.width / frame.offsetWidth : 1);
       y = r.top + (y + frame.clientTop) * (frame.offsetHeight ? r.height / frame.offsetHeight : 1);
       target = frame;
     }
-    return false;
+    return null;
   }
+  if (!semanticsOnly) window.__acReachablePoint = reachablePoint;
 
   /** Whether an element sits in a fixed or sticky strip across the top of the viewport. */
   function isStickyHeader(el) {
@@ -397,6 +471,18 @@
       return false;
     const hit = document.elementFromPoint(x, y);
     return !!hit && (m.contains(hit) || hit.contains(m));
+  }
+
+  /**
+   * The dialog a matched modal belongs to. Matches are walked from the end of the
+   * document, so a dialog's body is found before the dialog around it; reading only
+   * the body hid its footer, and an agent could select an option but never Save it.
+   * A match that is itself a dialog is kept, so a dialog stacked inside another is
+   * not widened to the one beneath it.
+   */
+  function wholeDialog(m) {
+    if (m.matches(DIALOG_BOX_SELECTOR)) return m;
+    return (m.parentElement && m.parentElement.closest(DIALOG_BOX_SELECTOR)) || m;
   }
 
   /** Whether an open dialog blocks the rest of the page, so reading only it is right. */
@@ -454,6 +540,7 @@
   let textLast = null;
   let pinnedCache = new Map(); // per analysis: whether an element sits in a pinned box
   let clipCache = new Map(); // per analysis: the ancestor boxes that clip an element's content
+  let opacityCache = new Map(); // per analysis: whether each ancestor is fully transparent
   const pageBoxCache = new Map(); // per analysis: a clipping box in top-level page coordinates
   const frameOffsetCache = new Map(); // per analysis: an element's offset within the top-level page
   const rootChain = new Set(); // the analysis root and its ancestors: they never pin the rows inside
@@ -776,7 +863,8 @@
         // Headers remain addressable even when a library installs listeners with
         // addEventListener, which an isolated analyzer cannot introspect. A
         // semantic header target does not claim that a plain header is a button.
-        const type = getInteractiveType(cell) ||
+        const type =
+          getInteractiveType(cell) ||
           (cell.tagName === 'TH' ? (cell.getAttribute('scope') === 'row' ? 'rowheader' : 'columnheader') : null);
         if (type && !hasInteractiveChild(cell)) addElement(cell, type, row);
         else for (const c of childrenOf(cell)) walk(c, row);
@@ -1377,18 +1465,27 @@
     return `: ${shown}${texts.length > 8 ? ' | …' : ''}`;
   }
 
-  function getLabel(node, type) {
+  /**
+   * The name an element is given for assistive tech: aria-label, else the text of
+   * what aria-labelledby points at. The raw labelledby value is an id
+   * ("ember123-header") and names nothing, so it is never returned.
+   */
+  function ariaName(node) {
     const aria = node.getAttribute('aria-label');
     if (aria) return aria.trim().slice(0, 80);
-    // aria-labelledby
     const labelledBy = node.getAttribute('aria-labelledby');
-    if (labelledBy) {
-      const parts = labelledBy
-        .split(/\s+/)
-        .map((id) => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
-      if (parts.length) return parts.join(' ').slice(0, 80);
-    }
+    if (!labelledBy) return '';
+    return labelledBy
+      .split(/\s+/)
+      .map((id) => (node.ownerDocument || document).getElementById(id)?.textContent?.replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+      .join(' ')
+      .slice(0, 80);
+  }
+
+  function getLabel(node, type) {
+    const named = ariaName(node);
+    if (named) return named;
     if (node.id && ['input', 'checkbox', 'radio', 'select', 'textarea'].includes(type)) {
       // The field's own document: a label inside an iframe is not in the top one.
       const l = (node.ownerDocument || document).querySelector(`label[for="${CSS.escape(node.id)}"]`);
@@ -1589,6 +1686,21 @@
     return { x, y };
   }
   // Action targeting uses the same ancestry calculation as analysis and highlights.
+  // Diagnostics reuse semantics in an isolated world, before any canonical IDs, observers or recorder wiring.
+  if (semanticsOnly) {
+    Object.defineProperty(window, '__acDiagnosticSemantics', { value: Object.freeze({
+      type: getInteractiveType, name: getLabel, control: node => hiddenControl(node) || node,
+      checked: isChecked, choice: choiceOf, state: ariaState, facts: fieldEntry,
+      begin: () => { analyzing = true; analysisTextMatches = null; },
+      finish: () => {
+        analyzing = false; analysisTextMatches = null;
+        pinnedCache.clear(); clipCache.clear(); pageBoxCache.clear(); frameOffsetCache.clear();
+        rootChain.clear(); analysisRoot = null;
+      },
+    }), configurable: false, writable: false });
+    return;
+  }
+
   window.__acFrameOffset = getIframeOffset;
 
   function queryShadow(selector, root = document) {
@@ -1746,6 +1858,19 @@
     });
   }
 
+  /** Hide only inspection decorations; element ids stay valid for the next native action. */
+  window.__acHideHighlights = function () {
+    const hide = (doc) => {
+      doc.getElementById('ac-labels')?.remove();
+      doc.getElementById('ac-highlight-style')?.remove();
+      for (const frame of doc.querySelectorAll('iframe')) {
+        try {
+          if (frame.contentDocument) hide(frame.contentDocument);
+        } catch {}
+      }
+    };
+    hide(document);
+  };
   window.__acCleanup = cleanup;
 
   // ─── Live DOM Observer ───

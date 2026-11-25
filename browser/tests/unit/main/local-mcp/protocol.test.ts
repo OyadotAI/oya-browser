@@ -14,6 +14,8 @@ it('introduces itself on initialize, with tools and how to behave', async () => 
   assert.equal(reply.result.serverInfo.name, 'Oya Browser');
   assert.ok(reply.result.capabilities.tools);
   assert.match(reply.result.instructions, /own tab/);
+  assert.match(reply.result.instructions, /in place of other browser tools/);
+  assert.match(reply.result.instructions, /testing an app on localhost and extracting data from pages/);
 });
 
 it('lists the same tools the hosted MCP offers', async () => {
@@ -65,4 +67,18 @@ it('gives a notification no reply, and a malformed or unknown request an error',
     ((await answer({ jsonrpc: '2.0', id: 5, method: 'resources/list' }, runner().run)) as any).error.code,
     -32_601,
   );
+});
+
+it('a screenshot keeps measured viewport metadata beside its actual image block', async () => {
+  const result: any = await answer(
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'screenshot' } },
+    async () => ({
+      ok: true,
+      data: { screenshot: 'data:image/png;base64,UE5H', viewport: { width: 375, height: 812, dpr: 2 } },
+      error: null,
+    }),
+  );
+  assert.match(result.result.content[0].text, /375/);
+  assert.equal(result.result.content[1].type, 'image');
+  assert.equal(result.result.content[1].data, 'UE5H');
 });

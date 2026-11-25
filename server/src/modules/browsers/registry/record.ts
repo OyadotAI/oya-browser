@@ -8,6 +8,8 @@ import { driverFor, type BrowserDriver } from '../driver/index.ts';
 
 /** What a caller says about a browser when it registers it. */
 export type BrowserSpec = {
+  /** This connection was established by a hosted vendor or proved its worker enrollment. */
+  cloudVerified?: boolean;
   /** Inbound client socket (Oya); absent for a browser this server dialled. */
   ws?: any;
   /** Key the browser belongs to. */
@@ -34,6 +36,7 @@ export type BrowserSpec = {
 
 /** How the browser is reached: its driver, picked here once, its socket, and what kind of client it is. */
 const reach = (spec: BrowserSpec, browserId: string) => ({
+  cloudVerified: spec.cloudVerified === true,
   ws: spec.ws,
   cdp: spec.cdp ?? false,
   profileSync: spec.profileSync ?? false,

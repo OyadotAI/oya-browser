@@ -5,6 +5,7 @@
  */
 
 import { impersonation, storedRefreshToken } from './auth/storage';
+import { ADMIN_OVERVIEW_VERSION } from './constants';
 
 /** The API base: NEXT_PUBLIC_API_URL when the API is on another origin, else same-origin `/api`. */
 const API_URL = process.env.NEXT_PUBLIC_API_URL || '/api';
@@ -43,7 +44,7 @@ export function authHeaders(token: string): HeadersInit {
 async function account<T = any>(path: string, fallback: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(apiUrl(path), { ...init, headers: { 'Content-Type': 'application/json', ...init.headers } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new AccountError(data?.error || fallback, data?.code);
+  if (!res.ok) throw new AccountError(data?.error || fallback, data?.code, res.status);
   return data;
 }
 
@@ -51,11 +52,14 @@ async function account<T = any>(path: string, fallback: string, init: RequestIni
 export class AccountError extends Error {
   /** The server's code for the refusal, or undefined. */
   code?: string;
+  /** HTTP refusal status, so an unlabelled authentication error still clears protected data. */
+  status?: number;
 
   /** Carries the server's message and code. */
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status?: number) {
     super(message);
     this.code = code;
+    this.status = status;
   }
 }
 
@@ -147,9 +151,38 @@ export const billingPortal = (token: string) =>
     headers: authHeaders(token),
   });
 
+/** The person's self-hosted license and its key, or `{license: null}`; `{enabled: false}` on a self-hosted server. */
+export const getLicense = (token: string) =>
+  account('/billing/license', 'Could not load your license', { headers: authHeaders(token) });
+
+/** A Stripe Checkout page to buy a self-hosted license for `browsers` browsers, billed each `interval`. */
+export const licenseCheckout = (token: string, browsers: number, interval: string) =>
+  account<Redirect>('/billing/license/checkout', 'Could not open checkout', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ browsers, interval }),
+  });
+
+/** The Stripe page to change the license's card, see its receipts or cancel it. */
+export const licensePortal = (token: string) =>
+  account<Redirect>('/billing/license/portal', 'Could not open billing', {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+
 /** The admin overview: accounts, plans, heaviest users, installs, downloads and the fleet. Admins only. */
 export const adminOverview = (token: string) =>
-  account('/admin/overview', 'Could not load the overview', { headers: authHeaders(token) });
+  account(`/admin/overview?version=${ADMIN_OVERVIEW_VERSION}`, 'Could not load the overview', {
+    headers: authHeaders(token),
+  });
+
+/** Finance is independently bounded and must not block activity, customers or installation data. */
+export const adminRevenue = (token: string) =>
+  account('/admin/revenue', 'Could not load financial metrics', { headers: authHeaders(token) });
+
+/** Keel's independent staff-only usage snapshot; unrelated billing failures cannot hide it. */
+export const adminKeel = (token: string) =>
+  account('/admin/keel', 'Could not load Keel usage', { headers: authHeaders(token) });
 
 /** Every self-hosted license issued. Admins only. */
 export const adminLicenses = (token: string) =>
@@ -201,6 +234,18 @@ export const importApiKey = (token: string, key: string, label?: string) =>
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ key, label }),
+  });
+
+/**
+ * Claims the key in an agent's claim link. Its own endpoint, not the import:
+ * the server only hands over a key an agent minted and nobody owns yet, so a
+ * link someone else wrote cannot plant a key they already hold.
+ */
+export const claimAgentKey = (token: string, key: string) =>
+  account('/auth/keys/claim', 'Could not claim this key', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ key }),
   });
 
 /**

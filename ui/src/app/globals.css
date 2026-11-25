@@ -1,42 +1,75 @@
+/** Oya's shared themes and accessible primitives connect public reading pages and operational workspaces. */
 @import 'tailwindcss';
+@import './docs.css';
+@import './motion.css';
+@import './workspace.css';
 
-/* Oya tokens shared with A2ABaseAI/frontend. Secondary text is raised for
-   legibility in dense tables; the brand surfaces and primary are identical. */
+/*
+ * Oya's five colours (tooling/colours): ink, paper, lime, red and amber, named once here. Every other
+ * colour is one of them or a mix of them. Dark (the default) and light are the same five, with ink and
+ * paper changing places. Lime is the logo's and the only green; on paper it is a fill with ink on it,
+ * never text, because lime on paper cannot be read.
+ */
 :root {
   color-scheme: dark;
-  --background: #0c0c0a;
-  --foreground: rgba(255, 255, 255, 0.88);
-  --primary: #39ed35;
-  --primary-foreground: #0c0c0a;
-  --card: #1c1c18;
-  --elevated: #242420;
-  --sunken: #141410;
-  --border: rgba(255, 255, 255, 0.12);
-  --secondary: rgba(255, 255, 255, 0.76);
-  --muted: rgba(255, 255, 255, 0.64);
-  --dim: rgba(255, 255, 255, 0.5);
-  --info: #6cb4ff;
-  --warning: #f5a623;
-  --destructive: #ff6b6b;
+  /* Native checkboxes, radios and ranges take the accent, never the system's blue. */
+  accent-color: var(--primary);
+  --ink: #1a1a1a;
+  --paper: #f7f5f0;
+  --lime: #cdf01e;
+  --red: #f2554a;
+  --amber: #f5b14c;
+  --background: color-mix(in srgb, var(--paper) 3%, var(--ink));
+  --foreground: var(--paper);
+  --card: color-mix(in srgb, var(--paper) 6%, var(--ink));
+  --elevated: color-mix(in srgb, var(--paper) 10%, var(--ink));
+  --sunken: var(--ink);
+  /* Dividers. A control's outline is --border-control, which stands 3:1 off what is behind it. */
+  --border: color-mix(in srgb, var(--paper) 16%, transparent);
+  --border-control: color-mix(in srgb, var(--paper) 45%, var(--ink));
+  --secondary: color-mix(in srgb, var(--paper) 82%, var(--ink));
+  --muted: color-mix(in srgb, var(--paper) 74%, var(--ink));
+  --dim: color-mix(in srgb, var(--paper) 66%, var(--ink));
+  /* The accent has two roles: --primary can always be read (text, rings, lines; ink on paper, lime on
+     charcoal), --accent-fill is lime as a surface with --primary-foreground (ink) on it. */
+  --primary: var(--lime);
+  --primary-foreground: var(--ink);
+  --accent-fill: var(--lime);
+  --accent-fill-hover: color-mix(in srgb, var(--lime) 80%, var(--paper));
+  --accent-soft: color-mix(in srgb, var(--lime) 8%, transparent);
+  /* The ink edge round a lime, amber or red fill on paper, where the fill alone would melt in. */
+  --fill-edge: transparent;
+  --info: var(--foreground);
+  --warning: var(--amber);
+  --destructive: color-mix(in srgb, var(--red) 65%, var(--paper));
+  /* Nothing is darker than ink, so on charcoal a raised surface is lifted by an edge, not a shadow. */
+  --lift-edge: 0 0 0 1px color-mix(in srgb, var(--paper) 14%, transparent);
 }
 :root[data-theme='light'] {
   color-scheme: light;
-  --background: #f4f3ef;
-  --foreground: #0c0c0a;
-  --primary: #157a13;
-  --primary-foreground: #fff;
-  --card: #fff;
-  --elevated: #eceae4;
-  --sunken: #fafaf8;
-  --border: rgba(12, 12, 10, 0.14);
-  --secondary: #45453e;
-  --muted: #62625a;
-  --dim: #72726a;
-  --info: #1d4ed8;
-  --warning: #92400e;
-  --destructive: #b91c1c;
+  --background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+  --foreground: var(--ink);
+  --card: var(--paper);
+  --elevated: color-mix(in srgb, var(--ink) 9%, var(--paper));
+  --sunken: color-mix(in srgb, var(--ink) 6%, var(--paper));
+  --border: color-mix(in srgb, var(--ink) 19%, transparent);
+  --border-control: color-mix(in srgb, var(--ink) 55%, var(--paper));
+  --secondary: color-mix(in srgb, var(--ink) 85%, var(--paper));
+  --muted: color-mix(in srgb, var(--ink) 75%, var(--paper));
+  --dim: color-mix(in srgb, var(--ink) 70%, var(--paper));
+  --primary: var(--ink);
+  --accent-fill-hover: color-mix(in srgb, var(--lime) 88%, var(--ink));
+  --accent-soft: color-mix(in srgb, var(--lime) 30%, transparent);
+  --fill-edge: var(--ink);
+  --warning: color-mix(in srgb, var(--amber) 42%, var(--ink));
+  --destructive: color-mix(in srgb, var(--red) 58%, var(--ink));
+  --lift-edge: 0 0 0 0 transparent;
 }
 
+/* Tailwind's own palette is cleared, so a class from it (a grey, a blue, plain black) no longer compiles. */
+@theme {
+  --color-*: initial;
+}
 @theme inline {
   --color-bg: var(--background);
   --color-bg-card: var(--card);
@@ -44,31 +77,54 @@
   --color-bg-sunken: var(--sunken);
   --color-bg-input: transparent;
   --color-border: var(--border);
+  --color-border-control: var(--border-control);
   --color-border-focus: var(--primary);
   --color-text: var(--foreground);
   --color-text-muted: var(--muted);
   --color-text-dim: var(--dim);
   --color-text-secondary: var(--secondary);
+  /* text-, border-, ring- and outline-accent read the readable accent; bg-accent reads the lime fill. */
   --color-accent: var(--primary);
+  --background-color-accent: var(--accent-fill);
   --color-accent-foreground: var(--primary-foreground);
   --color-accent-hover: color-mix(in srgb, var(--primary) 85%, var(--foreground));
-  --color-green-surface: color-mix(in srgb, var(--primary) 10%, transparent);
-  --color-green-border: color-mix(in srgb, var(--primary) 22%, transparent);
-  --color-indigo: var(--info);
-  --color-indigo-hover: var(--info);
+  --background-color-accent-hover: var(--accent-fill-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-info: var(--info);
   --color-red: var(--destructive);
+  --background-color-red: var(--red);
   --color-yellow: var(--warning);
+  --background-color-yellow: var(--amber);
+  /* Theme-invariant: scrims, video letterboxes, the QR code's backing. */
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
 
   --font-sans: var(--font-dm-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-display: var(--font-archivo), Impact, 'Arial Black', sans-serif;
   --font-mono: 'Cascadia Code', ui-monospace, 'Source Code Pro', Menlo, Monaco, Consolas, monospace;
 
   --radius-sm: 3px;
-  --radius-md: 4px;
+  --radius-md: 8px;
   --radius-lg: 8px;
-  --radius-xl: 10px;
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-elevated: 0 8px 32px rgba(12, 12, 10, 0.12);
+  --radius-xl: 16px;
+  --shadow-card: 0 2px 8px color-mix(in srgb, var(--ink) 7%, transparent), var(--lift-edge);
+  --shadow-elevated: 0 20px 64px -24px color-mix(in srgb, var(--ink) 38%, transparent), var(--lift-edge);
+  --shadow-sm:
+    0 1px 3px 0 color-mix(in srgb, var(--ink) 10%, transparent),
+    0 1px 2px -1px color-mix(in srgb, var(--ink) 10%, transparent);
+  --shadow:
+    0 1px 3px 0 color-mix(in srgb, var(--ink) 10%, transparent),
+    0 1px 2px -1px color-mix(in srgb, var(--ink) 10%, transparent);
+  --shadow-md:
+    0 4px 6px -1px color-mix(in srgb, var(--ink) 10%, transparent),
+    0 2px 4px -2px color-mix(in srgb, var(--ink) 10%, transparent);
+  --shadow-lg:
+    0 10px 15px -3px color-mix(in srgb, var(--ink) 10%, transparent),
+    0 4px 6px -4px color-mix(in srgb, var(--ink) 10%, transparent);
+  --shadow-xl:
+    0 20px 25px -5px color-mix(in srgb, var(--ink) 10%, transparent),
+    0 8px 10px -6px color-mix(in srgb, var(--ink) 10%, transparent);
+  --shadow-2xl: 0 25px 50px -12px color-mix(in srgb, var(--ink) 25%, transparent);
 }
 
 html {
@@ -116,14 +172,14 @@ body {
 
 /* Selection */
 ::selection {
-  background: color-mix(in srgb, var(--primary) 20%, transparent);
-  color: var(--foreground);
+  background: var(--lime);
+  color: var(--ink);
 }
 
 /* Focus visible. Solid primary: a translucent ring falls under 3:1 in light. */
 :focus-visible {
-  outline: 1px solid var(--primary);
-  outline-offset: 2px;
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
 }
 
 /* Smooth transitions globally */
@@ -146,11 +202,29 @@ textarea {
   scrollbar-width: none;
 }
 
+/*
+ * A small lime, amber or red mark (a status dot, a bar) gets an ink edge on paper, where the fill alone
+ * melts in. A button does not: its ink label already shows where it is. The edge goes into Tailwind's
+ * own shadow stack, so a shadow-* or ring-* on the same element still shows.
+ */
+@utility bg-yellow {
+  --tw-inset-ring-shadow: inset 0 0 0 1px var(--fill-edge);
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 transparent), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow, 0 0 transparent),
+    var(--tw-ring-shadow, 0 0 transparent), var(--tw-shadow, 0 0 transparent);
+}
+@utility bg-red {
+  --tw-inset-ring-shadow: inset 0 0 0 1px var(--fill-edge);
+  box-shadow:
+    var(--tw-inset-shadow, 0 0 transparent), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow, 0 0 transparent),
+    var(--tw-ring-shadow, 0 0 transparent), var(--tw-shadow, 0 0 transparent);
+}
+
 /* ── Console primitives ──
    Buttons, table rows and inputs read the same everywhere. Numbers are
    tabular so a refreshing column does not jitter. */
 @utility btn-base {
-  @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold tracking-[0.01em] whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  @apply inline-flex h-9 items-center justify-center gap-2 rounded-full px-4 text-[13px] font-medium whitespace-nowrap select-none disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
 }
 @utility btn-primary {
   @apply btn-base bg-accent text-accent-foreground hover:bg-accent-hover;
@@ -159,13 +233,13 @@ textarea {
   @apply btn-base border border-border bg-transparent text-text-secondary hover:border-text/20 hover:bg-text/5 hover:text-text;
 }
 @utility btn-danger {
-  @apply btn-base bg-red/15 text-red hover:bg-red/25 border border-red/30;
+  @apply btn-base bg-red/10 text-red hover:bg-red/15 border border-red/30;
 }
 @utility btn-icon {
   @apply inline-flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-text/5 hover:text-text disabled:opacity-40;
 }
 @utility field {
-  @apply h-8 w-full rounded-md border border-border bg-bg px-2.5 text-[13px] text-text placeholder:text-text-dim focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-border-focus;
+  @apply h-8 w-full rounded-md border border-border-control bg-bg px-2.5 text-[13px] text-text placeholder:text-text-dim focus:border-border-focus focus:outline-none focus:ring-1 focus:ring-border-focus;
 }
 @utility label {
   @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.12em] text-text-muted;
@@ -186,7 +260,7 @@ textarea {
 }
 .dot-ok {
   @apply bg-accent;
-  box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 70%, transparent);
+  box-shadow: inset 0 0 0 1px var(--fill-edge);
 }
 .dot-stale {
   @apply bg-yellow;
@@ -342,73 +416,44 @@ textarea {
   white-space: pre;
   tab-size: 2;
 }
+/* Prose to paste (a prompt) wraps like text instead of scrolling sideways. */
+.syntax-code.language-plain {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .syntax-code .token.comment,
 .syntax-code .token.prolog {
-  color: #8d9689;
+  color: var(--dim);
+  font-style: italic;
 }
 .syntax-code .token.keyword,
 .syntax-code .token.atrule {
-  color: #c5aff4;
+  color: var(--primary);
+  font-weight: 600;
 }
 .syntax-code .token.string,
 .syntax-code .token.char,
 .syntax-code .token.attr-value {
-  color: #afd79b;
-}
-.syntax-code .token.function,
-.syntax-code .token.function-name {
-  color: #8fc7ee;
+  color: var(--warning);
 }
 .syntax-code .token.number,
 .syntax-code .token.boolean,
 .syntax-code .token.constant {
-  color: #edbd86;
+  color: var(--destructive);
+}
+.syntax-code .token.function,
+.syntax-code .token.function-name,
+.syntax-code .token.variable,
+.syntax-code .token.builtin {
+  color: var(--foreground);
 }
 .syntax-code .token.property,
 .syntax-code .token.class-name {
-  color: #d6c49e;
+  color: var(--secondary);
 }
 .syntax-code .token.operator,
 .syntax-code .token.punctuation {
-  color: #b1b2a8;
-}
-.syntax-code .token.variable,
-.syntax-code .token.builtin {
-  color: #90d3cb;
-}
-:root[data-theme='light'] .syntax-code .token.comment,
-:root[data-theme='light'] .syntax-code .token.prolog {
-  color: #687364;
-}
-:root[data-theme='light'] .syntax-code .token.keyword,
-:root[data-theme='light'] .syntax-code .token.atrule {
-  color: #7849a1;
-}
-:root[data-theme='light'] .syntax-code .token.string,
-:root[data-theme='light'] .syntax-code .token.char,
-:root[data-theme='light'] .syntax-code .token.attr-value {
-  color: #3d6a2a;
-}
-:root[data-theme='light'] .syntax-code .token.function,
-:root[data-theme='light'] .syntax-code .token.function-name {
-  color: #226797;
-}
-:root[data-theme='light'] .syntax-code .token.number,
-:root[data-theme='light'] .syntax-code .token.boolean,
-:root[data-theme='light'] .syntax-code .token.constant {
-  color: #99541f;
-}
-:root[data-theme='light'] .syntax-code .token.property,
-:root[data-theme='light'] .syntax-code .token.class-name {
-  color: #80601b;
-}
-:root[data-theme='light'] .syntax-code .token.operator,
-:root[data-theme='light'] .syntax-code .token.punctuation {
-  color: #65695f;
-}
-:root[data-theme='light'] .syntax-code .token.variable,
-:root[data-theme='light'] .syntax-code .token.builtin {
-  color: #21746b;
+  color: var(--muted);
 }
 
 /* Public surfaces: deliberate scale, quiet borders, generous reading space. */
@@ -443,7 +488,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--card);
-  box-shadow: 0 20px 70px -45px #000;
+  box-shadow: 0 20px 70px -45px var(--ink);
 }
 .preview-columns {
   display: grid;
@@ -478,8 +523,11 @@ textarea {
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
-.fleet-data {
-  min-width: 1040px;
+/* Phones drop the minor fleet columns instead of scrolling sideways. */
+@media (min-width: 768px) {
+  .fleet-data {
+    min-width: 1040px;
+  }
 }
 .profile-data {
   min-width: 1160px;
@@ -526,161 +574,32 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.docs-page main {
-  color: var(--secondary);
-}
-/* Docs prose: a comfortable size and a line short enough to read without losing your place. */
-.docs-page main p,
-.docs-page main li {
-  max-width: 70ch;
-  font-size: 16px;
-  line-height: 1.75;
-}
-.docs-page main .docs-lede {
-  font-size: 18px;
-  line-height: 1.65;
-}
-.docs-page main strong {
-  color: var(--foreground);
-  font-weight: 600;
-}
-.docs-page main td {
-  font-size: 14.5px;
-  line-height: 1.6;
-}
-/* The quickstart's steps, joined by a quiet line from one number to the next. */
-.docs-step::before {
-  content: '';
-  position: absolute;
-  top: 34px;
-  bottom: 6px;
-  left: 13.5px;
-  width: 1px;
-  background: var(--border);
-}
-.docs-step:last-of-type::before {
-  display: none;
-}
-@media (max-width: 640px) {
-  .docs-page main p,
-  .docs-page main li {
-    font-size: 15.5px;
-  }
-  .docs-page main pre {
-    font-size: 12.5px;
-  }
-  .docs-step {
-    padding-left: 38px;
-  }
-}
-.docs-page main table {
-  min-width: 560px;
-}
-.docs-page main h3 {
-  color: var(--foreground);
-  scroll-margin-top: 110px;
-}
-@media (max-width: 767px) {
-  .fleet-data,
-  .profile-data {
-    min-width: 0;
-  }
-  .fleet-data th:nth-child(1) {
-    width: 28px;
-  }
-  .fleet-data th:nth-child(2) {
-    width: 18px;
-  }
-  .fleet-data th:nth-child(3) {
-    width: auto;
-  }
-  .fleet-data th:nth-child(5) {
-    width: 78px;
-  }
-  .fleet-data th:nth-child(10) {
-    width: 64px;
-  }
-  .fleet-data :is(th, td):nth-child(4),
-  .fleet-data :is(th, td):nth-child(6),
-  .fleet-data :is(th, td):nth-child(7),
-  .fleet-data :is(th, td):nth-child(8),
-  .fleet-data :is(th, td):nth-child(9) {
-    display: none;
-  }
-  .fleet-data :is(th, td) {
-    padding-inline: 5px;
-  }
-  .profile-data th:first-child {
-    width: 55%;
-  }
-  .profile-data th:nth-child(2) {
-    width: 45%;
-  }
-  .profile-data :is(th, td):nth-child(n + 3) {
-    display: none;
-  }
-}
-@media (max-width: 767px) {
-  .fleet-data th:nth-child(10) {
-    width: 92px;
-  }
-  .fleet-data td:last-child .btn-icon {
-    width: 40px;
-    height: 40px;
-  }
-}
-
 /* The playbook editor's CodeMirror syntax (classHighlighter's tok-* classes), in the shared code palette. */
 .cm-editor .tok-comment {
-  color: #8d9689;
+  color: var(--dim);
   font-style: italic;
 }
 .cm-editor .tok-keyword {
-  color: #c5aff4;
+  color: var(--primary);
+  font-weight: 600;
 }
 .cm-editor .tok-string {
-  color: #afd79b;
+  color: var(--warning);
 }
 .cm-editor .tok-number,
 .cm-editor .tok-bool,
 .cm-editor .tok-null {
-  color: #edbd86;
+  color: var(--destructive);
 }
-.cm-editor .tok-propertyName {
-  color: #8fc7ee;
+.cm-editor .tok-propertyName,
+.cm-editor .tok-variableName {
+  color: var(--foreground);
 }
 .cm-editor .tok-typeName,
 .cm-editor .tok-className {
-  color: #d6c49e;
-}
-.cm-editor .tok-variableName {
-  color: #90d3cb;
+  color: var(--secondary);
 }
 .cm-editor .tok-punctuation,
 .cm-editor .tok-operator {
-  color: #b1b2a8;
-}
-:root[data-theme='light'] .cm-editor .tok-comment {
-  color: #687364;
-}
-:root[data-theme='light'] .cm-editor .tok-keyword {
-  color: #7849a1;
-}
-:root[data-theme='light'] .cm-editor .tok-string {
-  color: #3d6a2a;
-}
-:root[data-theme='light'] .cm-editor :is(.tok-number, .tok-bool, .tok-null) {
-  color: #99541f;
-}
-:root[data-theme='light'] .cm-editor .tok-propertyName {
-  color: #226797;
-}
-:root[data-theme='light'] .cm-editor :is(.tok-typeName, .tok-className) {
-  color: #80601b;
-}
-:root[data-theme='light'] .cm-editor .tok-variableName {
-  color: #21746b;
-}
-:root[data-theme='light'] .cm-editor :is(.tok-punctuation, .tok-operator) {
-  color: #65695f;
+  color: var(--muted);
 }

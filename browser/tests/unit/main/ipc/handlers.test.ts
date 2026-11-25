@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { ModelSettings } from '../../../../src/main/connection/model-settings.ts';
 import { shellHandlers } from '../../../../src/main/ipc/index.ts';
 import { mainCtx } from '../../support/main-ctx.cjs';
 import { incognitoSession } from '../../support/incognito.ts';
@@ -14,9 +15,9 @@ import { incognitoSession } from '../../support/incognito.ts';
 describe('IPC handlers', () => {
   let ctx: any, call: any;
   beforeEach(() => {
-    ctx = mainCtx();
+    ctx = mainCtx({ modelSettings: ModelSettings });
     const handlers: any = shellHandlers(ctx);
-    call = (channel, ...args) => handlers[channel]({}, ...args);
+    call = (channel, ...args) => handlers[channel]({ sender: ctx.shell.window.webContents }, ...args);
   });
 
   it('reports browsing mode in the status, so a late renderer leaves the setup screen', async () => {
@@ -87,6 +88,19 @@ describe('IPC handlers', () => {
     assert.deepEqual(order, ['incognito', 'leave']);
   });
 
+  it('logging out aborts in-flight chat runs and clears chatAbort', async () => {
+    const tabRun = new AbortController();
+    const fallback = new AbortController();
+    ctx.tabs = { leaveBrowsingMode: () => {} };
+    ctx.chatRuns = new Map([[1, tabRun]]);
+    ctx.chatAbort = fallback;
+    await call('sign-out');
+    assert.equal(tabRun.signal.aborted, true);
+    assert.equal(fallback.signal.aborted, true);
+    assert.equal(ctx.chatRuns.size, 0);
+    assert.equal(ctx.chatAbort, null);
+  });
+
   it('a new tab or a step back in an incognito window never becomes a recording step', async () => {
     const recorded: string[] = [];
     ctx.recorder.recordNavigation = (url) => recorded.push(url);
@@ -130,6 +144,18 @@ describe('IPC handlers', () => {
     ctx.socket.ready = false;
     assert.deepEqual(await call('get-account'), known, 'offline');
     assert.equal(fetch.mock.callCount(), 1);
+    fetch.mock.restore();
+  });
+
+  it('drops an answer that arrives after the browser moved to another key', async () => {
+    ctx.config.values = { serverUrl: 'wss://s.test/ws', apiKey: 'k', account: null };
+    const late = { email: 'ada@example.com', project: { id: 'prj_1', name: 'Lab' } };
+    const fetch = mock.method(globalThis, 'fetch', async () => {
+      ctx.config.values.apiKey = 'k2';
+      return { ok: true, json: async () => late };
+    });
+    assert.equal(await call('get-account'), null);
+    assert.equal(ctx.config.values.account, null, "the previous key's account is not saved under the new one");
     fetch.mock.restore();
   });
 
@@ -388,12 +414,13 @@ describe('IPC handlers', () => {
     fetch.mock.restore();
   });
 
-  it('explains a chat the server hung up on mid-run, as a restart does, instead of saying "terminated"', async () => {
+  it('explains a chat cut mid-run whose run the server no longer has, instead of saying "terminated"', async () => {
     ctx.config.values = { serverUrl: 'ws://s.test/ws', apiKey: 'k' };
-    const fetch = mock.method(globalThis, 'fetch', async () => {
-      throw new TypeError('terminated');
+    const fetch = mock.method(globalThis, 'fetch', async (url: string) => {
+      if (url.endsWith('/chat')) throw new TypeError('terminated');
+      return new Response(JSON.stringify({ error: 'No chat run to resume' }), { status: 404 });
     });
-    assert.match((await call('send-chat', [{ role: 'user' }])).error, /dropped mid-run, likely a server restart/);
+    assert.match((await call('send-chat', [{ role: 'user' }])).error, /dropped and the run could not be resumed/);
     fetch.mock.restore();
   });
 
@@ -484,6 +511,10 @@ describe('IPC handlers', () => {
       status.catalog.map((p) => p.id),
       ['anthropic', 'openai', 'gemini'],
     );
+    assert.deepEqual(await call('model-status', true), {
+      signedIn: true,
+      error: 'This server needs an update to support model setup.',
+    });
     fetch.mock.restore();
     const fromHost = fakeServer({ ...SERVER, llm_provider: '' });
     assert.equal((await call('model-status')).provider, 'openai');
@@ -604,7 +635,7 @@ describe('IPC handlers', () => {
 describe('workspace channel', () => {
   let ctx: any, call: any;
   beforeEach(() => {
-    ctx = mainCtx();
+    ctx = mainCtx({ modelSettings: ModelSettings });
     const handlers: any = shellHandlers(ctx);
     call = (...args) => handlers.workspace({}, ...args);
     ctx.channel = (name, ...args) => handlers[name]({}, ...args);

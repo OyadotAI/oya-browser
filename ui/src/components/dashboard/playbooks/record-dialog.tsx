@@ -13,12 +13,13 @@ import RecordSession from './record-session';
 import RecordSetup from './record-setup';
 import { useRecordForm } from './use-record-form';
 import { useRecorder } from './use-recorder';
+import { useRecordStart } from './use-record-start';
 
 /** Props for the recording dialog. */
 interface Props {
   /** The caller's API key. */
   apiKey: string;
-  /** Running browsers; the first is picked. */
+  /** Running browsers; the first is picked, and with none, Record starts one. */
   browsers: BrowserRow[];
   /** Closes the dialog. */
   onClose: () => void;
@@ -30,6 +31,7 @@ interface Props {
 export default function RecordDialog({ apiKey, browsers, onClose, onSaved }: Props) {
   const session = useRecorder(apiKey, browsers[0]?.id || '');
   const form = useRecordForm();
+  const auto = useRecordStart(apiKey, browsers, session.r);
   const close = () => closeRecorder(session.r, session.recording, onClose);
   const done = () => {
     onSaved();
@@ -44,11 +46,11 @@ export default function RecordDialog({ apiKey, browsers, onClose, onSaved }: Pro
       size="lg"
       title="Record a flow"
       description="Do the task yourself in the live view. What you click and type becomes a playbook of named fields, and a Playwright module."
-      footer={<RecordFooter session={session} form={form} onClose={close} onDone={done} />}
+      footer={<RecordFooter session={session} form={form} onClose={close} onDone={done} auto={auto} />}
     >
       <div className="flex flex-col gap-4">
         {!session.r.state ? (
-          <RecordSetup r={session.r} browsers={browsers} />
+          <RecordSetup r={session.r} browsers={browsers} auto={auto} />
         ) : (
           <RecordSession session={session} form={form} />
         )}

@@ -62,7 +62,7 @@
   height: 26px;
   padding: 0 11px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   font-size: 12px;
@@ -86,14 +86,14 @@
   gap: 8px;
   padding: 0 4px 0 10px;
   height: 30px;
-  border-radius: 999px;
+  border-radius: 0;
   transition:
     background-color var(--t-base) var(--ease),
     box-shadow var(--t-base) var(--ease),
     color var(--t-base) var(--ease);
 }
 .control-status[data-mode='agent'] {
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 9%, transparent);
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--text);
 }
@@ -139,7 +139,7 @@
   gap: 2px;
   height: 30px;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--hover);
   box-shadow: inset 0 0 0 0.5px var(--hairline);
 }
@@ -154,7 +154,7 @@
   height: 26px;
   padding: 0 12px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
   color: var(--secondary);
@@ -176,7 +176,7 @@
 }
 /* AI Mode in effect wears Oya's accent. */
 .control-status .control-switch #control-agent[aria-pressed='true'] {
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  background: color-mix(in srgb, var(--accent-fill) 12%, var(--surface));
   box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 /* The side in effect is not a button to press again, yet it reads at full strength. */

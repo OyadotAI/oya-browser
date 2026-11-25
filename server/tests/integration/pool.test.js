@@ -30,8 +30,10 @@ const { handleConnection } = await import('../../src/modules/browsers/socket.ts'
 const { handleMcpRequest, handlePoolMcpRequest } = await import('../../src/mcp/server.ts');
 const { registry } = await import('../../src/modules/browsers/registry.ts');
 
+const { control, hash } = await import('../../src/modules/control/service.ts');
 const app = express();
 app.use(express.json());
+app.use('/api', apiRouter);
 app.use(apiRouter);
 app.post('/mcp/pool', handlePoolMcpRequest);
 app.get('/mcp/pool', handlePoolMcpRequest);
@@ -67,9 +69,8 @@ function wait(ms) {
 }
 
 /** Connect a fake browser via WebSocket, returns { ws, browserId, messages[] } */
-function connectBrowser(name) {
+function connectBrowser(name, browserId = randomUUID(), enrollment) {
   return new Promise((resolve, reject) => {
-    const browserId = randomUUID();
     const messages = [];
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
 
@@ -80,6 +81,7 @@ function connectBrowser(name) {
           api_key: 'test-fleet-token',
           browser_id: browserId,
           browser_name: name,
+          enrollment_token: enrollment,
         }),
       );
     });
@@ -161,7 +163,11 @@ async function httpGet(path, key = 'test-fleet-token') {
 try {
   // 1. Connect 3 fake browsers
   console.log('1️⃣  Connecting browsers...');
-  const b1 = await connectBrowser('Browser-1');
+  const cloudId = randomUUID();
+  const enrollment = randomUUID();
+  await control().reserve('test-fleet-token', { id: cloudId, provider: 'oya-cloud' });
+  await control().update('test-fleet-token', cloudId, { enrollmentHash: hash(enrollment) });
+  const b1 = await connectBrowser('Browser-1', cloudId, enrollment);
   const b2 = await connectBrowser('Browser-2');
   const b3 = await connectBrowser('Browser-3');
   await wait(500); // let cookie_sync messages settle
@@ -355,6 +361,32 @@ try {
   const analyzeText = analyzeRes.data?.result?.content?.[0]?.text || '';
   assert(analyzeText.includes('# Page on'), `analyze_page returned page content: "${analyzeText.slice(0, 60)}..."`);
   assert(/^\[.+\]\n/.test(analyzeText), 'Pool replies name the browser that answered');
+
+  const tool = async (name, browserId) =>
+    (
+      await httpPost('/mcp/pool', {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: { name, arguments: { browser_id: browserId } },
+      })
+    ).data.result;
+  assert(analyzeText.includes('Browser-1'), 'remote MCP selects only the enrolled cloud worker');
+  const forbidden = await tool('show_browser', b2.browserId);
+  assert(forbidden.isError, 'a desktop cannot be shown through an explicit ID');
+  const shown = await tool('show_browser', b1.browserId);
+  assert(shown.structuredContent?.browserId === b1.browserId, 'turn-end card targets the worker');
+  const watch = await tool('watch_browser', b1.browserId);
+  const viewer = new URLSearchParams(new URL(watch._meta.watchUrl).hash.slice(1)).get('t');
+  const detail = await httpGet('/api/browsers/' + b1.browserId, viewer);
+  assert(
+    detail.status === 200 && detail.data.canControl === false,
+    'watch link opens read-only without console sign-in',
+  );
+  const ticket = await httpPost('/api/control/sessions/' + b1.browserId + '/ticket', {}, viewer);
+  assert(ticket.status < 300 && Boolean(ticket.data.ticket), 'viewer receives a stream ticket');
+  const takeover = await httpPost('/api/control/sessions/' + b1.browserId + '/control', { action: 'acquire' }, viewer);
+  assert(takeover.status === 403, 'viewer cannot acquire control');
 
   // 7. Fleet provision
   console.log('\n7️⃣  Fleet provision...');

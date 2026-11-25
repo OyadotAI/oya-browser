@@ -50,10 +50,11 @@ const ALWAYS = {
 };
 
 /** The Messages API request for one step of the loop. */
-function paramsFor({ model, messages, tools }: ChatRequest) {
+function paramsFor({ model, messages, tools, maxTokens }: ChatRequest) {
   const conversation = { system: systemOf(messages), messages: messagesOf(messages) };
   const described = tools?.length ? { tools: toolsOf(tools) } : {};
-  return { model, ...stepFor(model), ...conversation, ...described, ...ALWAYS };
+  const settings = maxTokens ? { max_tokens: maxTokens } : stepFor(model);
+  return Object.assign({ model }, settings, conversation, described, ALWAYS);
 }
 
 /** An SDK failure in the shared contract: its status, or none when it never got an answer. */
@@ -81,7 +82,7 @@ export const anthropic: LlmProvider = {
   handles: isAnthropic,
   async send(request) {
     const response = await clientFor(request)
-      .beta.messages.create(paramsFor(request) as any)
+      .beta.messages.create(paramsFor(request) as any, { signal: request.signal })
       .catch((err) => {
         throw failure(err);
       });

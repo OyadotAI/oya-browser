@@ -35,7 +35,8 @@ the licensor in the software. Any use of the licensor’s trademarks is subject 
 ### Self-Hosted Scale Limit
 
 Operating the software yourself so that more than five (5) cloud browsers run at the same time requires a
-separate commercial license from the licensor; contact sales@getoya.ai. A "cloud browser" is a browser the
+separate commercial license from the licensor, available at https://oyabrowser.com/dashboard/billing or by booking a call with the
+licensor at https://calendly.com/d/dvrm-r65-kkx/oya-founder-call. A "cloud browser" is a browser the
 software launches in a sandbox or container runtime it manages, as opposed to the desktop application or a
 browser you connect to it yourself. The software enforces this limit unless a valid license key issued by the
 licensor is configured. Circumventing, disabling or modifying the limit, the license key check, or the

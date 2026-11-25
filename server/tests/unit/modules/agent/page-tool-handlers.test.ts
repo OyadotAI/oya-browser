@@ -48,6 +48,10 @@ describe('page tools', () => {
         "location.href = 'https://evil.test'",
         'el.innerHTML += "<b>"',
         'new XMLHttpRequest()',
+        "document.querySelector('input')['value'] = 'Ada'",
+        "document.execCommand('insertText', false, 'Ada')",
+        "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, 'Ada')",
+        "Reflect.set(el, 'value', 'Ada')",
       ]) {
         assert.match(await run('run_script', { script }), /only reads the page/, script);
       }

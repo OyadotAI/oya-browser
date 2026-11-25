@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "oya-browser": {
+      "type": "streamable-http",
+      "url": "https://oyabrowser.com/mcp/pool",
+      "extensions": {
+        "com.openai": {
+          "auth": { "type": "oauth", "client": { "mode": "dcr" } }
+        }
+      }
+    }
+  }
+}

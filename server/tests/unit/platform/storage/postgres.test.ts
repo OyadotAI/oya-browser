@@ -199,3 +199,83 @@ describe('verifyFull', () => {
     );
   });
 });
+
+describe('pool options', () => {
+  /** Answers every query with no rows, recording the options of the pool each one ran on. */
+  function recordPool() {
+    const seen: Record<string, unknown>[] = [];
+    mock.method(pg.Pool.prototype, 'query', async function (this: { options: Record<string, unknown> }) {
+      seen.push(this.options);
+      return { rows: [] };
+    });
+    return seen;
+  }
+
+  afterEach(() => {
+    delete process.env.OYA_PG_QUERY_TIMEOUT_MS;
+  });
+
+  it('bounds every query and keeps sockets alive, so a lost answer frees its connection', async () => {
+    const seen = recordPool();
+    await db().select('usage');
+    assert.deepEqual(
+      [seen[0].query_timeout, seen[0].keepAlive, seen[0].keepAliveInitialDelayMillis],
+      [60_000, true, 10_000],
+    );
+  });
+
+  it('takes the query timeout from OYA_PG_QUERY_TIMEOUT_MS', async () => {
+    process.env.OYA_PG_QUERY_TIMEOUT_MS = '5000';
+    const seen = recordPool();
+    await db().select('usage');
+    assert.equal(seen[0].query_timeout, 5000);
+  });
+
+  it('falls back to the default query timeout when OYA_PG_QUERY_TIMEOUT_MS is zero or negative', async () => {
+    for (const bad of ['0', '-5']) {
+      process.env.OYA_PG_QUERY_TIMEOUT_MS = bad;
+      const seen = recordPool();
+      await db().select('usage');
+      assert.equal(seen[0].query_timeout, 60_000, bad);
+      mock.restoreAll();
+      await closePgPool();
+    }
+  });
+
+  it('falls back to the default query timeout when OYA_PG_QUERY_TIMEOUT_MS is not a number', async () => {
+    process.env.OYA_PG_QUERY_TIMEOUT_MS = 'soon';
+    const seen = recordPool();
+    await db().select('usage');
+    assert.equal(seen[0].query_timeout, 60_000);
+  });
+});
+
+describe('one pool per database', () => {
+  /** Records which database each statement ran against. */
+  function recordDatabases() {
+    const seen: string[] = [];
+    mock.method(pg.Pool.prototype, 'query', async function (this: { options: { connectionString: string } }) {
+      seen.push(this.options.connectionString.split('?')[0]);
+      return { rows: [] };
+    });
+    return seen;
+  }
+
+  it("sends each database's statements to its own pool, so Keel's rows never land in the main database", async () => {
+    const seen = recordDatabases();
+    await new PostgresConnection('postgres://h/main').select('usage');
+    await new PostgresConnection('postgres://h/keel').select('keel_usage');
+    assert.deepEqual(seen, ['postgres://h/main', 'postgres://h/keel']);
+  });
+
+  it("closes only its own database's pool", async () => {
+    const seen = recordDatabases();
+    const main = new PostgresConnection('postgres://h/main');
+    await main.select('usage');
+    const ended = mock.method(pg.Pool.prototype, 'end', async () => {});
+    await new PostgresConnection('postgres://h/keel').close();
+    assert.equal(ended.mock.callCount(), 0, 'keel had no pool open, and main stays open');
+    await main.select('usage');
+    assert.deepEqual(seen, ['postgres://h/main', 'postgres://h/main']);
+  });
+});

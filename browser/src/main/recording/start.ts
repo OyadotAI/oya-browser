@@ -66,6 +66,7 @@ export class RecordingStart {
   private reset(resume: boolean, origin: RecordingOrigin, workspace: StartWorkspace | null | undefined): void {
     const recorder = this.recorder;
     recorder.recording = true;
+    recorder.deps.passkeys?.sync();
     recorder.recordingOrigin = origin;
     recorder.recordingCutoff = Infinity;
     this.takeDraft(resume && workspace ? workspace.draft : null);

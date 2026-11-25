@@ -1,0 +1,182 @@
+/** A bold lime invitation closes the story before a quiet, accessible dark directory. */
+.footer {
+  --ink: var(--ivory);
+  --muted: var(--night-muted);
+  --line: var(--dark-line);
+  --primary: var(--lime);
+  --foreground: var(--ivory);
+  --focus: var(--lime);
+  background: var(--night);
+  color: var(--ivory);
+}
+.footer :global(.closing__panel) {
+  --ink: var(--night);
+  --primary: var(--night);
+  --logo-ring: var(--night);
+  --foreground: var(--night);
+  --focus: var(--night);
+  --button-fill: var(--night);
+  --button-ink: var(--ivory);
+  overflow: hidden;
+  background: var(--lime);
+  color: var(--night);
+}
+.footer :global(.closing__cta) {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 56px;
+  padding-block: 88px;
+}
+.footer :global(.closing__cta .section-head) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 24px;
+  max-width: 820px;
+}
+.footer :global(.closing__cta h2) {
+  font-family: var(--font-archivo), var(--font-text), sans-serif;
+  font-size: clamp(44px, 5.8vw, 80px);
+  font-weight: 400;
+  line-height: 1.06;
+  letter-spacing: -0.065em;
+}
+.footer :global(.closing__cta > a) {
+  position: relative;
+  z-index: 1;
+}
+.footer :global(.closing__mark) {
+  position: absolute;
+  top: -80px;
+  right: -220px;
+  z-index: -1;
+  opacity: 0.08;
+  transform: rotate(-20deg);
+  pointer-events: none;
+}
+.footer :global(.closing__links) {
+  padding-block: 72px 28px;
+}
+.footer :global(.footer__lede) {
+  max-width: 320px;
+  margin-top: 24px;
+  color: var(--night-muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.productHunt {
+  display: inline-flex;
+  max-width: 100%;
+  margin-top: 24px;
+  border-radius: 10px;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+.productHunt img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.productHunt:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+.footer :global(.footer__col h3) {
+  margin-bottom: 20px;
+  color: var(--ivory);
+  font-size: 14px;
+  font-weight: 500;
+}
+.footer :global(.footer__col a) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--night-muted);
+  font-size: 14px;
+}
+.footer :global(.footer__col a:hover) {
+  color: var(--lime);
+}
+/* Downloads are lime, like "Book a demo": getting the app is the other thing this page asks for. */
+.footer :global(.footer__col a.footer__download) {
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: var(--lime);
+  color: var(--on-lime);
+  font-weight: 500;
+}
+.footer :global(.footer__col a.footer__download:hover) {
+  background: var(--ivory);
+  color: var(--night);
+}
+.footer :global(.footer__legal) {
+  display: grid;
+  gap: 24px;
+  margin-top: 56px;
+  padding-top: 24px;
+  border-top: 1px solid var(--dark-line);
+  color: var(--night-muted);
+  font-size: 12px;
+}
+.footer :global(.footer__legal nav) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 24px;
+}
+.footer :global(.footer__legal a) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.footer :global(.footer__legal a:hover) {
+  color: var(--lime);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+@media (max-width: 1023px) {
+  .footer :global(.closing__links .grid > *) {
+    grid-column: span 3;
+  }
+  .footer :global(.closing__links .grid > :first-child) {
+    grid-column: span 12;
+  }
+  .footer :global(.closing__cta) {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+    gap: 32px;
+  }
+}
+@media (max-width: 767px) {
+  .footer :global(.closing__cta) {
+    padding-block: 56px;
+  }
+  .footer :global(.closing__cta .t-lead) {
+    font-size: 17px;
+  }
+  .footer :global(.closing__links) {
+    padding-top: 56px;
+  }
+  .footer :global(.closing__links .grid > *) {
+    grid-column: span 6;
+  }
+  .footer :global(.closing__links .grid > :first-child) {
+    grid-column: span 12;
+  }
+  .footer :global(.closing__mark) {
+    right: -300px;
+  }
+  .footer :global(.footer__legal) {
+    gap: 16px;
+    margin-top: 40px;
+  }
+  .footer :global(.footer__legal nav) {
+    gap: 0 16px;
+  }
+}

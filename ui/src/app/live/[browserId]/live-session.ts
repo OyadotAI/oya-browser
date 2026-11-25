@@ -2,7 +2,8 @@
  * The live page's work outside React: resolving the credential, streaming
  * frames with an fps and age meter, and taking or handing back control.
  */
-import { api, errorMessage } from '@/lib/api-client';
+import { Status } from '@/lib/http-status';
+import { api, ApiError, errorMessage } from '@/lib/api-client';
 import { consoleCredential } from '@/lib/api';
 import { MS_PER_SECOND } from '@/lib/constants';
 import { subscribeFrames } from '@/lib/live-stream';
@@ -19,19 +20,42 @@ export interface LiveSink {
   age: (age: number | null) => void;
   /** The error line, empty for none. */
   error: (error: string) => void;
+  /** The browser's current control mode (agent, human, paused). */
+  mode?: (mode: string) => void;
+  /** Controls stay unavailable until this credential is authorized. */
+  canControl: (allowed: boolean) => void;
+}
+
+/** Session-storage key prefix for a shared link's scoped token, scoped per browser. */
+const SHARE_PREFIX = 'oya_live_share:';
+
+/** Saves a share token in tab storage so refreshing keeps the live view authenticated. */
+function rememberShare(browserId: string, token: string) {
+  try {
+    sessionStorage.setItem(SHARE_PREFIX + browserId, token);
+  } catch {}
+}
+
+/** Reads a previously saved share token for `browserId`, or ''. */
+function savedShare(browserId: string): string {
+  try {
+    return sessionStorage.getItem(SHARE_PREFIX + browserId) || '';
+  } catch {
+    return '';
+  }
 }
 
 /**
  * A shared link carries its scoped token in the URL fragment (#t=…), which
- * never reaches the server or a Referer header. It works with no dashboard
- * session, so it is what makes a link sendable to someone else. Fall back to
- * this tab's own console credential when there is no share token. The
- * fragment is stripped once read.
+ * never reaches the server or a Referer header. It is persisted in this tab's
+ * sessionStorage keyed by browserId so reloads stay authenticated, and stripped
+ * from the URL once read. Falls back to the console credential when absent.
  */
-export function takeSharedCredential(): string {
+export function takeSharedCredential(browserId = ''): string {
   const shared = new URLSearchParams(window.location.hash.slice(1)).get('t');
+  if (shared && browserId) rememberShare(browserId, shared);
   if (shared) history.replaceState(null, '', window.location.pathname + window.location.search);
-  return shared || consoleCredential();
+  return shared || (browserId ? savedShare(browserId) : '') || consoleCredential();
 }
 
 /** Counts frames so the page can show fps and frame age once a second. */
@@ -64,24 +88,65 @@ function received(sink: LiveSink, meter: FrameMeter, frame: string) {
 
 /** The stream dropped; it reconnects by itself. */
 function lost(sink: LiveSink) {
-  sink.frame(null);
-  sink.error('The live stream disconnected. Reconnecting…');
+  sink.error('Disconnected. Reconnecting…');
 }
 
 /** Starts the stream for a browser that was found; returns its stop. */
 function stream(browserId: string, apiKey: string, sink: LiveSink, meter: FrameMeter) {
-  return subscribeFrames(
-    browserId,
-    apiKey,
-    (frame) => received(sink, meter, frame),
-    () => lost(sink),
-  );
+  const onFrame = (frame: string) => received(sink, meter, frame);
+  return subscribeFrames(browserId, apiKey, onFrame, (status) => {
+    if (!status) return lost(sink);
+    sink.error(viewError(browserId, status));
+    return false;
+  });
 }
 
 /** The part of a browser record the page needs. */
 interface BrowserName {
   /** The browser's display name. */
   name: string;
+  /** Whether this credential may acquire control. */
+  canControl?: boolean;
+  /** The browser's current control mode when included by `/browsers/:id`. */
+  controlMode?: string;
+}
+
+/** Control session details returned by `/control/sessions/:id`. */
+interface ControlSessionInfo {
+  /** Mode field at the top level. */
+  mode?: string;
+  /** Nested control object containing mode. */
+  control?: {
+    /** Who drives the browser now. */
+    mode?: string;
+  };
+}
+
+/** Reads the browser's current control mode from `/control/sessions/:id`, or undefined. */
+async function fetchControlMode(browserId: string, apiKey: string): Promise<string | undefined> {
+  const path = `/control/sessions/${encodeURIComponent(browserId)}`;
+  const info = await api<ControlSessionInfo>(path, { key: apiKey }).catch(() => null);
+  return info?.control?.mode ?? info?.mode;
+}
+
+/** Context shared while connecting a live view stream. */
+interface LiveTarget {
+  /** Target browser id. */
+  browserId: string;
+  /** Active credential. */
+  apiKey: string;
+  /** Where state updates go. */
+  sink: LiveSink;
+  /** Frame rate meter. */
+  meter: FrameMeter;
+  /** Whether this view attempt is still active. */
+  alive: () => boolean;
+}
+
+/** Syncs initial control mode from the browser record or control session. */
+function syncInitialMode(t: LiveTarget, known: string | undefined) {
+  if (known) return t.sink.mode?.(known);
+  void fetchControlMode(t.browserId, t.apiKey).then((mode) => t.alive() && mode && t.sink.mode?.(mode));
 }
 
 /** A control or input answer. */
@@ -100,15 +165,36 @@ export interface ControlStep {
   label: string;
 }
 
-/** Looks the browser up, then streams its frames; returns the stop for all of it. */
+/** Attaches the stream and syncs control mode after `/browsers/:id` responds. */
+function attachBrowser(browser: BrowserName, t: LiveTarget) {
+  t.sink.name(browser.name);
+  t.sink.canControl(browser.canControl === true);
+  syncInitialMode(t, browser.controlMode);
+  return stream(t.browserId, t.apiKey, t.sink, t.meter);
+}
+
+/** Describes the recovery available to someone opening a shared view. */
+function viewError(id: string, status: number, fallback = 'You don’t have access to this browser.') {
+  if (status === Status.NOT_FOUND || status === Status.GONE) return 'Session ended.';
+  if (status === Status.UNAUTHORIZED && savedShare(id))
+    return 'This viewing link expired. Return to the browser card and select Watch live.';
+  if (status === Status.FORBIDDEN) return 'You don’t have access to this browser.';
+  return fallback;
+}
+
+/** Keeps credential recovery distinct from transient network errors. */
+const connectionError = (id: string, err: unknown) =>
+  err instanceof ApiError ? viewError(id, err.status, err.message) : errorMessage(err);
+
+/** Looks the browser up, syncs its control mode, and streams its frames; returns the stop for all of it. */
 export function openLiveView(browserId: string, apiKey: string, sink: LiveSink): () => void {
   let cancelled = false;
   let stopStream: (() => void) | undefined;
-  const meter = new FrameMeter();
+  const target: LiveTarget = { browserId, apiKey, sink, meter: new FrameMeter(), alive: () => !cancelled };
   api<BrowserName>(`/browsers/${encodeURIComponent(browserId)}`, { key: apiKey })
-    .then((browser) => !cancelled && (sink.name(browser.name), (stopStream = stream(browserId, apiKey, sink, meter))))
-    .catch((err) => !cancelled && sink.error(errorMessage(err)));
-  const timer = setInterval(() => meter.report(sink), MS_PER_SECOND);
+    .then((b) => target.alive() && (stopStream = attachBrowser(b, target)))
+    .catch((err) => target.alive() && sink.error(connectionError(browserId, err)));
+  const timer = setInterval(() => target.meter.report(sink), MS_PER_SECOND);
   return () => void ((cancelled = true), stopStream?.(), clearInterval(timer));
 }
 
@@ -134,7 +220,8 @@ interface ModeAnswer {
 /** Asks for the next control step after `mode`; returns the new mode. */
 export async function changeControl(browserId: string, apiKey: string, mode: string): Promise<string> {
   const body = { action: controlFor(mode).action };
-  const c = await api<ModeAnswer>(`/control/sessions/${browserId}/control`, { key: apiKey, method: 'POST', body });
+  const path = `/control/sessions/${encodeURIComponent(browserId)}/control`;
+  const c = await api<ModeAnswer>(path, { key: apiKey, method: 'POST', body });
   return c.mode;
 }
 

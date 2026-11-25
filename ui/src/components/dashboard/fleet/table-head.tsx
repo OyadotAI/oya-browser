@@ -37,7 +37,7 @@ function Heading({ c, sort, onSort }: HeadingProps) {
   return (
     <th
       aria-sort={ariaSort(active, sort.dir)}
-      className={`${c.className} px-2 py-3 ${align} text-[11px] font-medium uppercase tracking-[0.1em] text-text-muted select-none`}
+      className={`${c.className} ${c.hide ?? ''} px-2 py-3 ${align} text-[11px] font-medium uppercase tracking-[0.1em] text-text-muted select-none`}
     >
       {c.label ? (
         <button className="inline-flex items-center gap-1 hover:text-text" onClick={() => onSort(c.key)}>
@@ -66,7 +66,7 @@ export default function TableHead({ sort, onSort, allChecked, onToggleAll }: Pro
         {COLUMNS.map((c) => (
           <Heading key={c.key} c={c} sort={sort} onSort={onSort} />
         ))}
-        <th className="w-[80px]" />
+        <th className="w-[80px] max-md:w-[112px]" />
       </tr>
     </thead>
   );

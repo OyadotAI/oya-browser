@@ -1,11 +1,13 @@
 /**
- * The top of the docs: what Oya is in one line, and cards into the sections a
- * developer needs first, the quickstart leading.
+ * The top of the docs: what Oya is in one line, the one line each existing stack changes to run on Oya (most
+ * readers arrive with an agent already written), and cards into the sections a developer needs first.
  */
 'use client';
 
 import { ArrowUpRight } from 'lucide-react';
 import { useDocsNav } from './nav';
+import { DocsStack } from './stack';
+import { InlineLink } from './blocks';
 
 /** [section id, title, description] for each card. */
 const CARDS = [
@@ -16,6 +18,17 @@ const CARDS = [
   ['cli', 'CLI', 'The same, from a terminal'],
   ['self-hosting', 'Self-hosting', 'Your network, one command'],
 ];
+
+/** Give coding-agent readers a local setup path before the API-oriented quickstart. */
+function AgentEntryLinks() {
+  return (
+    <p className="text-[15px] leading-relaxed text-text-muted mb-5">
+      Using Claude Code, Codex or Cursor? Start with{' '}
+      <InlineLink href="/browser-for-claude-code">Oya for coding agents</InlineLink> or{' '}
+      <InlineLink href="#mcp-setup">MCP setup</InlineLink> to connect your desktop app without a cloud key.
+    </p>
+  );
+}
 
 /** The headline, pitch and section cards. */
 export function DocsIntro() {
@@ -38,8 +51,11 @@ export function DocsIntro() {
       </h1>
       <p className="docs-lede max-w-xl text-text-muted mb-8">
         Your agent does a task once in plain language. Oya saves it as Playwright code and replays it with no model,
-        signed in like your staff and never flagged as a bot. Start with the quickstart: three steps, three minutes.
+        using signed-in sessions. Sites can still require verification or block automation. Start with the quickstart to
+        record and replay a task.
       </p>
+      <AgentEntryLinks />
+      <DocsStack />
       <div data-md="skip" className="mb-14 grid gap-3 grid-cols-2 lg:grid-cols-3">
         {CARDS.map(([id, title, description]) => (
           <a

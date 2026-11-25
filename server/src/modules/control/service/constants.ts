@@ -74,6 +74,11 @@ export const TOKEN_BYTES = 32;
 export const TICKET_TTL_MS = 60_000;
 /** Longest credential label. */
 export const MAX_LABEL = 100;
+/**
+ * Connectors issued from this moment carry their own mark. Before it they are told by their
+ * label alone, so the ones people already use keep working without connecting again.
+ */
+export const CONNECTOR_MARK_SINCE = Date.parse('2026-12-01T00:00:00Z');
 /** A share link lasts this long unless the caller says otherwise. */
 export const DEFAULT_SHARE_SECONDS = 3600;
 /** Shortest share link lifetime. */

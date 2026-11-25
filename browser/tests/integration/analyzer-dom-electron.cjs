@@ -16,33 +16,7 @@ const world = new World({
   worldName: 'native-analyzer-dom',
 });
 const deadline = setTimeout(() => app.exit(1), 30000);
-const FIXTURE = `<!doctype html><title>Portal widgets</title>
-<div class="datepicker datepicker-dropdown">
-  <div class="datepicker-days">
-    <table class="table-condensed">
-      <thead><tr><th>Su</th><th>Mo</th></tr></thead>
-      <tbody><tr><td class="old day">22</td><td class="day">23</td></tr></tbody>
-    </table>
-  </div>
-</div>
-<ul class="results">
-  <li><button id="pickPayer0"><b>PAYER</b> - CA</button></li>
-</ul>
-<table><tr class="result-row">
-  <td>Jordan Example Provider NPI 0000000000 In Network: Y</td>
-  <td><button id="selectProvider0" name="selectProvider0"></button></td>
-</tr></table>
-<button id="npiSearch"><i class="fa fa-search"></i></button>
-<button id="spriteButton"><svg><use href="#icon-trash"></use></svg></button>
-<div class="rating">
-  <input type="radio" name="stars" id="s1" style="display:none"><label for="s1">★</label>
-  <input type="radio" name="stars" id="s2" style="display:none" checked><label for="s2">★</label>
-</div>
-<div class="suggestions" style="width:840px">
-  <div class="row" style="cursor:pointer;padding:8px"><div>Tartine Bakery</div><div>600 Guerrero St</div></div>
-  <div class="row" style="cursor:pointer;padding:8px"><div>Tartine Manufactory</div><div>595 Alabama St</div></div>
-</div>
-<div class="panel" style="cursor:pointer;width:840px;height:400px"><p>A whole panel is not one control</p></div>`;
+const FIXTURE = require('./fixtures/portal-widgets.cjs');
 
 /** Analyze the existing portal fixture without launching a third-party browser. */
 async function analyse(win) {
@@ -51,12 +25,12 @@ async function analyse(win) {
   await win.loadFile(file);
   return (await world.evaluate({ webContents: win.webContents }, 'analyzePage({highlight:false})')).data.elements;
 }
-/** Decorative test ids must not swallow semantic controls inside an app frame. */
+/** Decorative ids preserve semantic controls; every control must fit the frame before overlay testing. */
 async function customControls(win) {
   const file = path.join(profile, 'custom-controls.html');
   fs.writeFileSync(
     file,
-    `<iframe srcdoc='<style>ui-button,[role=option]{display:block;cursor:pointer}ui-button>button{display:none}</style>
+    `<iframe style="height:320px" srcdoc='<style>ui-button,[role=option]{display:block;cursor:pointer}ui-button>button{display:none}</style>
     <ui-button role="button" aria-label="Settings"><button tabindex="-1"></button><span data-testid="symbols-glyph"><svg></svg></span></ui-button>
     <div role="option" aria-label="Inbox"><span data-testid="folder-label">Inbox</span></div>
     <div role="treeitem" aria-label="Example message"><span data-testid="thread-subject">Example message</span></div>
@@ -75,9 +49,11 @@ async function customControls(win) {
     'document.body.insertAdjacentHTML("beforeend", `<div style="position:fixed;inset:0;background:white"></div>`);void 0',
   );
   const covered = await world.evaluate({ webContents: win.webContents }, 'analyzePage({highlight:false})');
+
   assert.ok(
     covered.data.elements.filter((e) => e.visible).every((e) => e.covered),
-    'A real overlay outside the frame covers its controls',
+    'A real overlay outside the frame covers its controls: ' +
+      JSON.stringify(covered.data.elements.filter((e) => e.visible && !e.covered)),
   );
   for (const name of ['Settings', 'Inbox', 'Example message', 'Real child', 'Reply action'])
     assert.ok(names.includes(name), `Missing ${name}`);

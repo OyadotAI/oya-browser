@@ -4,9 +4,11 @@
  * table is read from compliance/evidence.json when the site is built, so the page
  * never claims a control the generated pack does not.
  */
+import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import styles from '../page.module.css';
 import trust from './trust.module.css';
 import { SiteHeader } from '../_home/site-header';
@@ -28,11 +30,11 @@ export const dynamic = 'force-static';
 export const metadata: Metadata = {
   title: 'Trust center',
   description: 'How Oya Browser secures customer data: HIPAA status, security practices, controls and subprocessors.',
-  alternates: { canonical: '/trust' },
+  alternates: { canonical: '/trust', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The generated evidence; the site is built from ui/, one folder down from compliance/. */
-const EVIDENCE = path.join(process.cwd(), '..', 'compliance', 'evidence.json');
+const EVIDENCE = repoFile('compliance', 'evidence.json');
 
 /** One HIPAA control as the evidence pack reports it. */
 interface Control {
@@ -101,27 +103,31 @@ function Controls() {
         Generated from the code on {generated.slice(0, 'YYYY-MM-DD'.length)}. Read the full{' '}
         <a href={EVIDENCE_PACK}>evidence pack</a>, with the check behind each verdict.
       </p>
-      <table className={trust.table}>
-        <thead>
-          <tr>
-            <th scope="col">Control</th>
-            <th scope="col">Requirement</th>
-            <th scope="col">Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {controls.map((c) => (
-            <tr key={c.id}>
-              <td>
-                <strong>{c.title}</strong>
-                <span className={trust.ref}>§{c.id}</span>
-              </td>
-              <td>{c.requirement}</td>
-              <td className={c.verdict === 'PASS' ? trust.pass : trust.gap}>{c.verdict === 'PASS' ? 'Met' : 'Gap'}</td>
+      <div className={trust.scroll} role="region" aria-label="Security controls table" tabIndex={0}>
+        <table className={trust.table}>
+          <thead>
+            <tr>
+              <th scope="col">Control</th>
+              <th scope="col">Requirement</th>
+              <th scope="col">Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {controls.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <strong>{c.title}</strong>
+                  <span className={trust.ref}>§{c.id}</span>
+                </td>
+                <td>{c.requirement}</td>
+                <td className={c.verdict === 'PASS' ? trust.pass : trust.gap}>
+                  {c.verdict === 'PASS' ? 'Met' : 'Gap'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -134,26 +140,28 @@ function Subprocessors() {
       <p className={trust.note}>
         Third parties that process customer data for Oya Cloud. Self-hosted deployments use none of them.
       </p>
-      <table className={trust.table}>
-        <thead>
-          <tr>
-            <th scope="col">Company</th>
-            <th scope="col">Purpose</th>
-            <th scope="col">Data</th>
-          </tr>
-        </thead>
-        <tbody>
-          {SUBPROCESSORS.map((s) => (
-            <tr key={s.name}>
-              <td>
-                <strong>{s.name}</strong>
-              </td>
-              <td>{s.purpose}</td>
-              <td>{s.data}</td>
+      <div className={trust.scroll} role="region" aria-label="Subprocessors table" tabIndex={0}>
+        <table className={trust.table}>
+          <thead>
+            <tr>
+              <th scope="col">Company</th>
+              <th scope="col">Purpose</th>
+              <th scope="col">Data</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {SUBPROCESSORS.map((s) => (
+              <tr key={s.name}>
+                <td>
+                  <strong>{s.name}</strong>
+                </td>
+                <td>{s.purpose}</td>
+                <td>{s.data}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -177,22 +185,24 @@ function Contact() {
 export default function TrustCenter() {
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={trust.main}>
-          <h1>Trust center</h1>
-          <p className={trust.lead}>
-            Oya runs browsers that sign in to the systems your business depends on. Here is how we protect what they
-            see.
-          </p>
+        <main id="top" tabIndex={-1} className={trust.main}>
+          <Reveal preset="public">
+            <h1>Trust center</h1>
+            <p className={trust.lead}>
+              Oya runs browsers that sign in to the systems your business depends on. Here is how we protect what they
+              see.
+            </p>
+          </Reveal>
           <StatusCards />
           <Practices />
           <Controls />
           <Subprocessors />
           <Contact />
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

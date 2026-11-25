@@ -2,7 +2,8 @@
  * The .env file the wizard writes: reading what a previous install decided,
  * rendering values into commented sections, and writing it owner-only.
  */
-import { existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { writePrivateFile } from '../config.ts';
 import { ENV_FILE_MODE } from './constants.ts';
 
 /**
@@ -62,20 +63,43 @@ const SECTIONS: Array<[string, string[]]> = [
   ['Multi-replica. One SQLite control database allows exactly one writer', ['OYA_INSTANCE_URL', 'OYA_CLUSTER_SECRET']],
 ];
 
+/** Every variable name owned by a managed .env section (plus legacy aliases). */
+export const MANAGED_KEYS = new Set([...SECTIONS.flatMap(([, keys]) => keys), 'DAYTONA_SNAPSHOT']);
+
+/** Unquotes a dotenv double-quoted value, restoring escaped quotes, backslashes and newlines. */
+function unquoteDouble(raw: string): string {
+  return raw.slice(1, -1).replace(/\\(["\\nr])/g, (_m, c) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c));
+}
+
+/** Parses one dotenv value: single-quoted, double-quoted, or unquoted with trailing `#` comments stripped. */
+function parseEnvValue(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length > 1 && trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1);
+  if (trimmed.length > 1 && trimmed.startsWith('"') && trimmed.endsWith('"')) return unquoteDouble(trimmed);
+  return trimmed.replace(/\s+#.*$/, '').trim();
+}
+
+/** Quotes a dotenv value when it contains `#`, whitespace, quotes, or backslashes so `dotenv` reads it back intact. */
+function formatEnvValue(value: string): string {
+  if (!/[\s#"'\\]/.test(value)) return value;
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+  return `"${escaped}"`;
+}
+
 /** Parse just enough to know what a previous install already decided. */
 export function readEnv(path: string): Record<string, string> {
   if (!existsSync(path)) return {};
   const out: Record<string, string> = {};
   for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
-    if (m) out[m[1]] = m[2];
+    const m = /^(?:export\s+)?([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+    if (m) out[m[1]] = parseEnvValue(m[2]);
   }
   return out;
 }
 
 /** One titled block of `KEY=value` lines, followed by a blank line. */
 function block(title: string, keys: string[], values: Record<string, string>): string[] {
-  return [`# ── ${title} ──`, ...keys.map((k) => `${k}=${values[k]}`), ''];
+  return [`# ── ${title} ──`, ...keys.map((k) => `${k}=${formatEnvValue(values[k])}`), ''];
 }
 
 /** The sectioned blocks for every value that has a section; records which were placed. */
@@ -100,8 +124,7 @@ export function renderEnv(values: Record<string, string>, extra: string[]): stri
   return lines.join('\n');
 }
 
-/** 0600: this file holds the KEK and every provider credential. */
+/** 0600 atomic write without following symlinks: this file holds the KEK and every provider credential. */
 export function writeEnv(path: string, body: string): void {
-  writeFileSync(path, body, { mode: ENV_FILE_MODE });
-  chmodSync(path, ENV_FILE_MODE);
+  writePrivateFile(path, body, ENV_FILE_MODE);
 }

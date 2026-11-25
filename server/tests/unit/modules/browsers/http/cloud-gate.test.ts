@@ -4,9 +4,9 @@
  * asks for. (The refusal needs an agent row, and is checked against a real
  * database.)
  */
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { ownDataDir } from '../../../support/data-dir.ts';
+import { ownDataDir, restoreEnv } from '../../../support/data-dir.ts';
 import { fakeRequest, runMiddleware } from '../../../support/auth.ts';
 
 ownDataDir('oya-cloud-gate-');
@@ -21,12 +21,35 @@ const start = (key: string, provider?: string) =>
     body: { provider },
   });
 
+/** What makes this server run Oya Cloud browsers, so the cap applies. */
+const CLOUD = { OYA_CLOUD_API_KEY: 'cloud-key', OYA_CLOUD_SNAPSHOT: 'oya-browser:1', OYA_PUBLIC_WS_URL: 'wss://o/ws' };
+
 describe('cloudNeedsPerson', () => {
+  let saved: Record<string, string | undefined>;
+  beforeEach(() => {
+    saved = Object.fromEntries(Object.keys(CLOUD).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, CLOUD);
+  });
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) restoreEnv(k, v);
+  });
+
+  it('counts nothing where this server runs no Oya Cloud, leaving the launcher to say what is missing', async () => {
+    for (const k of Object.keys(CLOUD)) delete process.env[k];
+    const batch = fakeRequest({
+      method: 'POST',
+      path: '/browsers/provision',
+      headers: { authorization: `Bearer ${'k'.repeat(32)}` },
+      body: { count: 6 },
+    });
+    assert.equal((await runMiddleware(cloudNeedsPerson('oya-cloud'), batch)).passed, true);
+  });
+
   it('lets any key start a browser it brings itself', async () => {
     assert.equal((await runMiddleware(cloudNeedsPerson(), start('k'.repeat(32), 'cdp'))).passed, true);
   });
 
-  it('refuses a self-hosted server’s sixth cloud browser at once without a license, with who to write to', async () => {
+  it('refuses a self-hosted server’s sixth cloud browser at once without a license, with where to buy one', async () => {
     const { registry } = await import('../../../../../src/modules/browsers/registry.ts');
     const ids = ['c1', 'c2', 'c3', 'c4', 'c5'];
     ids.forEach((id) => registry.add(id, { apiKey: 'other', provider: 'oya-cloud', clientType: 'oya', name: id }));
@@ -34,7 +57,8 @@ describe('cloudNeedsPerson', () => {
       await assert.rejects(runMiddleware(cloudNeedsPerson('oya-cloud'), start('k'.repeat(32))), {
         status: 402,
         code: 'license_required',
-        contact: 'sales@getoya.ai',
+        upgrade_url: 'https://oyabrowser.com/dashboard/billing#self-hosted',
+        contact: 'https://calendly.com/d/dvrm-r65-kkx/oya-founder-call',
       });
       assert.equal((await runMiddleware(cloudNeedsPerson(), start('k'.repeat(32), 'cdp'))).passed, true);
     } finally {

@@ -111,6 +111,48 @@ and deploys. The macOS job signs and notarizes from five repository secrets:
 Until they are set, `make release-local-mac` builds and notarizes the macOS app on your own Mac,
 as releases used to.
 
+Windows releases use Microsoft Artifact Signing Public Trust through GitHub OIDC. A paid
+eligible Azure subscription, validated legal publisher identity and active Public Trust
+certificate profile are required; a pending validation or test certificate cannot ship.
+Microsoft retains the private signing key. Configure the protected `windows-signing` GitHub
+environment with `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SIGNING_ENDPOINT`,
+`AZURE_SIGNING_ACCOUNT_NAME`, `AZURE_SIGNING_PROFILE_NAME`, `WINDOWS_PUBLISHER_NAME` (approved
+publisher CN) and `WINDOWS_SIGNER_SUBJECT` (the certificate's exact Subject distinguished name).
+Do not invent publisher metadata. The Windows build explicitly loads
+`browser/build/windows-signing.cjs`; normal macOS packaging retains its existing configuration.
+
+Give the dedicated user-assigned managed identity only the **Artifact Signing Certificate
+Profile Signer** role at the exact profile resource. Its federated credential accepts issuer
+`https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange` and the exact
+subject `repo:OyadotAI/oya-browser:environment:windows-signing`. CI needs no subscription-wide
+Contributor role or certificate password. The environment permits only `main` for preflight
+and `v*` tags for releases and disables admin bypass. It has no required reviewer, so a release
+signs without waiting for an approval: since 2026-11-08 the branch and tag policy is the gate,
+which makes whoever can push to `main` or a `v*` tag able to get a binary signed as Oya.
+Protect `main` with required pull-request review before relying on that. Release tags must
+resolve to a SHA on main.
+
+The Windows job signs through Azure Artifact Signing when every setting above is present, and
+then checks the installer, packaged executable and a disposable installed executable against the
+expected identity before upload, and probes SQLite support inside the packaged executable. Until
+signing is configured it builds a self-signed installer instead and marks the run with a warning:
+Windows warns on installing it, and auto-update skips the signature check for those builds. It
+always refuses tags outside main. Run `browser/build/verify-windows-signatures.ps1` on Windows to
+repeat signature checks. The manual **Windows signing preflight** first checks configuration/ref refusal,
+signature guards and owned PE compilation on Windows without credentials on the selected ref; its protected main-only job
+then authenticates, signs a harmless executable and verifies signer and timestamp without
+publishing release assets. Successful Azure login alone does not prove signing readiness.
+The previously published v1.0.210 installer had no embedded Authenticode certificate
+table; it was inspected without execution during the onboarding investigation.
+
+Signing does not guarantee a warning-free first download: [Microsoft SmartScreen also evaluates
+reputation](https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/).
+Record a clean Windows installation/launch check for each release. Windows Chrome/Edge imports
+transfer selected bookmarks and history locally; app-bound signed-in sessions remain unavailable
+and require direct sign-in in Oya. Claude subscription onboarding configures unmodified Claude
+Code with Oya's MCP tools; users give their tasks in Claude Code. Its setup token remains in
+Claude Code's environment, and does not configure Oya's built-in Ask panel.
+
 Desktop apps (macOS, Windows) ship stock Electron from npm. Native-only capabilities
 (agent dialogs, cross-process frames, drag, the external Runtime methods) return an
 unsupported-capability error there. Only the Linux cloud runtime uses the patched

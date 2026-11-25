@@ -22,7 +22,7 @@ interface Props {
 
 /** The step's card tone: done, unreachable, or open. */
 function tone(done: boolean, muted?: boolean) {
-  if (done) return 'border-accent/25 bg-accent/[0.04]';
+  if (done) return 'border-accent/25 bg-accent-soft';
   return muted ? 'border-border bg-bg-sunken/40' : 'border-border bg-bg-sunken/60';
 }
 
@@ -33,7 +33,7 @@ export default function Step({ n, title, done, muted, children }: Props) {
       <div className="mb-3 flex items-center gap-2.5">
         <span
           aria-hidden="true"
-          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${done ? 'bg-accent text-bg' : 'bg-text/10 text-text-muted'}`}
+          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${done ? 'bg-accent text-accent-foreground' : 'bg-text/10 text-text-muted'}`}
         >
           {done ? <Check className="h-3 w-3" /> : n}
         </span>

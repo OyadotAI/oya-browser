@@ -76,13 +76,19 @@ function tokenRefusal(status: number, body: Record<string, string | undefined>):
 }
 
 /** One form POST to the token endpoint; its JSON, or a Refusal carrying OpenAI's error code and status. */
-export async function tokenRequest(form: Record<string, string>, fetchImpl: Fetch = fetch) {
+export async function tokenRequest(form: Record<string, string>, fetchImpl: Fetch = fetch, signal?: AbortSignal) {
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' };
-  const init = { method: 'POST', redirect: 'error' as const, signal: AbortSignal.timeout(C.TOKEN_TIMEOUT_MS) };
+  const init = { method: 'POST', redirect: 'error' as const, signal: boundedSignal(signal) };
   const res = await fetchImpl(C.TOKEN_URL, { ...init, headers, body: new URLSearchParams(form).toString() });
   const body = await res.json().catch(() => ({}));
   if (res.ok) return body;
   throw tokenRefusal(res.status, body);
+}
+
+/** User cancellation never removes the token endpoint's own deadline. */
+export function boundedSignal(signal?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(C.TOKEN_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, deadline]) : deadline;
 }
 
 /** An ID token's claims, read without verifying it: it came straight from the token endpoint over TLS. */
@@ -148,9 +154,9 @@ function refusedSignIn(error: Refusal): never {
 }
 
 /** Exchanges a sign-in's code under the client ChatGPT issued; a refusal says the plan Oya needs. Sign-in only: a refresh keeps OpenAI's code. */
-export function exchangeCode(login: Login, clientId: string, code: string, fetchImpl?: Fetch) {
+export function exchangeCode(login: Login, clientId: string, code: string, fetchImpl?: Fetch, signal?: AbortSignal) {
   const form = { grant_type: 'authorization_code', client_id: clientId, code, code_verifier: login.verifier };
-  return tokenRequest({ ...form, redirect_uri: login.redirectUri, resource: C.RESOURCE }, fetchImpl).catch(
+  return tokenRequest({ ...form, redirect_uri: login.redirectUri, resource: C.RESOURCE }, fetchImpl, signal).catch(
     refusedSignIn,
   );
 }

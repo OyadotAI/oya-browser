@@ -122,11 +122,11 @@ async function advanceAccount(evaluate, stored, liveViewUrl) {
   return { ...head, liveViewUrl, error: 'Could not move past the account page' };
 }
 
-/** Nothing stored for this site: a person has to sign in. */
+/** Nothing stored for this site: a person has to sign in, unless the run brought its own login (`missing`). */
 function noCredentials(domain, liveViewUrl) {
   return stopped(
     { method: 'handoff', outcome: 'needed' },
-    { method: 'handoff' },
+    { method: 'handoff', missing: true },
     liveViewUrl,
     `No credentials are stored for ${domain || 'this site'}. Sign in in the live view, or add them to the persona.`,
   );

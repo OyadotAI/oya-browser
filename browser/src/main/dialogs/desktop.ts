@@ -29,12 +29,16 @@ export class DesktopDialogs extends DialogService {
   private readonly decisions = new Map<NativeDialogReply, Decision>();
   /** Engine subscriptions are installed once and do not retain destroyed pages. */
   private readonly watched = new WeakSet<WebContents>();
-  /** Read live input ownership at arrival and immediately before answering. */
-  private readonly human: () => boolean;
+  /** Read live input ownership for the source page at arrival and immediately before answering. */
+  private readonly human: (page: WebContents) => boolean;
   /** Browser-owned isolated presentation, never an injected page shim. */
   private readonly present: PresentDialog;
   /** Composition supplies policy, presentation and informational notification delivery. */
-  constructor(human: () => boolean, present: PresentDialog, notify?: (message: string, url?: string) => void) {
+  constructor(
+    human: (page: WebContents) => boolean,
+    present: PresentDialog,
+    notify?: (message: string, url?: string) => void,
+  ) {
     super(notify);
     this.human = human;
     this.present = present;
@@ -69,7 +73,9 @@ export class DesktopDialogs extends DialogService {
   /** Recheck ownership even when a control-change notification has not yet been delivered. */
   override async answer(accept?: boolean, promptText?: unknown) {
     this.controlChanged();
-    if (this.human()) return { ok: false, error: 'Human control owns this dialog' };
+    if (!this.current() && [...this.decisions.values()].some((d) => d.human)) {
+      return { ok: false, error: 'Human control owns this dialog' };
+    }
     return super.answer(accept, promptText);
   }
   /** Alerts remain notification-first; confirmations and prompts always require an explicit owner decision. */
@@ -81,7 +87,7 @@ export class DesktopDialogs extends DialogService {
   }
   /** Remove the old owner's UI/queue before exposing a decision to the new owner. */
   private route(decision: Decision): void {
-    const human = this.human();
+    const human = this.human(decision.page);
     if (human === decision.human) return;
     dismiss(decision);
     this.cancel(decision.reply);
@@ -109,7 +115,7 @@ export class DesktopDialogs extends DialogService {
   /** Stale UI events cannot answer after cancellation, transfer, navigation or destruction. */
   private respond(decision: Decision, human: boolean, accept: boolean, text?: string): void {
     if (!this.decisions.has(decision.reply)) return;
-    if (decision.info.dialogType !== 'alert' && this.human() !== human) return this.controlChanged();
+    if (decision.info.dialogType !== 'alert' && this.human(decision.page) !== human) return this.controlChanged();
     this.remove(decision.reply);
     decision.reply(accept, text);
   }

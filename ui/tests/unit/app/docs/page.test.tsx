@@ -3,11 +3,13 @@
  * finds and jumps, Escape clears it, "/" focuses it, and the sidebar and
  * in-page links navigate.
  */
+import { STACK_HEADING, STACK_LINES } from '@/app/_home/stack-content';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import DocsPage from '@/app/docs/page';
 import { NAV_SCROLL_DELAY_MS, SEARCH_DEBOUNCE_MS } from '@/app/docs/_docs/constants';
+import { DOC_TOPICS } from '@/app/docs/_docs/pages';
 
 const scrolled = vi.fn();
 beforeEach(() => {
@@ -32,19 +34,95 @@ const SECTIONS = [
   'cli',
   'download',
   'mcp-setup',
+  'desktop-app',
   'cursor',
+  'codex',
+  'claude-ai',
+  'chatgpt',
+  'try-it',
+  'more-tools',
   'tabs',
   'personas',
   'self-hosting',
   'control-plane',
 ];
 
+/** The interactive API reference, the one sidebar link that is not a topic page. */
+const REFERENCE = '/docs/api/reference';
+
 describe('DocsPage', () => {
+  it('leads with local Connect and recovery before presenting cloud authentication', () => {
+    render(<DocsPage />);
+    const desktop = document.getElementById('desktop-app')!;
+    const cloud = document.getElementById('cloud-mcp')!;
+    expect(desktop.compareDocumentPosition(cloud) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(desktop.parentElement!.textContent).toContain('start a new agent session');
+    expect(desktop.parentElement!.textContent).toContain('Browser not ready');
+    expect(cloud.parentElement!.textContent).toContain('Listing tools does not grant browser access');
+    expect(screen.getByRole('link', { name: 'Oya for coding agents' }).getAttribute('href')).toBe(
+      '/browser-for-claude-code',
+    );
+  });
+
+  it('links each sidebar group heading to its topic page, which is how a crawler on /docs finds them', () => {
+    render(<DocsPage />);
+    const aside = document.querySelector('aside')!;
+    const hrefs = [...aside.querySelectorAll('a[href^="/docs/"]')].map((a) => a.getAttribute('href'));
+    expect(hrefs.filter((h) => h !== REFERENCE)).toEqual(DOC_TOPICS.map(({ slug }) => `/docs/${slug}`));
+  });
+
+  it('links the interactive API reference from the API group', () => {
+    render(<DocsPage />);
+    const link = document.querySelector(`aside a[href="${REFERENCE}"]`);
+    expect(link?.textContent).toBe('Interactive reference');
+  });
+
+  it('leaves the heading of the part with no topic page as plain text', () => {
+    render(<DocsPage />);
+    const aside = document.querySelector('aside')!;
+    expect([...aside.querySelectorAll('a')].some((a) => a.textContent === 'Architecture')).toBe(false);
+    expect(aside.textContent).toContain('Architecture');
+  });
+
+  it('puts no topic-page link inside <main>, which the Markdown twins are cut from', () => {
+    render(<DocsPage />);
+    expect(document.querySelectorAll('main a[href^="/docs/"]:not([href$=".md"])')).toHaveLength(0);
+  });
+
   it('renders every section anchor once', () => {
     render(<DocsPage />);
     for (const id of [...SECTIONS, 'rotation', 'onboarding', 'command-api', 'websocket']) {
       expect(document.querySelectorAll(`[id="${id}"]`)).toHaveLength(1);
     }
+  });
+
+  it('states what the pool serves a chat connector and an API key, and lists them without a key', () => {
+    render(<DocsPage />);
+    const setup = document.getElementById('mcp-setup')!.parentElement!;
+    expect(setup.textContent).toContain('the endpoint offers 10 tools');
+    expect(setup.textContent).toContain('With an API key it offers 33 tools');
+    expect(setup.textContent).toContain('without a key');
+    expect(setup.textContent).toContain('http://127.0.0.1:47321/mcp');
+  });
+
+  it('shows three prompts to try, each with its expected result', () => {
+    render(<DocsPage />);
+    const tryIt = document.getElementById('try-it')!;
+    const section = tryIt.parentElement!;
+    const prompts = [...section.querySelectorAll('pre')].filter(
+      (pre) => tryIt.compareDocumentPosition(pre) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(prompts).toHaveLength(3);
+    for (const pre of prompts) expect(pre.querySelector('code')?.getAttribute('data-language')).toBe('plain');
+    expect(prompts[0].textContent).toContain('instead of Chrome');
+    expect(prompts[2].textContent).toContain('hand the tab back');
+    expect(section.textContent).toContain('Expected: all 10 tools listed without signing in');
+  });
+
+  it("leads with the one line each existing stack changes, without taking the quickstart's place", () => {
+    render(<DocsPage />);
+    const stack = screen.getByRole('region', { name: STACK_HEADING });
+    for (const { line } of STACK_LINES) expect(stack.textContent).toContain(line);
   });
 
   it('opens on the quickstart, ahead of the architecture', () => {
@@ -61,8 +139,20 @@ describe('DocsPage', () => {
     expect(screen.queryByRole('button', { name: 'MCP Setup' })).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
     await user.click(screen.getByRole('button', { name: 'MCP Setup' }));
+    await act(() => vi.advanceTimersByTimeAsync(NAV_SCROLL_DELAY_MS));
     expect(scrolled).toHaveBeenCalledWith('mcp-setup');
     expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('');
+  });
+
+  it('renders the chat anchor and cancels pending search debounce on clear', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<DocsPage />);
+    expect(document.getElementById('chat')).toBeTruthy();
+    const box = screen.getByRole('textbox', { name: 'Search documentation' });
+    await user.type(box, 'MCP Setup');
+    await user.keyboard('{Escape}');
+    await act(() => vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS));
+    expect(screen.queryByRole('button', { name: 'MCP Setup' })).toBeNull();
   });
 
   it('says so when nothing matches, and Escape clears and leaves the box', async () => {

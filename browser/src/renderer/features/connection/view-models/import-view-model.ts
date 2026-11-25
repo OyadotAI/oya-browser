@@ -11,6 +11,7 @@ import type { OyaBrowser } from '../../../core/bridge.ts';
 import type { ConnectionStatus, PasswordImportResult } from '../../../../shared/ipc.ts';
 import { DEFAULT_IMPORT_BROWSERS, TEXT } from '../model/constants.ts';
 import { messageOf, shape, type ImportRecord, type ImportSource, type MirrorStatus } from '../model/models.ts';
+import { LibraryImportViewModel, type LibraryImportBridge } from './library-import-view-model.ts';
 
 /** A line under the import row; `kind` is 'error' for a failure. */
 export interface ImportNote {
@@ -41,18 +42,19 @@ export interface ImportState {
 }
 
 /** The parts of the bridge imports use. */
-export type ImportBridge = Pick<
-  OyaBrowser,
-  | 'importSources'
-  | 'reimportBrowser'
-  | 'makeDefaultBrowser'
-  | 'onboardingStatus'
-  | 'importPasswords'
-  | 'onMirrorStatus'
-  | 'onWsStatus'
-  | 'getUiPreferences'
-  | 'saveUiPreferences'
->;
+export type ImportBridge = LibraryImportBridge &
+  Pick<
+    OyaBrowser,
+    | 'importSources'
+    | 'reimportBrowser'
+    | 'makeDefaultBrowser'
+    | 'onboardingStatus'
+    | 'importPasswords'
+    | 'onMirrorStatus'
+    | 'onWsStatus'
+    | 'getUiPreferences'
+    | 'saveUiPreferences'
+  >;
 
 /** How much one import brought: sites when it counted them, else cookies. */
 export function importAmount(record: ImportRecord): string {
@@ -62,6 +64,8 @@ export function importAmount(record: ImportRecord): string {
 
 /** No import yet: what an import is for, naming the browsers this computer has. */
 export function emptyImportText(sources: ImportSource[] | null): string {
+  if (sources && !sources.length)
+    return 'Sign in to your sites directly in Oya. Bookmarks and history can be imported separately above.';
   const names: readonly string[] = sources?.length ? sources.map((s) => s.name) : DEFAULT_IMPORT_BROWSERS;
   const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names[0];
   return `Bring your logins from ${list}, so you are already signed in here.`;
@@ -116,6 +120,8 @@ export function passwordsResult({ imported, skipped }: PasswordImportResult): st
 
 /** Importing logins from another browser. */
 export class ImportViewModel extends ViewModel<ImportState> {
+  /** Readable library data has a separate local-only transfer and consent. */
+  readonly library: LibraryImportViewModel;
   /** The main process. */
   private readonly bridge: ImportBridge;
   /** Opens account settings when the first-login invitation is ready. */
@@ -129,6 +135,13 @@ export class ImportViewModel extends ViewModel<ImportState> {
   constructor(bridge: ImportBridge) {
     super(initialImportState());
     this.bridge = bridge;
+    this.library = new LibraryImportViewModel(bridge);
+    this.watch(bridge);
+  }
+
+  /** Owns the local importer and all events without interrupting setup on connection. */
+  private watch(bridge: ImportBridge): void {
+    this.own(() => this.library.dispose());
     this.own(bridge.onWsStatus((status) => this.onStatus(status)));
     this.own(bridge.onMirrorStatus((status) => this.onMirror(shape<MirrorStatus>(status))));
     void this.load();
@@ -223,7 +236,7 @@ export class ImportViewModel extends ViewModel<ImportState> {
     if (this.offered || !this.state.connected || !this.state.sources?.length) return;
     this.offered = true;
     this.set({ offer: true });
-    this.onOffer?.();
+    // The optional invitation is shown when Settings is opened, never over a first task or setup guide.
   }
 
   /** Not now: the offer is remembered as made, and its dialog closes, back to the browser. */

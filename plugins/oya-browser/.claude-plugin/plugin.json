@@ -1,0 +1,31 @@
+{
+  "name": "oya-browser",
+  "displayName": "Oya Browser",
+  "description": "Real Chrome browsers for agents: MCP tools and a browsing skill. Oya Cloud signs in with your Oya account; the free desktop app needs none.",
+  "version": "1.0.295",
+  "author": {
+    "name": "OyadotAI",
+    "url": "https://oyabrowser.com"
+  },
+  "homepage": "https://oyabrowser.com",
+  "privacyPolicyUrl": "https://oyabrowser.com/privacy",
+  "repository": "https://github.com/OyadotAI/oya-browser",
+  "keywords": [
+    "browser",
+    "automation",
+    "mcp",
+    "chrome",
+    "playwright",
+    "playbooks",
+    "coding-agent",
+    "claude-code",
+    "scraping",
+    "captcha"
+  ],
+  "mcpServers": {
+    "oya": {
+      "type": "http",
+      "url": "https://oyabrowser.com/mcp/pool"
+    }
+  }
+}

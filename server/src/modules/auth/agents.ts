@@ -78,18 +78,8 @@ export function spendChallenge(challenge: unknown, nonce: unknown) {
 export const validEmail = (email: unknown): email is string =>
   typeof email === 'string' && email.length <= AGENT_EMAIL_MAX_CHARS && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
-/**
- * The caller's address. Behind the ingress the socket is the proxy, so it is
- * the last X-Forwarded-For hop, the one the ingress itself appended; earlier
- * hops are whatever the client claimed and would let it pick its own bucket.
- */
-export function clientAddress(req) {
-  const hops = String(req.headers?.['x-forwarded-for'] || '')
-    .split(',')
-    .map((hop) => hop.trim())
-    .filter(Boolean);
-  return hops.at(-1) || req.socket?.remoteAddress || 'unknown';
-}
+/** The caller's address; lives in platform so the audit log and every rate limit read it the same way. */
+export { clientAddress } from '../../platform/client-address.ts';
 
 /** Where a person claims an agent's key: the key rides in the fragment, which never reaches a server log. */
 export const claimUrl = (key: string) => `${consoleUrl()}/claim#${key}`;

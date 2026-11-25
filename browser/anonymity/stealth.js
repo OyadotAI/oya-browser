@@ -277,24 +277,38 @@ function buildStealthBody() {
  * dialog, and the page offers another way in; so does this, after about as long
  * as dismissing takes. A conditional request (passkey autofill) stays pending
  * in Chrome too, and is left alone. Page scope; assumes the mask preamble.
+ *
+ * `roamingOnly`: the macOS desktop app answers Touch ID passkeys natively, but
+ * still has no dialog for a security key or a phone, so only a request that can
+ * need nothing else is dismissed: a create asking for a cross-platform
+ * authenticator, or a get whose every allowed credential names its transports
+ * and none of them is this Mac. Left pending, Google's "Use a security key"
+ * hung, and every later passkey request on the page failed as already pending.
  */
-function buildPasskeyBody() {
+function buildPasskeyBody({ roamingOnly = false } = {}) {
+  const roaming = `
+    const _roaming = (create, key) => {
+      if (create) return !!(key.authenticatorSelection && key.authenticatorSelection.authenticatorAttachment === 'cross-platform');
+      const allow = key.allowCredentials;
+      return !!(allow && allow.length) && allow.every((c) => !!(c && Array.isArray(c.transports) && c.transports.length) && c.transports.indexOf('internal') < 0);
+    };`;
   return `
   // ── Passkeys: no dialog here, so answer as a dismissed one ──
   if (window.CredentialsContainer) {
     const _dismissed = () => new DOMException(
       'The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.',
-      'NotAllowedError');
-    const _dismiss = (orig) => function (options) {
-      if (!options || !options.publicKey || options.mediation === 'conditional') return _apply(orig, this, arguments);
+      'NotAllowedError');${roamingOnly ? roaming : ''}
+    const _dismiss = (orig, create) => function (options) {
+      if (!options || !options.publicKey || options.mediation === 'conditional') return _apply(orig, this, arguments);${roamingOnly ? `
+      if (!_roaming(create, options.publicKey)) return _apply(orig, this, arguments);` : ''}
       return new Promise((resolve, reject) => {
         const signal = options.signal;
         if (signal) signal.addEventListener('abort', () => reject(signal.reason));
         setTimeout(() => reject(_dismissed()), 1200 + Math.floor(Math.random() * 1600));
       });
     };
-    _patch(CredentialsContainer.prototype, 'get', _dismiss);
-    _patch(CredentialsContainer.prototype, 'create', _dismiss);
+    _patch(CredentialsContainer.prototype, 'get', (orig) => _dismiss(orig, false));
+    _patch(CredentialsContainer.prototype, 'create', (orig) => _dismiss(orig, true));
   }
 `;
 }

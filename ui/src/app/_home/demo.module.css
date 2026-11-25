@@ -1,0 +1,413 @@
+/** The product carries the explanation: a deep-green stage, one portal and its connected outcome. */
+.demo {
+  margin-top: 0;
+  scroll-margin-top: 96px;
+}
+.demoHeading {
+  margin-bottom: var(--space-content);
+  max-width: 780px;
+  text-align: left;
+  scroll-margin-top: 96px;
+}
+.demo .demoHeading h2 {
+  font-size: var(--type-section);
+}
+.demo .demoHeading p {
+  max-width: 650px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.taskTabs {
+  display: flex;
+  justify-content: flex-start;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  margin-bottom: 32px;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.taskTabs button {
+  flex: none;
+  min-height: 48px;
+  padding: 10px 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.taskTabs button[aria-selected='true'] {
+  border-color: var(--night);
+  background: var(--night);
+  color: var(--ivory);
+}
+.taskTabs button:hover {
+  background: var(--surface-soft);
+}
+.taskTabs button[aria-selected='true']:hover {
+  background: var(--forest);
+}
+.scene {
+  overflow: hidden;
+  border: 6px solid var(--night);
+  border-radius: 26px;
+  background: var(--ivory);
+  text-align: left;
+  box-shadow:
+    0 32px 64px -36px color-mix(in srgb, var(--shadow-ink) 44%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--shadow-ink) 6%, transparent);
+}
+.sceneBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 6px 28px;
+  border-bottom: 1px solid var(--dark-line);
+  background: var(--night);
+  color: var(--ivory);
+  font-size: 13px;
+}
+.sceneBar > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.sceneBar i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lime);
+}
+.sceneBar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding-inline: 10px;
+  border: 1px solid var(--dark-control-edge);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
+  color: var(--ivory);
+  font-size: 13px;
+}
+.sceneBar button:focus-visible {
+  outline-color: var(--lime);
+}
+.stage {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 48px;
+  padding: var(--space-panel);
+  background: var(--brand);
+}
+.portalShell {
+  overflow: hidden;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--ivory);
+  color: var(--ink);
+  box-shadow: 0 24px 48px -24px color-mix(in srgb, var(--shadow-ink) 69%, transparent);
+}
+.portalBar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 42px;
+  padding-inline: 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+.windowDots {
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: 2px;
+  color: var(--line-strong);
+}
+.process {
+  --focus: var(--lime);
+  display: grid;
+  gap: var(--space-content);
+  color: var(--ivory);
+  scroll-margin-top: 96px;
+}
+.processStep {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+.processStep:not(:nth-last-child(2))::after {
+  content: '';
+  position: absolute;
+  top: 44px;
+  bottom: calc(-1 * var(--space-content));
+  left: 21px;
+  width: 1px;
+  background: var(--lime-line);
+}
+.processIcon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--dark-line-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
+  color: var(--ivory);
+}
+.processStep h3 {
+  font-size: 18px;
+  line-height: 1.25;
+}
+.processStep p {
+  margin-top: 8px;
+  color: var(--night-muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--lime-line);
+  border-radius: 10px;
+  background: var(--lime-tint);
+  color: var(--ivory);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.result svg {
+  flex: none;
+  color: var(--lime);
+  margin-top: 1px;
+}
+.details {
+  background: var(--ivory);
+}
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 12px 28px;
+}
+.detailActions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.detailActions button[aria-expanded='true'] {
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+.detailActions > span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.drawer {
+  position: relative;
+  border-top: 1px solid var(--line);
+  background: var(--night);
+}
+.drawer > [role='region'] {
+  outline-offset: -3px;
+}
+.close {
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--night);
+  color: var(--ivory);
+}
+@media (max-width: 1023px) {
+  .stage {
+    gap: 36px;
+    padding: 36px;
+  }
+}
+@media (max-width: 767px) {
+  .demo {
+    margin-top: 0;
+  }
+  .demo .demoHeading h2 {
+    font-size: 34px;
+  }
+  .taskTabs {
+    justify-content: flex-start;
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .taskTabs button {
+    padding-inline: 14px;
+    font-size: 14px;
+  }
+  .scene {
+    border-width: 4px;
+    border-radius: 20px;
+  }
+  .sceneBar {
+    padding-inline: 16px;
+  }
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+    padding: 24px 20px;
+  }
+  .process {
+    gap: 24px;
+  }
+  .processStep p {
+    font-size: 14px;
+  }
+  .processStep:not(:nth-last-child(2))::after {
+    bottom: -24px;
+  }
+  .detailActions {
+    padding: 10px 16px;
+    gap: 4px 20px;
+  }
+  .detailActions > span {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/** Ownership controls describe a simulation, never a live session. */
+.handoff {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+.handoffBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.handoffBar > span,
+.handoffBar > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.handoffBar > span {
+  font-size: 15px;
+  font-weight: 500;
+}
+.handoffBar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--ivory);
+  color: var(--ink);
+  font-size: 14px;
+}
+.handoffBar button:first-child {
+  border-color: var(--lime);
+  background: var(--lime);
+  color: var(--on-lime);
+}
+.ownershipEvents {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+@media (max-width: 767px) {
+  .handoff {
+    padding-inline: 16px;
+  }
+}
+
+/* The request and reusable artifact stay visible alongside the selected example. */
+.prompt {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+.prompt > span {
+  flex: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+.prompt p {
+  font-size: 17px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.artifact {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--dark-line-strong);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ivory) 3%, transparent);
+  overflow-wrap: anywhere;
+}
+.processStep .artifact p {
+  margin: 0;
+  color: var(--ivory);
+  font-size: 16px;
+}
+.artifact code {
+  font-family: var(--font-mono);
+  font-size: 16px;
+}
+.artifact span {
+  display: block;
+  margin-top: 10px;
+  color: var(--night-muted);
+  font-size: 16px;
+  line-height: 1.6;
+}
+@media (max-width: 767px) {
+  .prompt {
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+  }
+}

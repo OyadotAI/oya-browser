@@ -4,6 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import * as s from '../../../../src/main/actions/scripts.ts';
 
 describe('page scripts', () => {
@@ -45,6 +46,48 @@ describe('page scripts', () => {
     assert.ok(s.actionScript('wait', { selector: 'a', timeout: 5 }).includes('const maxWait = 5;'));
   });
 
+  it('a wait for text looks for it in what the page shows, and still parses', () => {
+    const js = s.actionScript('wait', { text: 'Saved' });
+    assert.ok(js.includes('document.body.innerText.includes("Saved")'));
+    assert.doesNotThrow(() => new Function(js));
+  });
+
+  it('text a wait is for is only ever data, so it cannot become code', () => {
+    const hostile = '"); fetch("https://evil.test"); ("';
+    const js = s.actionScript('wait', { text: hostile });
+    assert.ok(js.includes(JSON.stringify(hostile)));
+    assert.doesNotThrow(() => new Function(js));
+    assert.equal(js.split('fetch(').length - 1, js.split('\\"); fetch(').length - 1);
+  });
+
+  it('a wait for text that runs out says what did not show and what to do next', () => {
+    const js = s.actionScript('wait', { text: 'Saved', timeout: 500 });
+    assert.ok(js.includes('Timed out after 500 ms: \\"Saved\\" did not show. Analyze the page'));
+  });
+
+  it('a wait given both text and a selector waits for the text', () => {
+    const js = s.actionScript('wait', { text: 'Saved', selector: '#done' });
+    assert.ok(js.includes('innerText.includes("Saved")') && !js.includes('#done'));
+  });
+
+  it('a wait given neither text nor a selector fails at once and says what to give', () => {
+    for (const params of [{}, undefined, { text: '' }, { text: 5 }, { timeout: 500 }]) {
+      const js = s.actionScript('wait', params);
+      assert.deepEqual(new Function(`return ${js}`)(), {
+        ok: false,
+        error: 'Nothing to wait for. Give text or a selector.',
+      });
+    }
+  });
+
+  it('a wait with no text, or text that is not a string, waits for the element as before', () => {
+    for (const text of [undefined, '', 5, { a: 1 }]) {
+      const js = s.actionScript('wait', { selector: 'a', text });
+      assert.ok(js.includes("error: 'Timeout'"), String(text));
+      assert.ok(!js.includes('innerText'), String(text));
+    }
+  });
+
   it('a wait timeout is only ever a number, so caller text cannot become code', () => {
     const hostile = { selector: 'a', timeout: '1;globalThis.pwned=1' };
     for (const js of [s.actionScript('wait', hostile), s.devWaitJs(hostile)]) {
@@ -75,4 +118,44 @@ describe('page scripts', () => {
   it('the name of an unknown action never reaches a script, whatever it contains', () => {
     assert.equal(s.actionScript("x'}),(globalThis.pwned=1),({a:'", {}), null);
   });
+  it('native click coordinates use the analyzer reachable line point instead of the union centre', () => {
+    const document: any = {};
+    const el: any = {
+      ownerDocument: document,
+      tagName: 'A',
+      innerText: 'Privacy Policy',
+      getAttribute: () => null,
+      scrollIntoView: () => {},
+      getBoundingClientRect: () => ({ x: 0, y: 80, top: 80, width: 100, height: 40 }),
+    };
+    const window = { __acFindElement: () => el, __acReachablePoint: () => ({ x: 12.5, y: 110 }), scrollBy: () => {} };
+    const result = vm.runInNewContext(s.findElementJs('a'), { window, document });
+    assert.equal(result.data.x, 12.5);
+    assert.equal(result.data.y, 110);
+    assert.equal(result.data.covered, false);
+    window.__acReachablePoint = () => null;
+    assert.equal(vm.runInNewContext(s.findElementJs('a'), { window, document }).data.covered, true);
+  });
+});
+
+it('same-origin framed clicks use the shared mapped point without adding offsets twice', () => {
+  const document = {};
+  const el: any = {
+    ownerDocument: {},
+    tagName: 'A',
+    innerText: 'Privacy Policy',
+    getAttribute: () => null,
+    scrollIntoView: () => {},
+    getBoundingClientRect: () => ({ x: 0, y: 100, top: 100, width: 100, height: 40 }),
+  };
+  const window = {
+    __acFindElement: () => el,
+    __acReachablePoint: () => ({ x: 125, y: 270 }),
+    __acFrameOffset: () => ({ x: 100, y: 50 }),
+    scrollBy: () => {},
+  };
+  const result = vm.runInNewContext(s.findElementJs('a'), { window, document });
+  assert.equal(result.data.x, 125);
+  assert.equal(result.data.y, 270);
+  assert.equal(result.data.covered, false);
 });

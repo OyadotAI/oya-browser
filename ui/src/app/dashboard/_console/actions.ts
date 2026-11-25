@@ -90,8 +90,8 @@ interface ShotAnswer {
 /** Takes a screenshot of a browser and shows it. */
 export async function takeScreenshot(apiKey: string, id: string, patch: Patch<ConsoleView>, toast: Toast) {
   try {
-    const body = { action: 'screenshot' };
-    const r = await api<ShotAnswer>(`/browsers/${id}/command`, { key: apiKey, method: 'POST', body });
+    const path = `/browsers/${encodeURIComponent(id)}/command`;
+    const r = await api<ShotAnswer>(path, { key: apiKey, method: 'POST', body: { action: 'screenshot' } });
     if (r.data?.screenshot) patch({ shot: { id, src: r.data.screenshot } });
     else toast(r.error || 'No screenshot', 'error');
   } catch (err) {

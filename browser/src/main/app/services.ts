@@ -54,6 +54,8 @@ export interface AppServices {
   passkeys: import('./passkeys.ts').Passkeys;
   /** Explicit microphone and camera permission prompts. */
   mediaPermissions: import('./media-permissions.ts').MediaPermissions;
+  /** Remembered per-site consent for website notifications. */
+  notificationPermissions: import('./notification-permissions.ts').NotificationPermissions;
   /** Asks before a window close or a quit ends a call; owns whether a quit is going through. */
   callGuard: import('./call-guard.ts').CallGuard;
   /** Explicit screen-share prompts, through the same gate. */
@@ -76,6 +78,8 @@ export interface AppServices {
   notifications: import('../notifications/index.ts').Notifications;
   /** Local history and bookmarks for the current persona. */
   library: import('../library/index.ts').BrowsingLibrary;
+  /** Explicit offline library transfer, independent of encrypted session mirroring. */
+  libraryImport: import('../mirror/index.ts').LibraryImport;
   /** The person's downloads, listed on the Downloads page. */
   downloads: import('../downloads/index.ts').Downloads;
   /** Each window's download chip: what started there, told only to that window. */
@@ -130,8 +134,14 @@ export interface AppServices {
   commands: CommandRunner;
   /** oya:// links (src/main/app/deep-links.ts). */
   deepLinks: DeepLinks;
+  /** App-initiated login callbacks, bounded to the initiating shell. */
+  desktopSignIn: import('../connection/desktop-sign-in.ts').DesktopSignIn;
+  /** Window-owned model writes and tests reuse Ask's validation. */
+  modelSettings: import('../connection/model-settings.ts').ModelSettings;
   /** Oya's MCP port for coding agents on this computer (src/main/local-mcp), once started. */
   localMcp?: import('../local-mcp/index.ts').LocalMcp;
+  /** Fixed native launch adapters never receive renderer command text. */
+  agentLauncher: import('../local-mcp/index.ts').AgentLauncher;
   /** Scheduled routines (src/main/routines/routines.ts). */
   routines: Routines;
   /** The analyzer's isolated world (src/main/native/world.ts). */

@@ -1,0 +1,180 @@
+<!doctype html>
+<!--
+  Landing page template. Structure and limits, not a finished design: change the hue and the
+  typeface in tokens.css, replace every bracketed line with real copy, and recompose the layout
+  for this product. One ask, repeated. The product is shown. A section whose proof does not
+  exist yet is deleted, never filled with invented customers or numbers.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>[Product]: [what it does, in a few words]</title>
+    <meta name="description" content="[One sentence: what it is and who it is for.]" />
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      .wrap {
+        max-width: var(--page);
+        margin-inline: auto;
+        padding-inline: var(--space-6);
+      }
+
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-6);
+        padding-block: var(--space-4);
+      }
+
+      .top nav {
+        display: flex;
+        align-items: center;
+        gap: var(--space-6);
+        font-size: var(--text-sm);
+      }
+
+      .top nav a:not(.button) {
+        text-decoration: none;
+        color: var(--text-muted);
+      }
+
+      .top nav a:not(.button):hover {
+        color: var(--text);
+      }
+
+      /* Asymmetric on purpose: the words lead, the product is the larger half. */
+      .hero {
+        display: grid;
+        gap: var(--space-12);
+        align-items: end;
+        padding-block: var(--space-16) var(--space-24);
+      }
+
+      @media (min-width: 60rem) {
+        .hero {
+          grid-template-columns: 5fr 7fr;
+        }
+      }
+
+      .hero h1 {
+        font-size: var(--text-display);
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+      }
+
+      .hero p {
+        margin-block: var(--space-6) var(--space-8);
+        font-size: var(--text-lg);
+        color: var(--text-muted);
+      }
+
+      .shot {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      /* Unequal cells, because the three points are not equally important. */
+      .points {
+        display: grid;
+        gap: var(--space-12) var(--space-8);
+        padding-block: var(--space-24);
+        border-top: 1px solid var(--border);
+      }
+
+      @media (min-width: 48rem) {
+        .points {
+          grid-template-columns: 2fr 1fr 1fr;
+        }
+      }
+
+      .points h2 {
+        font-size: var(--text-lg);
+        margin-bottom: var(--space-2);
+      }
+
+      .points .lead h2 {
+        font-size: var(--text-xl);
+      }
+
+      .points p {
+        color: var(--text-muted);
+      }
+
+      .ask {
+        padding-block: var(--space-24);
+        border-top: 1px solid var(--border);
+      }
+
+      .ask h2 {
+        font-size: var(--text-xl);
+        margin-bottom: var(--space-6);
+      }
+
+      footer {
+        padding-block: var(--space-8);
+        border-top: 1px solid var(--border);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="wrap top">
+      <a href="/" aria-label="[Product] home"><strong>[Product]</strong></a>
+      <nav aria-label="Main">
+        <a href="#how">How it works</a>
+        <a href="/pricing">Pricing</a>
+        <a class="button" href="/signin">Sign in</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="wrap hero">
+        <div>
+          <h1>[What it is and who it is for, in about ten words.]</h1>
+          <p>[One sentence on the outcome, in the visitor's words. No adjectives doing a noun's job.]</p>
+          <a class="button primary" href="/start">[The one ask: a specific verb and object]</a>
+        </div>
+        <!-- The real product. Sized, so nothing shifts; first-screen, so not lazy. -->
+        <img
+          class="shot"
+          src="[product-screenshot.avif]"
+          alt="[What the screenshot shows]"
+          width="1400"
+          height="900"
+          fetchpriority="high"
+        />
+      </section>
+
+      <section class="wrap points" id="how">
+        <div class="lead">
+          <h2>[The main reason, stated as a fact about the product.]</h2>
+          <p>[Two or three sentences with a concrete detail: a number you can stand behind, a named step, what the person no longer has to do.]</p>
+        </div>
+        <div>
+          <h2>[A second reason]</h2>
+          <p>[One or two sentences.]</p>
+        </div>
+        <div>
+          <h2>[A third reason]</h2>
+          <p>[One or two sentences.]</p>
+        </div>
+      </section>
+
+      <!-- Proof goes here only when it is real: a named customer's words, a measured result. -->
+
+      <section class="wrap ask">
+        <h2>[The ask again, as an invitation.]</h2>
+        <a class="button primary" href="/start">[The same label as above]</a>
+      </section>
+    </main>
+
+    <footer class="wrap">
+      <p>© [Year] [Company]. <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+    </footer>
+  </body>
+</html>

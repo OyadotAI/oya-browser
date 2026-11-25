@@ -5,7 +5,7 @@
 'use client';
 
 import { Section, Table } from '@/components/admin/parts';
-import { PERCENT, SALES_EMAIL, UPGRADES } from './constants';
+import { NEW_SUBSCRIPTION_PRICE_NOTE, PERCENT, FOUNDERS_CALL, UPGRADES } from './constants';
 import { dateOf, figure, money, share, usageRows } from './model';
 import type { BillingPageState, Invoice, Upcoming } from './use-billing-page';
 import type { Billing } from './use-plan';
@@ -20,11 +20,23 @@ function Go({
   /** Its text. */ children: React.ReactNode;
   /** The accent style. */ primary?: boolean;
 }) {
-  const look = primary ? 'bg-accent text-white' : 'border border-border text-text hover:bg-text/5';
+  const look = primary ? 'bg-accent text-accent-foreground' : 'border border-border text-text hover:bg-text/5';
   return (
     <button onClick={onClick} className={`rounded-md px-3 py-1.5 text-xs font-medium ${look}`}>
       {children}
     </button>
+  );
+}
+
+/** Both checkout surfaces present the same new-subscription terms. */
+function UpgradeChoices({ upgrade }: Pick<BillingPageState, 'upgrade'>) {
+  return (
+    <>
+      {UPGRADES.map((plan) => (
+        <Go key={plan.id} primary onClick={() => void upgrade(plan.id)}>{`${plan.label} — ${plan.price}`}</Go>
+      ))}
+      <p className="basis-full text-xs text-text-secondary">{NEW_SUBSCRIPTION_PRICE_NOTE}</p>
+    </>
   );
 }
 
@@ -47,9 +59,7 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
       {late && <p className="text-xs text-red">Your last payment failed. Update your card to keep using the cloud.</p>}
       <div className="flex flex-wrap gap-2">
         {!(b.canManage ?? b.plan !== 'free') ? (
-          UPGRADES.map((p) => (
-            <Go key={p.id} primary onClick={() => void s.upgrade(p.id)}>{`${p.label} ${p.price}`}</Go>
-          ))
+          <UpgradeChoices upgrade={s.upgrade} />
         ) : (
           <Go onClick={() => void s.manage()}>Change card, see receipts or cancel</Go>
         )}
@@ -57,8 +67,8 @@ export function PlanCard({ b, s }: { /** The plan. */ b: Billing; /** The page's
       {s.error && <p className="text-xs text-red">{s.error}</p>}
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
-        <a className="underline" href={`mailto:${SALES_EMAIL}`}>
-          {SALES_EMAIL}
+        <a className="underline" href={FOUNDERS_CALL} target="_blank" rel="noreferrer">
+          Book a time with the founders
         </a>
       </p>
     </Section>

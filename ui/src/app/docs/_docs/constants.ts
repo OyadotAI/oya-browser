@@ -26,3 +26,6 @@ export const MARKDOWN_MAX_AGE_SECONDS = 300;
 export const HEX_RADIX = 16;
 /** The port Next.js listens on when nothing set PORT. */
 export const NEXT_DEFAULT_PORT = 3000;
+
+/** How far from the side menu's top or bottom edge the current link is kept, so its neighbours show too. */
+export const ACTIVE_LINK_MARGIN_PX = 96;

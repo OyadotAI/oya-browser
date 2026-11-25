@@ -53,7 +53,7 @@ export interface Clipboard {
 /** The account page's parts, which the dialog fills when it opens. */
 export interface AccountParts {
   /** The account card. */
-  account: Pick<AccountViewModel, 'load' | 'setConfig' | 'setVisible' | 'onStatus'>;
+  account: Pick<AccountViewModel, 'load' | 'setConfig' | 'onStatus'>;
   /** Sync. */
   sync: Pick<SyncViewModel, 'load' | 'onStatus'>;
   /** Imported logins. */
@@ -106,7 +106,7 @@ export class ShellDialogViewModel extends ViewModel<ShellDialogState> {
   /** The account page's parts. */
   private readonly parts: AccountParts;
 
-  /** Closed, then fills the account page from the settings and status at start. */
+  /** Closed, then fills the account page from the settings, status and account at start. */
   constructor(deps: ShellDialogDeps) {
     super(INITIAL_STATE);
     this.bridge = deps.bridge;
@@ -124,6 +124,9 @@ export class ShellDialogViewModel extends ViewModel<ShellDialogState> {
     this.loadConfig(shape<Config>(config));
     this.parts.imports.showHistory(shape<Config>(config).imports);
     this.onStatus(status);
+    // The toolbar avatar and profile menu name the account from launch, online or not: main answers
+    // with the one it remembers until the server can say.
+    await this.parts.account.load(shape<Config>(config), status);
   }
 
   /** Opens the dialog on the account page, or on the command palette. */
@@ -131,21 +134,18 @@ export class ShellDialogViewModel extends ViewModel<ShellDialogState> {
     if (profile) await this.refresh().catch(() => {}); // the page still opens, with what it last knew
     await this.bridge.showOverlay(OVERLAYS.shell);
     this.set({ open: true, page: profile ? 'profile' : 'commands', settingsPage });
-    this.parts.account.setVisible(profile);
   }
 
   /** Opens the learning guide using the same native-view-safe overlay. */
   async openShortcuts(): Promise<void> {
     await this.bridge.showOverlay(OVERLAYS.shell);
     this.set({ open: true, page: 'shortcuts' });
-    this.parts.account.setVisible(false);
   }
 
   /** Hides the dialog and gives the page back. */
   close(): void {
     if (!this.state.open) return;
     this.set({ open: false });
-    this.parts.account.setVisible(false);
     void this.bridge.hideOverlay(OVERLAYS.shell);
   }
 

@@ -12,6 +12,7 @@ export type Bind = (value: unknown) => string;
 function test(column: string, value: any, bind: Bind) {
   if (value === null) return `${column} is null`;
   if (value && typeof value === 'object' && 'gte' in value) return `${column} >= ${bind(value.gte)}`;
+  if (value && typeof value === 'object' && 'lte' in value) return `${column} <= ${bind(value.lte)}`;
   if (value && typeof value === 'object' && 'notIn' in value)
     return value.notIn.length ? `${column} not in (${value.notIn.map(bind).join(', ')})` : '';
   return `${column} = ${bind(value)}`;

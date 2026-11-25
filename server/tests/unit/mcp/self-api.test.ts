@@ -37,6 +37,26 @@ describe('selfApi', () => {
     await assert.rejects(selfApi(SELF, '/x'), /502 Bad Gateway/);
   });
 
+  it('repeats a call under the idempotency key it is given, so a lost reply is not a second call', async () => {
+    const fetch = mock.method(globalThis, 'fetch', async () => Response.json({ id: 'b1' }));
+    await selfApi(SELF, '/browsers/start', {}, 'key-1');
+    await selfApi(SELF, '/browsers/start', {}, 'key-1');
+    assert.deepEqual(
+      fetch.mock.calls.map((c) => c.arguments[1].headers['Idempotency-Key']),
+      ['key-1', 'key-1'],
+    );
+  });
+
+  it('marks a refusal the API answered, and not a reply that was lost', async () => {
+    mock.method(globalThis, 'fetch', async () => Response.json({ error: 'quota' }, { status: 429 }));
+    await assert.rejects(selfApi(SELF, '/x'), (e: any) => e.answered === true);
+    mock.restoreAll();
+    mock.method(globalThis, 'fetch', async () => {
+      throw new Error('aborted');
+    });
+    await assert.rejects(selfApi(SELF, '/x'), (e: any) => e.answered === undefined);
+  });
+
   it('is unavailable without an origin or credential', async () => {
     await assert.rejects(selfApi({}, '/x'), /browser lifecycle is unavailable/);
   });

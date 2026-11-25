@@ -7,12 +7,13 @@
  */
 import type { WebContents, MessageBoxOptions, MessageBoxReturnValue } from 'electron';
 import type { AppServices } from './services.ts';
-import { SCREEN_RECORDING_SETTINGS_URL } from '../screen-share/index.ts';
-import { OS_DENIED_PROMPT, SCREEN_DENIED_PROMPT } from './media-prompts.ts';
+import type { MediaDenial } from './media-prompts.ts';
 import { MediaApprovalQueue } from './media-queue.ts';
+import { mediaOwner, mediaBinding, sameMediaBinding } from './media-owner.ts';
+import { MediaRecovery } from './media-recovery.ts';
 
 /** Sensitive access uses native dialogs and the normal control boundary. */
-type Deps = Pick<AppServices, 'electron' | 'shell' | 'tabs' | 'agentTab' | 'governance' | 'persona'>;
+type Deps = Pick<AppServices, 'electron' | 'shell' | 'tabs' | 'agentTab' | 'governance' | 'persona' | 'windows'>;
 
 /** HTTPS origins are displayed rather than private paths and query strings. */
 export function mediaOrigin(raw: string): string | null {
@@ -26,10 +27,8 @@ export class MediaGate {
   private readonly deps: Deps;
   /** Navigation generations fence reloads even when the URL does not change. */
   private readonly generations = new WeakMap<WebContents, number>();
-  /** The document generation the macOS denial was last explained for: once per page, not once per request. */
-  private readonly explained = new WeakMap<WebContents, number>();
-  /** Screen Recording needs its own recovery even if a microphone denial was already explained. */
-  private readonly screenExplained = new WeakMap<WebContents, number>();
+  /** Device-specific recovery keeps independent microphone, camera and screen explanations. */
+  private readonly recovery: MediaRecovery;
   /** Committed top documents, counted apart: a navigation that never commits (a download, a 204) leaves a call running. */
   private readonly documents = new WeakMap<WebContents, number>();
   /** The committed document Oya handed a camera, microphone or screen to: that document counts as in a call. */
@@ -40,16 +39,17 @@ export class MediaGate {
   /** `deps` is the main-process services (see src/main/main.ts). */
   constructor(deps: Deps) {
     this.deps = deps;
+    this.recovery = new MediaRecovery(deps.electron, (contents, options) => this.ask(options, contents));
   }
 
   /** Refuses background tabs, a tab an agent drives, and managed runtimes. Per tab: with agents connected, the person still owns the tabs no agent claimed. */
   allowed(contents: WebContents | null): contents is WebContents {
+    if (!contents || contents.isDestroyed() || this.deps.governance.configuration) return false;
+    const owner = mediaOwner(this.deps, contents);
     return (
-      !!contents &&
-      !contents.isDestroyed() &&
-      !this.deps.governance.configuration &&
-      this.deps.agentTab.humanMay(this.deps.tabs.activeTabId) &&
-      this.deps.tabs.getActiveView()?.webContents === contents
+      !!owner &&
+      this.deps.agentTab.humanMay(owner.tabs.activeTabId) &&
+      owner.tabs.getActiveView()?.webContents === contents
     );
   }
 
@@ -100,11 +100,11 @@ export class MediaGate {
   /** Capture before queueing, so waiting cannot authorize a replacement document or profile. */
   guard(contents: WebContents, origin: string): () => boolean {
     const generation = this.watch(contents);
-    const partition = this.deps.persona.partitionName();
+    const before = mediaBinding(this.deps, contents);
     return () =>
       this.current(contents, generation) &&
       this.eligible(contents, origin) === origin &&
-      this.deps.persona.partitionName() === partition;
+      sameMediaBinding(this.deps, contents, before);
   }
 
   /** Serializes consent while preserving each callback's original requester and independent decision. */
@@ -124,25 +124,18 @@ export class MediaGate {
   }
 
   /** Whether the person clicked Allow. */
-  async allowedBy(options: MessageBoxOptions, choice: number): Promise<boolean> {
-    return (await this.ask(options)).response === choice;
+  async allowedBy(options: MessageBoxOptions, choice: number, contents: WebContents): Promise<boolean> {
+    return (await this.ask(options, contents)).response === choice;
   }
 
   /** Explains the OS denial once per document; always answers false. */
-  async osDenied(contents: WebContents, generation: number, screen = false): Promise<false> {
-    const explained = screen ? this.screenExplained : this.explained;
-    if (explained.get(contents) !== generation) {
-      explained.set(contents, generation);
-      const answer = await this.ask(screen ? SCREEN_DENIED_PROMPT : OS_DENIED_PROMPT);
-      if (screen && answer.response === SCREEN_DENIED_PROMPT.defaultId && this.current(contents, generation))
-        await this.deps.electron.shell.openExternal(SCREEN_RECORDING_SETTINGS_URL);
-    }
-    return false;
+  osDenied(contents: WebContents, current: () => boolean, failure: MediaDenial): Promise<false> {
+    return this.recovery.show({ contents, current, failure, generation: this.watch(contents) });
   }
 
   /** Parents to Oya when possible; never passes Electron a null window. */
-  ask(options: MessageBoxOptions): Promise<MessageBoxReturnValue> {
-    const window = this.deps.shell.window;
+  ask(options: MessageBoxOptions, contents: WebContents): Promise<MessageBoxReturnValue> {
+    const window = mediaOwner(this.deps, contents)?.shell.window;
     return window && !window.isDestroyed()
       ? this.deps.electron.dialog.showMessageBox(window, options)
       : this.deps.electron.dialog.showMessageBox(options);

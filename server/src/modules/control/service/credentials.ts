@@ -6,6 +6,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { Status } from '../../../platform/http-status.ts';
 import { fault, hash, projectDeleted, projectId, stamp, terminal } from './model.ts';
 import { ensure } from './projects.ts';
+import { CONNECTOR_SUFFIX } from '../../../mcp/oauth/constants.ts';
+import { CONNECTOR_MARK_SINCE } from './constants.ts';
 import {
   DEFAULT_SHARE_SECONDS,
   MAX_LABEL,
@@ -24,9 +26,20 @@ async function roleOf(tx, p, userId) {
 }
 
 /** A stored credential: only the token's digest is kept. */
-function credentialRow(id, digest, p, { role, label, expiresAt, memberUser, sessionId = null }) {
-  const who = { id, digest, project: p.id, role, memberUser, sessionId };
+function credentialRow(id, digest, p, { role, label, expiresAt, memberUser, sessionId = null, connector = false }) {
+  const who = { id, digest, project: p.id, role, memberUser, sessionId, connector };
   return { ...who, label: String(label).slice(0, MAX_LABEL), expiresAt, createdAt: stamp(), revokedAt: null };
+}
+
+/**
+ * Whether a credential belongs to a chat app signed in over OAuth (claude.ai, ChatGPT), which the
+ * MCP pool serves differently from an API key. The mark is set when OAuth issues it. Connectors
+ * issued before the mark existed are known by their label, and only those: a service account a
+ * person names "... connector" today is still a service account.
+ */
+function isConnector(c) {
+  if (c.connector) return true;
+  return c.createdAt < CONNECTOR_MARK_SINCE && String(c.label).endsWith(CONNECTOR_SUFFIX);
 }
 
 /** The issuing transaction: the member must still hold the role; returns the credential without its digest. */
@@ -50,11 +63,11 @@ export async function issue(controlStore, key, grant) {
 
 /** Issue a project credential for a person or service. `memberUser` must still hold `role` in the project. */
 export async function credential(controlStore, key, options: any = {}, memberUser = null) {
-  const { role = 'operator', label = 'Service account', expiresAt = null } = options;
+  const { role = 'operator', label = 'Service account', expiresAt = null, connector = false } = options;
   if (!ROLES.includes(role)) throw fault('invalid_role', 'Unknown role', Status.BAD_REQUEST);
   if (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= stamp()))
     throw fault('invalid_expiry', 'Expiry must be a future timestamp', Status.BAD_REQUEST);
-  return issue(controlStore, key, { role, label, expiresAt, memberUser });
+  return issue(controlStore, key, { role, label, expiresAt, memberUser, connector: connector === true });
 }
 
 /** A share link's lifetime in seconds: the caller's, whole, clamped to one minute–30 days. */
@@ -110,10 +123,13 @@ export async function authenticate(service, token) {
   return principalOf(service.projectKey(project.body), c);
 }
 
-/** The principal a credential resolves to; `memberUser` is who holds control when they take it (http/guards.ts). */
+/**
+ * The principal a credential resolves to; `memberUser` is who holds control when they take it (http/guards.ts),
+ * and `connector` is true for a chat app signed in over OAuth.
+ */
 function principalOf(key, c) {
   const { role, project, id: credentialId, sessionId, memberUser } = c;
-  return { key, role, project, credentialId, sessionId, memberUser };
+  return { key, role, project, credentialId, sessionId, memberUser, connector: isConnector(c) };
 }
 
 /** Revoke one of the project's credentials. */

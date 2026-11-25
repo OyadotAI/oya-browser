@@ -17,13 +17,15 @@ export function useLiveness(): Liveness {
   return useMemo(() => ({ keyRef, hidden }), []);
 }
 
-/** The browser table and its last error. */
+/** The browser table, whether its initial load settled, and its last error. */
 export function useBrowsers(apiKey: string, live: Liveness) {
   const [browsers, setBrowsers] = useState<BrowserRow[]>([]);
+  const [browsersLoaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const fetchBrowsers = useCallback(() => loadBrowsers(apiKey, live, { setBrowsers, setLoadError }), [apiKey, live]);
-  const resetBrowsers = useCallback(() => (setBrowsers([]), setLoadError(null)), []);
-  return { browsers, loadError, fetchBrowsers, resetBrowsers };
+  const sink = useMemo(() => ({ setBrowsers, setLoadError, setLoaded }), []);
+  const fetchBrowsers = useCallback(() => loadBrowsers(apiKey, live, sink), [apiKey, live, sink]);
+  const resetBrowsers = useCallback(() => (setBrowsers([]), setLoadError(null), setLoaded(false)), []);
+  return { browsers, browsersLoaded, loadError, fetchBrowsers, resetBrowsers };
 }
 
 /** The fleet summary and throughput. */

@@ -30,7 +30,7 @@ export default function Player({ sessionId, apiKey, onClose }: Props) {
       description={<span className="font-mono">{sessionId.slice(0, PLAYER_ID_CHARS)}</span>}
     >
       <div className="-mx-5 -my-4">
-        <div className="bg-black flex items-center justify-center min-h-[300px]">
+        <div className="bg-ink flex items-center justify-center min-h-[300px]">
           {p.error ? (
             <p className="text-text-dim text-sm p-8">{p.error}</p>
           ) : p.src ? (

@@ -1,6 +1,6 @@
 /**
- * REST routes for a person's plan: see it, subscribe, manage it, and the
- * webhook Stripe reports changes on. Signed-in people only; a self-hosted
+ * REST routes for a person's plan: see it, subscribe, manage it; their
+ * self-hosted license, likewise; and the webhook Stripe reports changes on. Signed-in people only; a self-hosted
  * server, which has no plans, says so and nothing more.
  */
 import { Router } from 'express';
@@ -16,6 +16,7 @@ export function billingRoutes(billing: Billing) {
   const router = Router({ caseSensitive: true });
   planRoutes(router, billing);
   invoiceRoutes(router, billing);
+  licenseRoutes(router, billing);
   return router;
 }
 
@@ -43,6 +44,24 @@ function invoiceRoutes(router, billing: Billing) {
   );
 }
 
+/** A self-hosted license: see it with its key, buy one, manage its card. */
+function licenseRoutes(router, billing: Billing) {
+  /** GET /billing/license, the person's self-hosted license and key; `{enabled: false}` on a self-hosted server. */
+  router.get('/billing/license', userAuthMiddleware, async (req, res) => res.json(await license(billing, req.user.id)));
+  /** POST /billing/license/checkout {browsers, interval}, a Stripe Checkout page to buy a license on. */
+  router.post('/billing/license/checkout', userAuthMiddleware, async (req, res) =>
+    res.json(await billing.licenses.checkout(req.user.id, req.body?.browsers, req.body?.interval)),
+  );
+  /** POST /billing/license/portal, the Stripe page to change the license's card, see receipts or cancel. */
+  router.post('/billing/license/portal', userAuthMiddleware, async (req, res) =>
+    res.json(await billing.licenses.portal(req.user.id)),
+  );
+}
+
+/** The person's self-hosted license, or that this server sells none. */
+const license = async (billing: Billing, userId: string) =>
+  hosted() ? billing.licenses.view(userId) : { enabled: false };
+
 /** A Checkout page for the plan the request names. */
 const checkout = (billing: Billing, req) => billing.subscriptions.checkout(req.user.id, String(req.body?.plan || ''));
 
@@ -50,17 +69,27 @@ const checkout = (billing: Billing, req) => billing.subscriptions.checkout(req.u
 const summary = async (billing: Billing, userId: string) =>
   hosted() ? billing.subscriptions.summary(userId) : { enabled: false };
 
+/** Parses a signed webhook's JSON event, or null when the body is not an object. */
+function parseWebhookEvent(raw: Buffer | string) {
+  try {
+    const parsed = JSON.parse(typeof raw === 'string' ? raw : raw.toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * POST /api/billing/webhook, Stripe's report of a subscription change. Mounted
  * ahead of the JSON parser: the signature is over the raw bytes.
  */
-export function billingWebhook(billing: Billing) {
-  return async (req, res) => {
-    if (!hosted() || !verifySignature(req.body, String(req.headers['stripe-signature'] || ''), webhookSecret()))
-      return res.status(Status.BAD_REQUEST).json({ error: 'Bad signature', code: 'invalid_request' });
-    const event = JSON.parse(req.body.toString('utf8'));
-    await billing.subscriptions.applyEvent(event);
-    notePayment(event);
-    res.json({ received: true });
-  };
-}
+export const billingWebhook = (billing: Billing) => async (req, res) => {
+  if (!hosted() || !verifySignature(req.body, String(req.headers['stripe-signature'] || ''), webhookSecret()))
+    return res.status(Status.BAD_REQUEST).json({ error: 'Bad signature', code: 'invalid_request' });
+  const event = parseWebhookEvent(req.body);
+  if (!event) return res.status(Status.BAD_REQUEST).json({ error: 'Invalid payload', code: 'invalid_request' });
+  await billing.subscriptions.applyEvent(event);
+  await billing.licenses.applyEvent(event);
+  notePayment(event);
+  res.json({ received: true });
+};

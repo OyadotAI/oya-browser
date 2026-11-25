@@ -1,40 +1,78 @@
 /**
  * Oya's design tokens, for every surface of the desktop shell: colour, glass, type,
- * shape and motion, in a light theme (pearl glass) and a dark one (smoked glass).
- * The agent is always the same light, green into mint and cyan, so it reads as one
- * presence wherever it shows up. Surfaces use these names, never raw values.
+ * shape and motion, in a light theme (warm paper) and a dark one (flat charcoal), square-edged.
+ * There are five colours, declared once below: ink, paper, lime, red and amber. Every other
+ * colour is one of them or a mix of them, so the two themes are the same five with ink and
+ * paper changing places. Lime is the only green: the logo's. On paper it is a fill with ink on
+ * it, never text, because lime on paper cannot be read.
+ * Surfaces use these names, never raw values.
  */
 :root {
   color-scheme: light;
-  /* Native checkboxes, radios and ranges take Oya's green, never the system's blue. */
+  /* Native checkboxes, radios and ranges take Oya's accent, never the system's blue. */
   accent-color: var(--accent);
-  /* Oya's paper-and-ink neutrals (ui/src/app/globals.css), with its green as the one accent. */
-  --bg: #f8f9fa;
-  --surface: #ffffff;
-  --muted-surface: #f1f3f5;
-  --hover: #e9ecef;
-  --text: #202427;
-  --secondary: #626b73;
-  --border: #dde2e6;
-  --hairline: #0000001a;
-  --logo-green: #157a13;
-  --accent: #157a13;
-  --accent-hover: #106410;
-  --accent-soft: #e2f3df;
-  --on-accent: #ffffff;
-  --danger: #c23a32;
-  --danger-soft: #fbe8e6;
+  /* The five. Nothing else in the shell may name a colour. */
+  --ink: #1a1a1a;
+  --paper: #f7f5f0;
+  --lime: #cdf01e;
+  --red: #f2554a;
+  --amber: #f5b14c;
+  /* Neutrals: paper with a little ink in it. */
+  --bg: color-mix(in srgb, var(--ink) 5%, var(--paper));
+  --surface: var(--paper);
+  --muted-surface: color-mix(in srgb, var(--ink) 8%, var(--paper));
+  --hover: color-mix(in srgb, var(--ink) 11%, var(--paper));
+  --text: var(--ink);
+  --secondary: color-mix(in srgb, var(--ink) 70%, var(--paper));
+  --border: color-mix(in srgb, var(--ink) 17%, var(--paper));
+  /* The outline of a control (a field, a secondary button): it must stand 3:1 off what is behind it; --border is for dividers. */
+  --control-edge: color-mix(in srgb, var(--ink) 56%, var(--paper));
+  --hairline: color-mix(in srgb, var(--ink) 10%, transparent);
+  /*
+   * The accent has two roles. --accent is the one that can always be read: text, lines, rings
+   * (ink on paper, lime on charcoal). --accent-fill is lime as a surface, with --on-accent on it
+   * and --accent-edge around small shapes that would otherwise melt into paper.
+   */
+  --accent: var(--ink);
+  --accent-fill: var(--lime);
+  --accent-hover: color-mix(in srgb, var(--lime) 88%, var(--ink));
+  --accent-soft: color-mix(in srgb, var(--lime) 30%, var(--surface));
+  --accent-edge: var(--ink);
+  --accent-ring: color-mix(in srgb, var(--lime) 70%, transparent);
+  --on-accent: var(--ink);
+  --danger: color-mix(in srgb, var(--red) 62%, var(--ink));
+  --danger-soft: color-mix(in srgb, var(--red) 10%, var(--surface));
+  --on-danger: var(--paper);
+  /* What happened: finished well is the accent, stopped short is amber, plain information is neutral. */
+  --success: var(--accent);
+  --success-soft: var(--accent-soft);
+  --warning: color-mix(in srgb, var(--amber) 42%, var(--ink));
+  --warning-soft: color-mix(in srgb, var(--amber) 18%, transparent);
+  --info: var(--text);
+  --info-soft: color-mix(in srgb, var(--text) 8%, transparent);
+  /* The dim behind a dialog. */
+  --scrim: color-mix(in srgb, var(--ink) 40%, transparent);
+  /* What shadows are cast in: always mixed with transparent, at the strength the surface needs. */
+  --shadow-ink: var(--ink);
+  /* The lit top edge of a filled control. */
+  --fill-edge: inset 0 1px 0 color-mix(in srgb, var(--paper) 20%, transparent);
   /* Glass for dialogs and floating surfaces: translucent, blurred behind. */
-  --material: #ffffff;
-  --shadow-xs: 0 1px 1px #0000000a, 0 0 0 0.5px var(--hairline);
-  --shadow-sm: 0 1px 2px #00000014, 0 2px 6px #0000000a, 0 0 0 0.5px var(--hairline);
-  --shadow: 0 12px 32px #0000001f, 0 2px 8px #00000014, 0 0 0 0.5px var(--hairline);
-  --shadow-lg: 0 30px 80px #00000033, 0 8px 24px #0000001a, 0 0 0 0.5px var(--hairline);
-  --ring: 0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-  --radius-sm: 7px;
-  --radius: 9px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --material: var(--surface);
+  --shadow-xs: 0 1px 1px color-mix(in srgb, var(--shadow-ink) 4%, transparent), 0 0 0 0.5px var(--hairline);
+  --shadow-sm:
+    0 1px 2px color-mix(in srgb, var(--shadow-ink) 8%, transparent),
+    0 2px 6px color-mix(in srgb, var(--shadow-ink) 4%, transparent), 0 0 0 0.5px var(--hairline);
+  --shadow:
+    0 12px 32px color-mix(in srgb, var(--shadow-ink) 12%, transparent),
+    0 2px 8px color-mix(in srgb, var(--shadow-ink) 8%, transparent), 0 0 0 0.5px var(--hairline);
+  --shadow-lg:
+    0 30px 80px color-mix(in srgb, var(--shadow-ink) 20%, transparent),
+    0 8px 24px color-mix(in srgb, var(--shadow-ink) 10%, transparent), 0 0 0 0.5px var(--hairline);
+  --ring: 0 0 0 4px var(--accent-ring);
+  --radius-sm: 0;
+  --radius: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
   /* One spring for everything that moves: it settles without a bounce you can see. */
   --spring: linear(
     0,
@@ -56,28 +94,25 @@
   --chrome-height: 88px;
   --mono: ui-monospace, 'SF Mono', Consolas, monospace;
   /* ── Oya's light: the one colour that means "the agent", in every surface ── */
-  --oya: #39ed35;
-  --mint: #a6ffc9;
-  --cyan: #5ef3ff;
-  --amber: #f5b14c;
-  /* The aurora: green into mint, white and a cold cyan, for edge light and the orb's rim. */
-  --light: #39ed35, #a6ffc9, #ffffff, #5ef3ff, #39ed35;
-  /* Glass, light theme: pearl. Translucent white over a soft blur, a hairline of light on top. */
-  --glass: #ffffff;
-  --glass-strong: #ffffff;
-  --glass-edge: inset 0 1px 0 #ffffffcc, 0 0 0 0.5px #0000001a;
+  --oya: var(--lime);
+  --mint: color-mix(in srgb, var(--lime) 45%, var(--paper));
+  --cyan: color-mix(in srgb, var(--lime) 25%, var(--paper));
+  /* The aurora: lime into pale lime and paper, for edge light and the orb's rim. */
+  --light: var(--lime), var(--mint), var(--paper), var(--cyan), var(--lime);
+  /* Glass, light theme: paper, with a hairline round it. */
+  --glass: var(--surface);
+  --glass-strong: var(--surface);
+  --glass-edge: 0 0 0 0.5px var(--hairline);
   --glass-blur: blur(12px);
-  /* Focus: a thin line of the accent and a soft ring, never a bloom of light. */
-  --glow:
-    0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent);
-  --stage: #ffffff;
+  /* Focus: a thin line that can always be seen, and a soft ring of lime round it. */
+  --glow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-ring);
+  --stage: var(--surface);
   /* The window's chrome, as in Chrome: a deeper tab strip, and the toolbar the active tab grows out of. */
-  --chrome-strip: #edf0f2;
-  --chrome-bar: #ffffff;
-  /* Type: Oya's own (core/type.css), DM Sans to read and Archivo Black for headings, with a mono for labels. */
+  --chrome-strip: color-mix(in srgb, var(--ink) 10%, var(--paper));
+  --chrome-bar: var(--surface);
+  /* Type: Oya's own (core/type.css), DM Sans to read and Anton, a tall condensed face, for headings, with a mono for labels. */
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-display: 'Archivo Black', 'DM Sans', 'Arial Black', sans-serif;
+  --font-display: 'Anton', 'DM Sans', Impact, sans-serif;
   --text-xs: 11px;
   --text-sm: 12px;
   --text-md: 13px;
@@ -93,45 +128,64 @@
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #121211;
-  --surface: #1b1b19;
-  --muted-surface: #252522;
-  --hover: #2d2d2a;
-  --text: #f4f3ef;
-  --secondary: #a3a39b;
-  --border: #2f2f2b;
-  --hairline: #ffffff1c;
-  --logo-green: #39ed35;
-  --accent: #39ed35;
-  --accent-hover: #62f25e;
-  --accent-soft: #1c3a1b;
-  --on-accent: #0c0c0a;
-  --danger: #ff6b6b;
-  --danger-soft: #3d2322;
-  --material: #1e1e1ccc;
-  --shadow-xs: 0 1px 1px #00000040, 0 0 0 0.5px var(--hairline);
-  --shadow-sm: 0 1px 2px #00000059, 0 2px 6px #00000033, 0 0 0 0.5px var(--hairline);
-  --shadow: 0 12px 32px #00000073, 0 2px 8px #00000040, 0 0 0 0.5px var(--hairline);
-  --shadow-lg: 0 30px 80px #0000008c, 0 8px 24px #00000059, 0 0 0 0.5px var(--hairline);
-  /* Glass, dark theme: smoked. Deep green-black, a faint lift of light along the top edge. */
-  --glass: #101312b8;
-  --glass-strong: #0d100ee6;
-  --glass-edge: inset 0 1px 0 #ffffff14, 0 0 0 0.5px #ffffff1a;
-  --stage: radial-gradient(120% 90% at 50% 0%, #17201b 0%, #0c0f0d 55%, #070908 100%);
-  --chrome-strip: #0b0d0c;
-  --chrome-bar: #1a1e1b;
+  /* The same five, with ink and paper changed places: charcoal with a little paper in it. */
+  --bg: var(--ink);
+  --surface: color-mix(in srgb, var(--paper) 5%, var(--ink));
+  --muted-surface: color-mix(in srgb, var(--paper) 8%, var(--ink));
+  --hover: color-mix(in srgb, var(--paper) 11%, var(--ink));
+  --text: var(--paper);
+  --secondary: color-mix(in srgb, var(--paper) 62%, var(--ink));
+  --border: color-mix(in srgb, var(--paper) 15%, var(--ink));
+  --control-edge: color-mix(in srgb, var(--paper) 45%, var(--ink));
+  --hairline: color-mix(in srgb, var(--paper) 11%, transparent);
+  --accent: var(--lime);
+  --accent-hover: color-mix(in srgb, var(--lime) 80%, var(--paper));
+  --accent-soft: color-mix(in srgb, var(--lime) 14%, var(--surface));
+  --accent-edge: transparent;
+  --accent-ring: color-mix(in srgb, var(--lime) 14%, transparent);
+  --danger: color-mix(in srgb, var(--red) 80%, var(--paper));
+  --danger-soft: color-mix(in srgb, var(--red) 14%, var(--surface));
+  --on-danger: var(--ink);
+  --warning: var(--amber);
+  --warning-soft: color-mix(in srgb, var(--amber) 16%, transparent);
+  --material: color-mix(in srgb, var(--surface) 80%, transparent);
+  /*
+   * Nothing is darker than ink, so on charcoal a shadow alone cannot lift a menu off the page.
+   * What lifts it is a clear edge of paper round it, on top of the shadow it still casts on lighter surfaces.
+   */
+  --lift-edge: 0 0 0 1px color-mix(in srgb, var(--paper) 14%, transparent);
+  --shadow-xs: 0 1px 1px color-mix(in srgb, var(--shadow-ink) 25%, transparent), 0 0 0 0.5px var(--hairline);
+  --shadow-sm:
+    0 1px 2px color-mix(in srgb, var(--shadow-ink) 35%, transparent),
+    0 2px 6px color-mix(in srgb, var(--shadow-ink) 20%, transparent), var(--lift-edge);
+  --shadow:
+    0 12px 32px color-mix(in srgb, var(--shadow-ink) 45%, transparent),
+    0 2px 8px color-mix(in srgb, var(--shadow-ink) 25%, transparent), var(--lift-edge);
+  --shadow-lg:
+    0 30px 80px color-mix(in srgb, var(--shadow-ink) 55%, transparent),
+    0 8px 24px color-mix(in srgb, var(--shadow-ink) 35%, transparent), var(--lift-edge);
+  /* Glass, dark theme: smoked. Flat charcoal, a faint lift of light along the top edge. */
+  --glass: color-mix(in srgb, var(--ink) 72%, transparent);
+  --glass-strong: color-mix(in srgb, var(--ink) 90%, transparent);
+  --glass-edge:
+    inset 0 1px 0 color-mix(in srgb, var(--paper) 8%, transparent),
+    0 0 0 0.5px color-mix(in srgb, var(--paper) 10%, transparent);
+  --stage: var(--ink);
+  --chrome-strip: var(--ink);
+  --chrome-bar: var(--surface);
 }
-/* An incognito window (always dark): violet-grey chrome, so it never passes for a normal dark window's green-black. */
+/* An incognito window (always dark): lighter graphite chrome, so it never passes for a normal dark window. */
 :root[data-incognito='true'] {
-  --chrome-strip: #17161c;
-  --chrome-bar: #26242e;
-  --stage: radial-gradient(120% 90% at 50% 0%, #1f1d27 0%, #121117 55%, #0a090d 100%);
+  --chrome-strip: color-mix(in srgb, var(--paper) 10%, var(--ink));
+  --chrome-bar: color-mix(in srgb, var(--paper) 16%, var(--ink));
+  --stage: var(--ink);
+  --secondary: color-mix(in srgb, var(--paper) 70%, var(--ink));
 }
 :root {
   /* The strip's height: the toolbar starts under it (88px of chrome in all, shell-layout.cjs). */
   --tab-strip-height: 40px;
   --tab-height: 34px;
-  --tab-radius: 8px;
+  --tab-radius: 0;
   --tab-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --tab-motion: 180ms;
   --tab-separator: color-mix(in srgb, var(--text) 16%, transparent);

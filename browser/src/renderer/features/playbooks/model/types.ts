@@ -10,6 +10,18 @@ export interface Playbook {
   defaults: Record<string, string>;
   /** Readable generated workflow code. */
   code: string;
+  /**
+   * How its last replay ended: null when it never ran, absent when the server
+   * could not say (an older server, or its run history failed to load).
+   */
+  lastRun?: LastRun | null;
+}
+/** The end of a playbook's most recent replay, as the list reports it. */
+export interface LastRun {
+  /** How it ended. */
+  status: 'succeeded' | 'failed';
+  /** When it ended, as an ISO time. */
+  endedAt: string;
 }
 /** State of a background replay, including human assistance. */
 export interface PlaybookRun {

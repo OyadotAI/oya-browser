@@ -2,10 +2,21 @@
  * Where the CLI remembers your key. One file, mode 600, this is a credential,
  * and it is the identity for everything the control plane does on your behalf.
  */
-import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { CONFIG_FILE_MODE, DEFAULT_BASE_URL, JSON_INDENT } from './constants.ts';
+import { basename, join, dirname } from 'node:path';
+import { CONFIG_DIR_MODE, CONFIG_FILE_MODE, DEFAULT_BASE_URL, JSON_INDENT } from './constants.ts';
 
 /** The saved config file: OYA_CONFIG_HOME, or ~/.oya. */
 const FILE = join(process.env.OYA_CONFIG_HOME || join(homedir(), '.oya'), 'config.json');
@@ -27,12 +38,57 @@ export function load(): CliConfig {
   }
 }
 
-/** Merges `values` into the saved config, owner-only. */
+/** Ensures the config folder exists and is owner-only where supported. */
+function ensureConfigDir(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: CONFIG_DIR_MODE });
+  try {
+    chmodSync(dir, CONFIG_DIR_MODE);
+  } catch {
+    /* Windows or read-only parent */
+  }
+}
+
+/** Opens a new owner-only temporary file exclusively, refusing symlinks. */
+function openTempFile(tmp: string, mode: number): number {
+  const { O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW = 0 } = fsConstants;
+  return openSync(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, mode);
+}
+
+/** Writes `text` to `fd` and closes it even if writing fails. */
+function writeFd(fd: number, text: string): void {
+  try {
+    writeFileSync(fd, text);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Removes a leftover temporary file, ignoring missing-file errors. */
+function removeTemp(tmp: string): void {
+  try {
+    unlinkSync(tmp);
+  } catch {
+    /* already removed */
+  }
+}
+
+/** Atomically replaces `filePath` with `text` in a fresh owner-only file, never following a symlink. */
+export function writePrivateFile(filePath: string, text: string, mode = CONFIG_FILE_MODE): void {
+  const tmp = join(dirname(filePath), `.${basename(filePath)}.${process.pid}-${randomUUID()}.tmp`);
+  try {
+    writeFd(openTempFile(tmp, mode), text);
+    renameSync(tmp, filePath);
+  } catch (err) {
+    removeTemp(tmp);
+    throw err;
+  }
+}
+
+/** Merges `values` into the saved config atomically, owner-only, never following a symlink. */
 export function save(values: CliConfig): void {
-  const merged = { ...load(), ...values };
-  mkdirSync(dirname(FILE), { recursive: true });
-  writeFileSync(FILE, JSON.stringify(merged, null, JSON_INDENT), { mode: CONFIG_FILE_MODE });
-  chmodSync(FILE, CONFIG_FILE_MODE); // an existing file keeps its old mode without this
+  const text = JSON.stringify({ ...load(), ...values }, null, JSON_INDENT);
+  ensureConfigDir(dirname(FILE));
+  writePrivateFile(FILE, text, CONFIG_FILE_MODE);
 }
 
 /** Where the config lives, for messages. */

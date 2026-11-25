@@ -10,6 +10,7 @@ import { Keyboard } from '../../../../src/main/input/keyboard.ts';
 import { Mouse } from '../../../../src/main/input/mouse.ts';
 import * as c from '../../../../src/main/actions/constants.ts';
 import { instantTimers, fixedRandom, pageView, pageCtx, results, mouseEvents, keyEvents } from '../../support/page.cjs';
+import { inLane } from '../../../../src/main/control/agent-tab.ts';
 
 /** A driver over the composition root's (src/main/main.ts) helpers in `ctx`, with its own keyboard and mouse. */
 const driverFor = (ctx: any) => new PageDriver({ ...ctx, keyboard: new Keyboard('linux'), mouse: new Mouse() });
@@ -102,13 +103,15 @@ describe('page commands', () => {
 
   it('screenshot answers a PNG data URL', async () => {
     const ctx = await run(pageView(), 'screenshot', {});
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,UE5H' }]]);
+    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/png;base64,UE5H', viewport: undefined }]]);
   });
 
   it('screenshot answers a JPEG when asked for one', async () => {
     const view = pageView();
     const ctx = await run(view, 'screenshot', { format: 'jpeg' });
-    assert.deepEqual(results(ctx), [['c1', true, { screenshot: 'data:image/jpeg;base64,SlBFRw==' }]]);
+    assert.deepEqual(results(ctx), [
+      ['c1', true, { screenshot: 'data:image/jpeg;base64,SlBFRw==', viewport: undefined }],
+    ]);
     assert.deepEqual(view.webContents.calls.at(-1), ['jpeg', c.SCREENSHOT_JPEG_QUALITY]);
   });
 
@@ -426,3 +429,95 @@ function navigateOnInput(view, type) {
     view.webContents.emit('dom-ready');
   };
 }
+
+it('a suspended screenshot preparation releases the command and cannot start a late capture', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const view = pageView();
+  let resume: (value: unknown) => void = () => {},
+    captured = 0,
+    released = false;
+  view.webContents.capturePage = async () => {
+    captured++;
+    throw Error('must not capture after deadline');
+  };
+  const ctx = pageCtx(view, {
+    world: () =>
+      new Promise((resolve) => {
+        resume = resolve;
+      }),
+  });
+  const pending = driverFor(ctx)
+    .runPageAction('shot', 'screenshot', {}, view)
+    .finally(() => {
+      released = true;
+    });
+  const rejected = assert.rejects(pending, /measurement timed out/);
+  await Promise.resolve();
+  await Promise.resolve();
+  t.mock.timers.tick(c.VIEWPORT_READ_MS);
+  await rejected;
+  assert.equal(released, true);
+  assert.equal(captured, 0);
+  resume(undefined);
+  await Promise.resolve();
+  assert.equal(captured, 0);
+});
+
+describe('browser_debug on the shield', () => {
+  /** Runs a diagnostic with a narrate recorder; answers the ctx once its scan has settled. */
+  async function diagnostic(params: Record<string, unknown>, lane = 'mcp-keel') {
+    const ctx: any = pageCtx(pageView(), { world: { ok: true, data: { elements: [{ id: 1, type: 'button' }] } } });
+    ctx.narrate = (_v: unknown, action: string, p: unknown) => ctx.calls.push(['narrate', action, p]);
+    await inLane(lane, () => driverFor(ctx).runPageAction('c1', 'browser_debug', params, pageView()));
+    await new Promise((resolve) => setImmediate(resolve));
+    return ctx;
+  }
+  /** The names of the shield calls made, in order. */
+  // Every command is also narrated under its own name; the shield has no line for 'browser_debug', so that one shows nothing.
+  const shown = (ctx: any) =>
+    ctx.calls
+      .filter((c: unknown[]) => /^analysis/.test(String(c[0])) || (c[0] === 'narrate' && c[1] !== 'browser_debug'))
+      .map((c: unknown[]) => c[0]);
+
+  it('scans and outlines the page for a diagnostic read, as analyze_page does', async () => {
+    const ctx = await diagnostic({ kind: 'read', frames: true });
+    assert.deepEqual(
+      shown(ctx).filter((n: string) => n.startsWith('analysis')),
+      ['analysisStarted', 'analysisFinished'],
+    );
+    const finished = ctx.calls.find((c: unknown[]) => c[0] === 'analysisFinished');
+    assert.deepEqual(
+      finished[2].data.elements,
+      [{ id: 1, type: 'button' }],
+      'the shield outlines the analyzer’s own read',
+    );
+  });
+
+  it('narrates a diagnostic click as a click, and typing without ever passing the text', async () => {
+    const click = await diagnostic({ kind: 'click', element: 3 });
+    assert.ok(click.calls.some((c: unknown[]) => c[0] === 'narrate' && c[1] === 'click'));
+    const typed = await diagnostic({ kind: 'type', element: 3, text: 'hunter2' });
+    const narration = typed.calls.find((c: unknown[]) => c[0] === 'narrate' && c[1] === 'type');
+    assert.ok(narration && !JSON.stringify(narration).includes('hunter2'), 'typed text never reaches the shield');
+  });
+
+  it('outlines the last analysis as it stands, so ids an agent already holds keep their elements', async () => {
+    const ctx = await diagnostic({ kind: 'read' });
+    const scan = ctx.calls.find((c: unknown[]) => c[0] === 'world' && String(c[1]).includes('__acLastElements'));
+    assert.ok(scan, 'the shield asks for the last analysis before analyzing afresh');
+    assert.match(String(scan[1]), /__acLastElements\(\)\) \|\| \(/, 'a fresh analysis runs only when there is none');
+  });
+
+  it('shows nothing for a lane the diagnostic itself refuses', async () => {
+    const ctx = await diagnostic({ kind: 'read' }, 'tab-3');
+    assert.deepEqual(shown(ctx), []);
+  });
+
+  it('does not scan for a diagnostic that only inspects', async () => {
+    const ctx = await diagnostic({ kind: 'identity' });
+    assert.deepEqual(
+      shown(ctx).filter((n: string) => n !== 'narrate'),
+      [],
+    );
+  });
+});

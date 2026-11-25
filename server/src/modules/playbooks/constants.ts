@@ -69,3 +69,12 @@ export const MS_PER_MINUTE = 60_000;
 
 /** Most sign-in stages one checkpoint works through: username, password, a method choice, the code. */
 export const LOGIN_ROUNDS = 4;
+
+/** How many finished runs a playbook's history keeps, newest first; the same as a routine's. */
+export const RUN_HISTORY_KEPT = 20;
+/** How many times recording a run retries when another replica wrote the history first. */
+export const RUN_HISTORY_TRIES = 3;
+/** The longest error a run's history keeps: page text can end up in an error, so it stays short. */
+export const RUN_ERROR_MAX = 500;
+/** The shortest run value blanked from a stored error; shorter ones would wreck the message and hide nothing. */
+export const REDACT_MIN_LENGTH = 3;

@@ -19,8 +19,21 @@ export async function proxy(request: NextRequest) {
   headers.set('x-nonce', nonce);
   headers.set('content-security-policy', csp);
   const response = await forward(request, headers);
+  return responseHeaders(request, response, csp);
+}
+
+/** Completes the response policy after forwarding, including sensitive setup pages. */
+function responseHeaders(request: NextRequest, response: Response, csp: string) {
   response.headers.set('content-security-policy', csp);
+  privateSetupHeaders(request, response);
   return response;
+}
+
+/** Account setup must not be cached or propagate a referrer. */
+function privateSetupHeaders(request: NextRequest, response: Response) {
+  if (request.nextUrl.pathname !== '/marketplace/aws') return;
+  response.headers.set('cache-control', 'no-store');
+  response.headers.set('referrer-policy', 'no-referrer');
 }
 
 /** /docs itself, the one page with a Markdown twin to negotiate. */

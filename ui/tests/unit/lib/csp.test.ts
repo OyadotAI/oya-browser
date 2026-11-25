@@ -53,23 +53,38 @@ describe('contentSecurityPolicy', () => {
       'https://app.rb2b.com https://9xgnrndqve.execute-api.us-west-2.amazonaws.com https://pro.ip-api.com ' +
       'https://a.usbrowserspeed.com https://alocdn.com https://*.liadm.com';
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe("'self'");
-    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe("'self' data: blob:");
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(
+      "'self' data: blob: https://api.producthunt.com",
+    );
     vi.stubEnv('RB2B_ID', 'ABC123DEF456');
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(`'self' ${rb2b}`);
-    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(`'self' data: blob: ${rb2b}`);
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(
+      `'self' data: blob: https://api.producthunt.com ${rb2b}`,
+    );
   });
 
   it("lets the page reach Meta's pixel only when the operator set one", () => {
     const meta = 'https://connect.facebook.net https://www.facebook.com';
-    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe("'self' data: blob:");
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(
+      "'self' data: blob: https://api.producthunt.com",
+    );
     vi.stubEnv('META_PIXEL_ID', '123456789012345');
     expect(directives(contentSecurityPolicy('n', false))['connect-src']).toBe(`'self' ${meta}`);
-    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(`'self' data: blob: ${meta}`);
+    expect(directives(contentSecurityPolicy('n', false))['img-src']).toBe(
+      `'self' data: blob: https://api.producthunt.com ${meta}`,
+    );
   });
 
-  it('lets only the captcha, the walkthrough video and the sales calendar draw frames', () => {
+  it('allows the live Product Hunt badge host in img-src only', () => {
+    const d = directives(contentSecurityPolicy('n', false));
+    expect(d['img-src']).toContain('https://api.producthunt.com');
+    expect(d['connect-src']).not.toContain('producthunt.com');
+    expect(d['script-src']).not.toContain('producthunt.com');
+  });
+
+  it('lets only the captcha and the sales calendar draw frames', () => {
     expect(directives(contentSecurityPolicy('n', false))['frame-src']).toBe(
-      'https://challenges.cloudflare.com https://www.loom.com https://calendly.com',
+      'https://challenges.cloudflare.com https://calendly.com',
     );
   });
 

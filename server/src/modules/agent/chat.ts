@@ -29,6 +29,7 @@ export { lastRun, hasReplayableSteps } from './recorder.ts';
 export { elementIndex, analysisText, elementList, pageGuide } from './element-index.ts';
 export { PAGE_FORMAT } from './constants.ts';
 export { NEEDS_INPUT, billUsage } from './loop.ts';
+export { resumableRuns, runKey, type HeldRun } from './resumable-runs.ts';
 export { requireLlmAllowed, allowedLlm } from './llm-policy.ts';
 export { executeTool } from './executor.ts';
 export { LIBRARY_TOOL_NAMES } from './library-tools.ts';
@@ -52,11 +53,16 @@ function enforceBudget(apiKey, own) {
   );
 }
 
-/** What a key with no model is told: what to configure and the three ways to do it. */
+/**
+ * What a key with no model is told. The in-code option comes first: a developer
+ * running a first script is in their code, not in a settings page, and sending
+ * them to `oya init` is what made the README's first run feel broken.
+ */
 const noLlm = () =>
   new HttpError(
     Status.UNPROCESSABLE,
-    "No LLM key configured for this project. Add yours in the desktop app's Ask panel or in Settings > AI model, run `oya init`, or POST /api/config.",
+    "No LLM key configured for this project. Pass one in code: new Oya({ model: { provider: 'anthropic', apiKey: '<your key>' } }). " +
+      "Or save one for the key in the desktop app's Ask panel, in Settings > AI model, or with `oya init`.",
     { code: 'llm_unconfigured' },
   );
 

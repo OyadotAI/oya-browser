@@ -112,6 +112,15 @@ followed by the brief: the person's ask in their own words and what the previous
 verbatim. Wait for it to finish before starting the next stage. Do not do a stage's work yourself
 instead of spawning it.
 
+**Keep the team fast.** Give each stage the original ask, the relevant changed paths and the
+previous stage's result verbatim, rather than the entire conversation. Reuse the same member
+for related follow-up work. Start with affected files, their callers and relevant tests; reuse
+concrete evidence already gathered. Check uncertainty where it affects your assigned decision,
+and expand the investigation only for a concrete risk. Read the role's relevant references once;
+batch independent reads and searches. Keep routine handoffs under 200 words, adding the source
+evidence and coverage limits a finding needs. Do not repeat a passed check without a new change,
+failure or unresolved risk. Keep the required stage order and the project's own rules.
+
 1. **`pm`** — given the ask in the person's own words. Returns build / change / cut / not yet,
    and the smallest version worth shipping with its out-list. *Build* and *change* carry on, to
    the scope the PM set. **`cut` and `not yet` stop the pipeline and go back to the person**, with
@@ -137,8 +146,8 @@ instead of spawning it.
 do not require unrelated pipeline stages. `oya-browser` is the browser specialist for research,
 web interaction, screenshots and browser QA. Use Oya exclusively for all browser work; if its
 connection is unavailable, report the blocker and never substitute another provider. Inside Keel,
-Keel's own browser (the `browser_*` tools on server `keel`, the lane's Browser tab) is the browser
-and Oya's tools are withheld on purpose; use it the same way. The team
+use the `browser_*` tools on server `keel`. They use the browser selected for the session: Inside
+Keel or the person's local Oya Browser. Keep to owned tabs and report connection failures. The team
 ships role playbooks, specialist engineering skills, and Oya research with supporting assets.
 Use `/handoff` when a session transfer is requested. Load `writing-for-agents` when editing
 agent instructions or skills; these workflows do not change a member's permissions.

@@ -1,0 +1,87 @@
+<!-- Displays the exact captured image from this tool result, without another browser request. -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser screenshot</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font:
+          1rem system-ui,
+          sans-serif;
+      }
+      body {
+        margin: 0;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      p {
+        margin: 0;
+        padding: 1rem;
+      }
+      [hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <img id="capture" hidden alt="Captured browser page" />
+    <p id="caption" hidden></p>
+    <p id="status" role="status">Loading screenshot…</p>
+    <script>
+      (() => {
+        const image = document.getElementById('capture');
+        const status = document.getElementById('status');
+        const send = (message) => window.parent.postMessage({ jsonrpc: '2.0', ...message }, '*');
+        const resize = () =>
+          send({
+            method: 'ui/notifications/size-changed',
+            params: { width: document.body.clientWidth, height: document.body.offsetHeight },
+          });
+        const failed = () => {
+          image.hidden = true;
+          status.hidden = false;
+          status.textContent = 'Screenshot unavailable. Ask to capture this page again.';
+          resize();
+        };
+        image.onload = () => {
+          status.hidden = true;
+          image.hidden = false;
+          resize();
+        };
+        image.onerror = failed;
+        window.addEventListener('message', (event) => {
+          const msg = event.data;
+          if (event.source !== window.parent || msg?.jsonrpc !== '2.0') return;
+          if (msg.id === 1 && !msg.method && msg.result) send({ method: 'ui/notifications/initialized', params: {} });
+          if (msg.method !== 'ui/notifications/tool-result') return;
+          const shot = msg.params?._meta?.capture || msg.params?.content?.find((item) => item.type === 'image');
+          const label = msg.params?._meta?.caption;
+          if (typeof label === 'string') {
+            image.alt = label;
+            const caption = document.getElementById('caption');
+            caption.textContent = label;
+            caption.hidden = label === 'Browser screenshot';
+          }
+          if (!shot?.data || !['image/png', 'image/jpeg', 'image/webp'].includes(shot.mimeType)) return failed();
+          image.src = 'data:' + shot.mimeType + ';base64,' + shot.data;
+        });
+        new ResizeObserver(resize).observe(document.body);
+        send({
+          id: 1,
+          method: 'ui/initialize',
+          params: {
+            protocolVersion: '2026-01-26',
+            appInfo: { name: 'oya-screenshot', version: '1.0.0' },
+            appCapabilities: {},
+          },
+        });
+      })();
+    </script>
+  </body>
+</html>

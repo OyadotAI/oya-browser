@@ -115,4 +115,43 @@ describe('agent tools over MCP', () => {
     const reply = await server.call('run_playbook', { name: 'nope' });
     assert.match(reply.content[0].text, /no playbook named "nope"/);
   });
+
+  it('runs a connector’s call on its acquired browser, leading with the start note', async () => {
+    scriptedOyaBrowser(B, 'key-a', () => ({ ok: true, data: { found: true } }));
+    const server = new FakeMcpServer();
+    const acquire = async () => ({ id: B, note: 'Started a browser for this chat.' });
+    registerBrowserTools(server as any, { pick: () => null, connector: true, acquire, only: ['wait_for'] });
+    const reply = await server.call('wait_for', { text: 'Done' });
+    assert.match(reply.content[0].text, /^Started a browser for this chat\.\n/);
+  });
+
+  it('refuses a connector’s call with the reason when no browser could be acquired', async () => {
+    const server = new FakeMcpServer();
+    const acquire = async () => ({ error: 'Could not start a browser: quota. Tell the person this reason.' });
+    registerBrowserTools(server as any, { pick: () => null, connector: true, acquire, only: ['wait_for'] });
+    const reply = await server.call('wait_for', { text: 'Done' });
+    assert.deepEqual(
+      [reply.isError, reply.content[0].text],
+      [true, 'Error: Could not start a browser: quota. Tell the person this reason.'],
+    );
+  });
+
+  it('cancels a dialog holding the page after a connector’s failed call', async () => {
+    const sent: string[] = [];
+    scriptedOyaBrowser(B, 'key-a', (action) => {
+      sent.push(action);
+      return action === 'handle_dialog' ? { ok: true, data: {} } : { ok: false, error: 'The page asked "Leave?"' };
+    });
+    const server = new FakeMcpServer();
+    registerBrowserTools(server as any, {
+      pick: () => null,
+      connector: true,
+      acquire: async () => ({ id: B }),
+      only: ['wait_for'],
+    });
+    const reply = await server.call('wait_for', { text: 'Done' });
+    assert.equal(reply.isError, true);
+    assert.match(reply.content[0].text, /Oya dismissed it with Cancel\./);
+    assert.equal(sent.at(-1), 'handle_dialog');
+  });
 });

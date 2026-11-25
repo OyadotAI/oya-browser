@@ -71,6 +71,15 @@ describe('the command path checks the vocabulary before the browser is asked', (
     await sent;
   });
 
+  it('answers 503 browser_disconnected and balances pending when the Oya socket write fails', async () => {
+    const ws = new FakeSocket();
+    ws.failWith = new Error('WebSocket is not open: readyState 3');
+    registry.add(OYA, { ws, apiKey: 'k', name: 'D', clientType: 'oya' });
+    const err = await sendCommand(OYA, 'click', {}).catch((e) => e);
+    assert.deepEqual([err.status, err.code], [503, 'browser_disconnected']);
+    assert.equal(registry.get(OYA).pending, 0);
+  });
+
   it('lists what the browser does on its detail: the CDP list, or what an Oya app announced', () => {
     assert.ok(registry.describe(CDP).actions.includes('back'));
     registry.add(OYA, { ws: new FakeSocket(), apiKey: 'k', name: 'D', clientType: 'oya' });

@@ -34,16 +34,36 @@ it('requires boolean confirmation and preserves bookmarks when clearing history'
   assert.equal((await run('search_history')).data.total, 0);
   assert.equal((await run('list_bookmarks')).data.total, 1);
 });
-it('lists closed web tabs and refuses reopening local files', async () => {
+it('lists closed web tabs, skips non-web entries, and assigns the reopened tab to the calling lane without stealing focus', async () => {
+  await ctx.commands.handleCommand({
+    id: 'seed',
+    lane: 'mcp-1',
+    action: 'open_tab',
+    params: { url: 'https://seed.test/' },
+  });
+  const humanTab = ctx.tabs.createTab('https://human.test/', true);
+  ctx.control.state = { mode: 'agent', mine: false, interactive: false, connected: true, localClients: 0 };
+  (ctx.agentTab as any).claims.set('mcp-1', 1);
+  ctx.tabs.activateTab(humanTab);
   ctx.tabs.closed.push('https://a.test/', 0);
   ctx.tabs.closed.push('file:///private', 1);
   assert.equal((await run('list_closed_tabs')).data.tabs.length, 1);
-  assert.equal((await run('reopen_closed_tab')).ok, false);
-  assert.equal(ctx.tabs.closed.size, 2);
-  ctx.tabs.closed.pop();
-  assert.equal((await run('reopen_closed_tab')).data.reopened, true);
-  assert.equal(ctx.tabs.find(ctx.tabs.activeTabId).url, 'https://a.test/');
-  assert.equal((await run('reopen_closed_tab')).data.reopened, false);
+  await ctx.commands.handleCommand({ id: 'reopen-1', lane: 'mcp-1', action: 'reopen_closed_tab' });
+  const reopened = ctx.socket.ofType('cmd_result').at(-1);
+  assert.equal(reopened.data.reopened, true);
+  assert.equal(ctx.tabs.find(reopened.data.tab_id).url, 'https://a.test/');
+  assert.equal(ctx.tabs.activeTabId, humanTab, 'background agent does not steal the active human tab');
+  assert.deepEqual([...ctx.tabs.closed.entries.map((e) => e.url)], ['file:///private']);
+  await ctx.commands.handleCommand({
+    id: 'close-1',
+    lane: 'mcp-1',
+    action: 'close_tab',
+    params: { tab_id: reopened.data.tab_id },
+  });
+  assert.equal(ctx.socket.ofType('cmd_result').at(-1).ok, true, 'lane owns the tab it reopened');
+  ctx.tabs.closed.entries.pop(); // drop the re-closed https://a.test/
+  assert.equal((await run('reopen_closed_tab')).data.reopened, false, 'file:///private is never reopened by an agent');
+  assert.equal(ctx.tabs.closed.size, 1);
 });
 it('reports protection failure instead of claiming successful reopening', async () => {
   ctx.tabs.closed.push('https://a.test/', 0);

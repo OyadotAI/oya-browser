@@ -1,5 +1,19 @@
 # Admin plan access and usage grants
 
+Hosted checkout prices are configured by `STRIPE_PRICES_DEVELOPER` and
+`STRIPE_PRICES_STARTUP`: the current base price comes first, followed by the
+four metered prices. Preserve every previously sold base price in
+`STRIPE_LEGACY_BASE_PRICES_DEVELOPER` or `STRIPE_LEGACY_BASE_PRICES_STARTUP`.
+These extra IDs keep existing subscriptions on their paid plan when Stripe
+sends a webhook; they are never added to a new checkout.
+
+Before changing a checkout bundle, deploy compatibility with both old and new
+base IDs recognized on every replica. Replace only the base ID, keeping
+metered prices unchanged. Keep both generations recognized during rollback.
+Changing a checkout bundle does not migrate existing subscriptions or invoices.
+The development deployment does not enable hosted Stripe billing; do not add
+the production Stripe key there as part of a price change.
+
 In **Admin → Customers**, look up the customer's email. Their customer panel
 contains **Plan access** and **Extra allowance**. Both actions require a reason
 and the existing administrator authentication (including MFA when configured).

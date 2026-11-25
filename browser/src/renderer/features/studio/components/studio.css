@@ -49,12 +49,12 @@
   padding: 28px 12px;
   text-align: center;
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: 0;
 }
 .empty-icon {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--accent-soft);
   color: var(--accent);
   margin: 0 auto 16px;
@@ -218,7 +218,7 @@
 }
 .studio-step.selected {
   border-color: var(--border);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  background: color-mix(in srgb, var(--accent-fill) 7%, var(--surface));
 }
 .studio-step.disabled {
   opacity: 0.5;
@@ -342,7 +342,7 @@
 .studio-save-state.error,
 .run-event.failed,
 .run-event.outcome-unknown {
-  color: #d98876;
+  color: var(--danger);
 }
 .studio-issue {
   padding: 8px 18px;
@@ -360,8 +360,8 @@
   margin: 0 18px 14px;
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent-fill) 5%, var(--surface));
   flex-shrink: 0;
 }
 .finish-heading p,
@@ -395,7 +395,7 @@
   min-height: 1.6em;
 }
 .code-line.selected {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 15%, transparent);
   outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .code-line-number {
@@ -409,7 +409,7 @@
 }
 .count-badge {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--muted-surface);
   font-size: 11px;
   line-height: 16px;
@@ -468,7 +468,7 @@
 .record-finish {
   border: 0;
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  background: color-mix(in srgb, var(--accent-fill) 5%, var(--surface));
   box-shadow: var(--shadow-xs);
 }
 /* ════════════════════════════════════════════════════════════════════════
@@ -526,7 +526,7 @@
 }
 #record-toggle.recording {
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--danger) 40%, transparent);
 }
 #record-toggle.recording .record-dot {
@@ -571,7 +571,7 @@
   padding: 14px;
   border: 0;
   border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  background: color-mix(in srgb, var(--accent-fill) 5%, var(--surface));
   box-shadow: var(--shadow-xs);
 }
 .record-finish h3 {

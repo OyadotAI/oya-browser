@@ -39,4 +39,20 @@ describe('storageConfig', () => {
     assert.throws(() => storageConfig({ SUPABASE_URL: 'https://x.supabase.co' }), /needs OYA_STORAGE=postgres/);
     storageConfig({ SUPABASE_URL: 'https://x.supabase.co', OYA_STORAGE: 'postgres', DATABASE_URL: URL });
   });
+
+  it("reads Keel's own database from KEEL_DATABASE_URL", () => {
+    const config = storageConfig({
+      OYA_STORAGE: 'postgres',
+      DATABASE_URL: 'postgres://h/main',
+      KEEL_DATABASE_URL: 'postgres://h/keel',
+    });
+    assert.equal(config.keelDatabaseUrl, 'postgres://h/keel');
+  });
+
+  it("refuses KEEL_DATABASE_URL beside SQLite or files, which would split Keel's rows across two stores", () => {
+    assert.throws(
+      () => storageConfig({ OYA_STORAGE: 'sqlite', KEEL_DATABASE_URL: 'postgres://h/keel' }),
+      /KEEL_DATABASE_URL is set/,
+    );
+  });
 });

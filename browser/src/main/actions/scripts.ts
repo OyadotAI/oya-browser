@@ -34,35 +34,27 @@ const FIND_ELEMENT_JS = `(() => {
   }
   // Check the target document and every containing frame. Never bypass an
   // overlay using synthetic events, including an overlay outside an iframe.
-  const reaches = (r) => {
-    let target = el, x = r.x + r.width / 2, y = r.y + r.height / 2;
-    while (target) {
-      const doc = target.ownerDocument;
-      let top = doc.elementFromPoint(x, y);
-      while (top !== target && !target.contains(top) && top?.shadowRoot?.elementFromPoint) {
-        const inner = top.shadowRoot.elementFromPoint(x, y);
-        if (!inner || inner === top) break;
-        top = inner;
-      }
-      if (!top || (top !== target && !target.contains(top))) return false;
-      if (doc === document) return true;
-      const frame = doc.defaultView.frameElement;
-      if (!frame) return false;
-      const bounds = frame.getBoundingClientRect();
-      x += bounds.x + frame.clientLeft;
-      y += bounds.y + frame.clientTop;
-      target = frame;
+  const reachable = () => {
+    if (window.__acReachablePoint) return window.__acReachablePoint(el);
+    const win = el.ownerDocument.defaultView;
+    for (const r of el.getClientRects()) {
+      const left=Math.max(0,r.left),top=Math.max(0,r.top),right=Math.min(win.innerWidth,r.right),bottom=Math.min(win.innerHeight,r.bottom);
+      if(right<=left || bottom<=top) continue;
+      const x=(left+right)/2,y=(top+bottom)/2,hit=el.getRootNode().elementFromPoint?.(x,y);
+      if(hit && (hit===el || el.contains(hit)) && el.ownerDocument===document) return {x,y};
     }
-    return false;
+    return null;
   };
-  if (!reaches(rect)) {
+  let point = reachable();
+  if (!point) {
     el.scrollIntoView({ behavior: 'instant', block: 'start' });
     window.scrollBy(0, -100);
     rect = el.getBoundingClientRect();
+    point = reachable();
   }
-  const covered = !reaches(rect);
+  const covered = !point;
   const ownerDoc = el.ownerDocument;
-  const offset = ownerDoc === document ? { x: 0, y: 0 } : window.__acFrameOffset?.(el);
+  const offset = window.__acReachablePoint || ownerDoc === document ? { x: 0, y: 0 } : window.__acFrameOffset?.(el);
   if (!offset) return { ok: false, error: 'Native frame coordinates are unavailable' };
   const offsetX = offset.x;
   const offsetY = offset.y;
@@ -74,8 +66,8 @@ const FIND_ELEMENT_JS = `(() => {
   return {
     ok: true,
     data: {
-      x: rect.x + rect.width / 2 + offsetX,
-      y: rect.y + rect.height / 2 + offsetY,
+      x: (point ? point.x : rect.x + rect.width / 2) + offsetX,
+      y: (point ? point.y : rect.y + rect.height / 2) + offsetY,
       tag: el.tagName,
       editable: el.isContentEditable,
       inIframe: ownerDoc !== document,
@@ -235,6 +227,42 @@ function waitMs(params: CommandParams | undefined): number {
   return Number.isFinite(ms) && ms > 0 ? ms : ELEMENT_WAIT_MS;
 }
 
+/** The text a wait is for, or null when it waits for an element. Only a non-empty string counts. */
+const waitText = (params: CommandParams | undefined): string | null =>
+  typeof params?.text === 'string' && params.text ? params.text : null;
+
+/**
+ * What a wait tests on each poll. Text goes into the script as a JSON string, so it is data and
+ * can never run; it is looked for in what the main document shows, which is what a person reads.
+ */
+function waitTestJs(params: CommandParams | undefined): string {
+  const text = waitText(params);
+  if (text === null) return presentJs(params?.selector);
+  return `Boolean(document.body && document.body.innerText.includes(${JSON.stringify(text)}))`;
+}
+
+/**
+ * What a wait that ran out says, as a script literal. A wait for text names the text and the next
+ * step, because "Timeout" alone left an agent retrying the same wait.
+ */
+function waitErrorJs(params: CommandParams | undefined): string {
+  const text = waitText(params);
+  if (text === null) return "'Timeout'";
+  const shown = JSON.stringify(text);
+  return JSON.stringify(
+    `Timed out after ${waitMs(params)} ms: ${shown} did not show. Analyze the page to see what it shows instead.`,
+  );
+}
+
+/**
+ * The script for a wait given neither text nor a selector, or null when it has one. It fails at
+ * once and says what to give: polling for nothing used the whole timeout to answer "Timeout".
+ */
+const nothingToWaitFor = (params: CommandParams | undefined): string | null =>
+  waitText(params) === null && !params?.selector
+    ? "({ ok: false, error: 'Nothing to wait for. Give text or a selector.' })"
+    : null;
+
 /** The dev panel's wait: polls a plain CSS selector until it matches or times out. */
 export const devWaitJs = (params: CommandParams): string =>
   `(async () => { const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (document.querySelector(${JSON.stringify(params.selector)})) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`;
@@ -244,9 +272,13 @@ export const ACTION_SCRIPTS: Readonly<Record<string, (params: CommandParams | un
   /** The analyzer's read of the page. */
   analyze: (params) =>
     `(typeof analyzePage === 'function') ? analyzePage(${JSON.stringify(params || {})}) : { ok: false, error: 'Analyzer not loaded' }`,
-  /** Polls for an element (an analyzer id or CSS, in the page or its iframes) until it appears or the wait runs out. */
+  /**
+   * Polls until an element appears (an analyzer id or CSS, in the page or its iframes) or, when
+   * `text` is given, until the page shows that text, and fails when the wait runs out.
+   */
   wait: (params) =>
-    `(async () => { const present = () => ${presentJs(params?.selector)}; const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: 'Timeout' }; })()`,
+    nothingToWaitFor(params) ??
+    `(async () => { const present = () => ${waitTestJs(params)}; const maxWait = ${waitMs(params)}; const start = Date.now(); while (Date.now() - start < maxWait) { if (present()) return { ok: true, data: { found: true } }; await new Promise(r => setTimeout(r, 250)); } return { ok: false, error: ${waitErrorJs(params)} }; })()`,
   /** The visible elements matching a selector, in the page and its iframes. */
   read_page: (params) => readElementsJs(params?.selector, params?.limit),
 };

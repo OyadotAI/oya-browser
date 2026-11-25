@@ -3,6 +3,7 @@
  * it tries to open, and its right-click menu. Wired once, when the tab is made,
  * along with its protection before the first page (tab-protector.ts).
  */
+import { installPointerFocusFence } from '../input/index.ts';
 import { privateSession } from '../native-contexts/index.ts';
 import { isIncognito } from '../incognito/index.ts';
 import type { AppServices } from '../app/services.ts';
@@ -105,14 +106,22 @@ export class TabEvents {
   private wireLoadState(tab: Tab): void {
     const contents = tab.view.webContents;
     this.deps.shortcuts.install(contents);
-    // Only the agent's own tab hands focus back to the shell; the person types into any other.
-    contents.on('focus', () => !this.deps.agentTab.humanMay(tab.id) && this.deps.shield.keepFocusOnShell());
+    this.wirePointerFocus(tab);
     contents.on('did-start-loading', () => {
       // A tab that could not be protected keeps saying so: nothing it starts will load.
       if (tab.protection !== 'failed') tab.loadError = null;
       this.deps.tabs.sendTabList();
     });
     contents.on('did-stop-loading', () => this.deps.tabs.sendTabList());
+  }
+
+  /** Exempt only exact synchronous native pointer focus from the existing shield reclamation. */
+  private wirePointerFocus(tab: Tab): void {
+    installPointerFocusFence(
+      tab.view.webContents,
+      () => this.deps.agentTab.humanMay(tab.id),
+      () => this.deps.shield.keepFocusOnShell(),
+    );
   }
 
   /** Puts an error on the tab and stops its spinner. */

@@ -12,7 +12,7 @@ export type Row = Record<string, any>;
 
 /**
  * A filter, every entry of which must hold. A plain value is equality, null is
- * "is null", `{ gte }` is a lower bound and `{ notIn }` excludes a list.
+ * "is null", `{ gte }`/`{ lte }` are inclusive bounds and `{ notIn }` excludes a list.
  */
 export type Where = Record<string, unknown>;
 

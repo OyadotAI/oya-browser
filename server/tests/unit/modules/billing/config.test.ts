@@ -6,7 +6,13 @@ import assert from 'node:assert/strict';
 import { hosted, planOfPrice, pricesFor } from '../../../../src/modules/billing/config.ts';
 
 /** The variables these tests set. */
-const NAMES = ['STRIPE_SECRET_KEY', 'STRIPE_PRICES_DEVELOPER', 'STRIPE_PRICES_STARTUP'];
+const NAMES = [
+  'STRIPE_SECRET_KEY',
+  'STRIPE_PRICES_DEVELOPER',
+  'STRIPE_PRICES_STARTUP',
+  'STRIPE_LEGACY_BASE_PRICES_DEVELOPER',
+  'STRIPE_LEGACY_BASE_PRICES_STARTUP',
+];
 
 describe('billing config', () => {
   afterEach(() => NAMES.forEach((n) => delete process.env[n]));
@@ -28,5 +34,25 @@ describe('billing config', () => {
     assert.equal(planOfPrice('base_start'), 'startup');
     assert.equal(planOfPrice('base_dev'), 'developer');
     assert.equal(planOfPrice('min_dev'), 'free');
+  });
+
+  it('recognizes earlier base prices without including them in checkout bundles', () => {
+    process.env.STRIPE_PRICES_DEVELOPER = 'new_dev,min_dev';
+    process.env.STRIPE_PRICES_STARTUP = 'new_start,min_start';
+    process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER = ' old_dev,older_dev,, ';
+    process.env.STRIPE_LEGACY_BASE_PRICES_STARTUP = 'old_start';
+    for (const price of ['new_dev', 'old_dev', 'older_dev']) assert.equal(planOfPrice(price), 'developer');
+    for (const price of ['new_start', 'old_start']) assert.equal(planOfPrice(price), 'startup');
+    for (const price of ['min_dev', 'min_start', 'unknown', '']) assert.equal(planOfPrice(price), 'free');
+    assert.deepEqual(pricesFor('developer'), ['new_dev', 'min_dev']);
+  });
+
+  it('retains existing plan recognition when new subscriptions are not on sale, and grants Free when unset', () => {
+    assert.equal(planOfPrice(undefined), 'free');
+    assert.equal(planOfPrice(''), 'free');
+    process.env.STRIPE_LEGACY_BASE_PRICES_DEVELOPER = 'old_dev';
+    assert.equal(planOfPrice('old_dev'), 'developer');
+    assert.equal(planOfPrice(undefined), 'free');
+    assert.deepEqual(pricesFor('developer'), []);
   });
 });

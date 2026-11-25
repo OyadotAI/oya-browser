@@ -70,7 +70,7 @@ function ControlPlane() {
           client rects stay byte-identical across restarts, bound to a dedicated cookie jar and proxy.
         </li>
         <li>
-          <strong>Sign-In-Once Desktop Pairing:</strong> Transfer authenticated sessions from real desktop Chrome (with
+          <strong>Sign-In-Once Desktop Pairing:</strong> Transfer authenticated sessions from the Oya desktop app (with
           WebAuthn, passkeys, and Google SSO) to remote personas via single-use encrypted codes.
         </li>
         <li>

@@ -8,6 +8,7 @@ import { authenticateToken } from '../../auth/service.ts';
 import { Status } from '../../../platform/http-status.ts';
 import { BEARER_PREFIX } from '../http/constants.ts';
 import { ownerFor } from './owner.ts';
+import { recallSeat } from '../../../mcp/seat-store.ts';
 import { hopHeader, refuseRehop, retarget, verifyHop } from './hop.ts';
 import { HEADER_TIMEOUT_MS } from './constants.ts';
 
@@ -16,7 +17,16 @@ const OWNED = /^\/(?:api\/(?:browsers|live|control\/sessions|gateway\/sessions)|
 /** Collection routes under the same prefixes, which any replica serves. */
 const COLLECTIONS = ['start', 'stop', 'connect', 'provision', 'disconnect-all', 'pool'];
 // MCP streamable HTTP carries its session and resumption state in headers, in both directions.
-const FORWARD_HEADERS = ['accept', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
+// The X-Oya-Llm-* headers are the caller's model (`new Oya({ model })`): dropped, the owner would run the saved one.
+const FORWARD_HEADERS = [
+  'accept',
+  'mcp-session-id',
+  'mcp-protocol-version',
+  'last-event-id',
+  'x-oya-llm-provider',
+  'x-oya-llm-model',
+  'x-oya-llm-api-key',
+];
 /** Response headers passed back from the owner. */
 const RETURN_HEADERS = [
   'content-type',
@@ -33,12 +43,30 @@ const RETURN_HEADERS = [
  */
 export async function forwardHttp(req, res, next) {
   const match = (req.baseUrl + req.path).match(OWNED);
-  if (!match || COLLECTIONS.includes(match[1])) return next();
+  if (!match) return next();
   try {
-    await forwardOwned(req, res, next, match[1]);
+    const id = COLLECTIONS.includes(match[1]) ? await seatBrowser(req) : match[1];
+    await (id ? forwardOwned(req, res, next, id) : next());
   } catch (e) {
     answerFailure(res, e);
   }
+}
+
+/** The MCP pool endpoint, which any replica serves except for a chat connector with a browser elsewhere. */
+const POOL_PATH = '/mcp/pool';
+
+/**
+ * The browser a chat connector's pool request belongs with, or undefined for every other
+ * collection request. A connector drives one browser, connected to one replica; during a
+ * rollout that is the draining one while requests reach the new one, which would otherwise
+ * find no browser and start a second. Anything that cannot be resolved is served here.
+ */
+async function seatBrowser(req): Promise<string | undefined> {
+  if (req.baseUrl + req.path !== POOL_PATH || !process.env.OYA_INSTANCE_URL) return undefined;
+  const token = req.headers.authorization?.slice(BEARER_PREFIX.length);
+  const principal = token ? await authenticateToken(token).catch(() => null) : null;
+  if (!principal?.connector || !principal.credentialId) return undefined;
+  return recallSeat(String(principal.credentialId)).catch(() => undefined);
 }
 
 /** Serves locally, or proxies to the owner of `id`. */

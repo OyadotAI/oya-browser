@@ -1,0 +1,13 @@
+# Builds the browser image from source instead of pulling it. Needs the verified
+# Linux x64 Oya engine, which is not in this repository:
+#
+#   OYA_NATIVE_LINUX_DIRECTORY=/path/to/linux-x64 \
+#     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+services:
+  browser:
+    # Not oya-browser:local: update.sh treats that name as the governed image.
+    image: oya-browser:source
+    build:
+      context: browser
+      additional_contexts:
+        native-engine: ${OYA_NATIVE_LINUX_DIRECTORY:?Set OYA_NATIVE_LINUX_DIRECTORY to the verified Linux x64 Oya engine}

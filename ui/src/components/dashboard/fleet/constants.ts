@@ -13,6 +13,8 @@ export interface Column {
   key: SortKey;
   /** Heading text; empty for the health dot column. */
   label: string;
+  /** Classes that hide the column on narrow screens, so a phone keeps the name, status and Stop in view. */
+  hide?: string;
   /** Width and alignment classes. */
   className: string;
 }
@@ -35,14 +37,17 @@ export const TABLE_COL_SPAN = 10;
 /** The sortable columns, in display order. */
 export const COLUMNS: Column[] = [
   { key: 'health', label: '', className: 'w-6' },
-  { key: 'name', label: 'Browser', className: 'w-[22%]' },
-  { key: 'persona', label: 'Persona', className: 'w-[140px]' },
-  { key: 'provider', label: 'Provider', className: 'w-[120px]' },
-  { key: 'currentUrl', label: 'Current page', className: '' },
-  { key: 'commands', label: 'Cmds · Err', className: 'w-[100px] text-right' },
+  { key: 'name', label: 'Browser', className: 'w-[22%] max-sm:w-auto' },
+  { key: 'persona', label: 'Persona', hide: 'max-md:hidden', className: 'w-[140px]' },
+  { key: 'provider', label: 'Provider', hide: 'max-md:hidden', className: 'w-[120px]' },
+  { key: 'currentUrl', label: 'Current page', hide: 'max-sm:hidden', className: '' },
+  { key: 'commands', label: 'Cmds · Err', hide: 'max-md:hidden', className: 'w-[100px] text-right' },
   { key: 'lastSeen', label: 'Seen', className: 'w-[64px] text-right' },
-  { key: 'connectedAt', label: 'Up', className: 'w-[72px] text-right' },
+  { key: 'connectedAt', label: 'Up', hide: 'max-md:hidden', className: 'w-[72px] text-right' },
 ];
 
 /** The filter with everything cleared. */
 export const NO_FILTER = { health: null, provider: null, persona: null, text: '' } as const;
+
+/** The narrow-screen hide classes of a column, so its heading and its cells disappear together. */
+export const hideClass = (key: SortKey) => COLUMNS.find((c) => c.key === key)?.hide ?? '';

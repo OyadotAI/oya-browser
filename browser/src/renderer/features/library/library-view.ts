@@ -7,7 +7,7 @@ import {
   type LibraryAction,
   type LibraryPresentation,
 } from '../../../shared/library.ts';
-import { matching, sites, dayLabel, type LibrarySort } from './library-model.ts';
+import { matching, sites, host, dayLabel, type LibrarySort } from './library-model.ts';
 import { heading, emptyState } from './library-copy.ts';
 import { text, row, button, downloadRow } from './library-dom.ts';
 /** Library calls remain on the trusted shell bridge. */
@@ -152,6 +152,7 @@ export class LibraryView {
   }
   /** Summary, site filters and results stay aligned after every operation. */
   private render(): void {
+    if (this.site && !this.data[this.kind].some((page) => host(page) === this.site)) this.site = '';
     const pages = matching(this.data[this.kind], this.query, this.site, this.sort);
     heading(this.root, this.kind, this.data[this.kind].length, pages.length, this.site);
     this.siteFilters();

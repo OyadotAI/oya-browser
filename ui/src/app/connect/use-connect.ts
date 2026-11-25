@@ -10,13 +10,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth-provider';
 import { call, message } from '@/components/dashboard/projects/project-api';
-import type { Project } from '@/components/dashboard/projects/types';
-import { forgetConnect, pendingConnect, rememberConnect } from '@/lib/connect';
+import type { Failure, Project } from '@/components/dashboard/projects/types';
+import { FIRST_PROJECT_NAME, HttpStatus } from '@/components/dashboard/projects/constants';
+import { createApiKey } from '@/lib/api';
+import { forgetConnect, lastProject, pendingConnect, rememberConnect, rememberProject } from '@/lib/connect';
 
 /** Where the request stands. */
 export interface ConnectState {
-  /** Loading, waiting on a sign-in, ready to answer, answering, refused, or no request in the link. */
-  status: 'loading' | 'signed-out' | 'ready' | 'working' | 'failed' | 'missing';
+  /** Loading, waiting on a sign-in, ready to answer, answering, refused, expired, or no request in the link. */
+  status: 'loading' | 'signed-out' | 'ready' | 'working' | 'failed' | 'expired' | 'missing';
   /** The app asking. */
   client?: string;
   /** The host the answer goes back to. */
@@ -67,9 +69,23 @@ async function load(token: string, id: string): Promise<ConnectState> {
   const path = `/auth/connect/${encodeURIComponent(id)}`;
   const [asking, projects] = await Promise.all([
     call<Asking>(token, path, {}, 'Could not load this request'),
-    call<Project[]>(token, '/auth/projects', {}, 'Could not load projects'),
+    projectsOf(token),
   ]);
   return { status: 'ready', ...asking, projects: projects.filter((p) => p.role !== 'viewer') };
+}
+
+/** The account's projects, as /auth/projects lists them. */
+const listProjects = (token: string) => call<Project[]>(token, '/auth/projects', {}, 'Could not load projects');
+
+/**
+ * The account's projects. Someone who just signed up from the chat app has none yet, and would
+ * be told to ask an administrator: they get the first project the dashboard would have made.
+ */
+async function projectsOf(token: string) {
+  const projects = await listProjects(token);
+  if (projects.length) return projects;
+  await createApiKey(token, FIRST_PROJECT_NAME);
+  return listProjects(token);
 }
 
 /** The redirect as a URL to follow, refusing anything but http(s): a javascript: one would run on this origin. */
@@ -85,7 +101,20 @@ async function answer(token: string, id: string, verb: 'allow' | 'deny', project
   const init = { method: 'POST', body: JSON.stringify(project ? { project } : {}) };
   const { redirect } = await call<Answered>(token, `/auth/connect/${encodeURIComponent(id)}/${verb}`, init);
   forgetConnect();
+  if (project) rememberProject(project);
   window.location.assign(followable(redirect));
+}
+
+/**
+ * A request the server no longer holds (410: it expired or was answered) gets its
+ * own screen, telling the person to start again from the app; anything else is a
+ * failure they can retry.
+ */
+function refused(e: unknown): ConnectState {
+  if ((e as Failure)?.status !== HttpStatus.GONE) return { status: 'failed', error: message(e) };
+  // Forgotten, or every later sign-in in this tab would land back on the expired request.
+  forgetConnect();
+  return { status: 'expired' };
 }
 
 /** The request's state once the session is known. */
@@ -95,7 +124,7 @@ function useRequest(token: string | null, loading: boolean) {
     if (loading) return;
     const id = takeRequestFromUrl();
     if (!id || !token) return void queueMicrotask(() => setState({ status: id ? 'signed-out' : 'missing' }));
-    load(token, id).then(setState, (e) => setState({ status: 'failed', error: message(e) }));
+    load(token, id).then(setState, (e) => setState(refused(e)));
   }, [loading, token]);
   return [state, setState] as const;
 }
@@ -105,11 +134,17 @@ function useSend(token: string | null, project: string, setState: (next: (s: Con
   return useCallback(
     (verb: 'allow' | 'deny') => {
       setState((s) => ({ ...s, status: 'working' }));
-      const fail = (e: unknown) => setState((s) => ({ ...s, status: 'failed', error: message(e) }));
+      const fail = (e: unknown) => setState((s) => ({ ...s, ...refused(e) }));
       answer(token || '', pendingConnect(), verb, verb === 'allow' ? project : undefined).catch(fail);
     },
     [token, project, setState],
   );
+}
+
+/** The project the person connected last time, when they can still connect it; else their first. */
+function preselected(projects: Project[] = []) {
+  const last = lastProject();
+  return projects.find((p) => p.id === last)?.id || projects[0]?.id || '';
 }
 
 /** The connect page's state and answers. */
@@ -117,7 +152,7 @@ export function useConnect(): Connect {
   const { token, loading } = useAuth();
   const [state, setState] = useRequest(token, loading);
   const [chosen, setProject] = useState('');
-  const project = chosen || state.projects?.[0]?.id || '';
+  const project = chosen || preselected(state.projects);
   const send = useSend(token, project, setState);
   return { state, project, setProject, allow: () => send('allow'), deny: () => send('deny') };
 }

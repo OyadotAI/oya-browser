@@ -47,11 +47,11 @@ const CAPS: Record<string, string> = {
 
 /** Whether the event's modifiers are exactly the ones the binding asks for. */
 function modifiersMatch(e: KeyboardEvent, parts: string[], key: string): boolean {
-  const mod = IS_MAC ? e.metaKey : e.ctrlKey;
-  if (parts.includes('mod') !== mod) return false;
-  if (parts.includes('alt') !== e.altKey) return false;
-  // '?' already implies shift on most layouts; do not require it twice.
-  return !(parts.includes('shift') && !e.shiftKey && key !== '?');
+  const [mod, other] = IS_MAC ? [e.metaKey, e.ctrlKey] : [e.ctrlKey, e.metaKey];
+  if (other || parts.includes('mod') !== mod || parts.includes('alt') !== e.altKey) return false;
+  // '?' already implies shift on most layouts; allow shift for it even when unwritten.
+  if (key === '?') return !parts.includes('shift') || e.shiftKey || e.key === '?';
+  return parts.includes('shift') === e.shiftKey;
 }
 
 /** Whether a keydown is the binding `keys`. */

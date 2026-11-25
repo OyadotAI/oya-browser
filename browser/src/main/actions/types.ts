@@ -11,8 +11,28 @@ export type CommandId = string | number;
  * optional: each command reads the few it needs and checks them itself.
  */
 export interface CommandParams {
+  /** Fixed local diagnostic operation, never arbitrary host code. */
+  kind?: string;
+  /** Opaque native document reference from framed reads. */
+  frame?: string;
+  /** Published diagnostic element number. */
+  element?: number;
+  /** Whether the element belongs to the framed-read registry. */
+  framed?: boolean;
+  /** Include descendant diagnostic frames. */
+  frames?: boolean;
   /** The address to load. */
   url?: string;
+  /** Fixed CSS width, kept independently of the native window. */
+  width?: number;
+  /** Fixed CSS height. */
+  height?: number;
+  /** Native pixel ratio, retained when omitted. */
+  deviceScaleFactor?: number;
+  /** True is rejected until touch emulation is supported. */
+  mobile?: boolean;
+  /** Restore native defaults rather than applying dimensions. */
+  reset?: boolean;
   /** The page format for an analysis, or 'jpeg' for a screenshot. */
   format?: string;
   /** The element to act on: an analyzer id selector or CSS. */

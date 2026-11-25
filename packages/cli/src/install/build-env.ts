@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Answers, Secrets } from './types.ts';
 import { DEFAULT_PORT, EGRESS_PORT, TOKEN_BYTES } from './constants.ts';
+import { MANAGED_KEYS, SECRET_KEYS } from './env-file.ts';
 
 /** .env values by variable name. */
 type Env = Record<string, string>;
@@ -80,9 +81,10 @@ const FLEETS: Record<string, FleetSettings> = {
   'oya-cloud': oyaCloud,
   'oya-selfhosted': governedDocker,
   k8s: kubernetes,
-  'docker-workers': (v) => {
-    v.OYA_BROWSER_PROVIDER = 'oya-selfhosted';
-  },
+  // Always-on workers dial in on their own, so no provider is named: a bare start()
+  // then borrows a connected worker. Naming oya-selfhosted sent every start to the
+  // managed launcher, which this fleet does not run, and start() failed on a fresh install.
+  'docker-workers': () => {},
 };
 
 /** The fleet's variables. */
@@ -132,10 +134,21 @@ const fleetTokenLines = () => [
 /** The server's storage driver for each database answer: Supabase is a Postgres, used only for sign-in on top. */
 const STORAGE_FOR: Record<string, string> = { sqlite: 'sqlite', postgres: 'postgres', supabase: 'postgres' };
 
+/** Preserves existing custom keys and non-empty secrets not replaced by this run's `secrets`. */
+function mergeSecrets(v: Env, existing: Env, secrets: Secrets): void {
+  for (const [k, val] of Object.entries(existing)) {
+    const keepSecret = SECRET_KEYS.has(k) && k !== 'OYA_METRICS_TOKEN';
+    if (val && (keepSecret || !MANAGED_KEYS.has(k)) && !v[k]) v[k] = val;
+  }
+  for (const [k, val] of Object.entries(secrets)) {
+    if (val !== undefined && val !== '') v[k] = val;
+  }
+}
+
 /** Every .env value for these answers. */
 export function buildEnv(a: Answers, secrets: Secrets, existing: Env): BuiltEnv {
   const { v, apiKey } = baseSecrets(a, existing);
-  Object.assign(v, secrets);
+  mergeSecrets(v, existing, secrets);
   v.OYA_STORAGE = STORAGE_FOR[a.database] ?? 'sqlite';
   if (a.llm.provider !== 'skip') Object.assign(v, { OPENAI_BASE_URL: a.llm.baseUrl, CHAT_MODEL: a.llm.model });
   fleetSettings(v, { a, existing, wsUrl: a.publicUrl.replace(/^http/, 'ws') + '/ws' });

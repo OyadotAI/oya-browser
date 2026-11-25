@@ -1,5 +1,6 @@
 /** The analyzer runs in a browser-owned isolated world, without enabling a debugging domain. */
 import { randomBytes } from 'node:crypto';
+import type { WebFrameMain } from 'electron';
 import type { NativePage } from './page.ts';
 import { evaluateFrame, type NativeAgentFrame } from './frames.ts';
 import { runInWorld } from './stock-world.ts';
@@ -16,10 +17,12 @@ export interface EnsureOptions {
   /** Reinstall even if this document already has an analyzer. */
   force?: boolean;
 }
-/** A caller can refuse the single navigation-context retry. */
+/** A caller can refuse the single navigation-context retry, or name a subframe. */
 export interface EvalOptions {
   /** Retry only a destroyed execution context, never an arbitrary page exception. */
   retry?: boolean;
+  /** A frame of the view other than its main frame, such as a cross-origin iframe. */
+  frame?: WebFrameMain;
 }
 /** Native isolated execution preserves a separate global while sharing the DOM. */
 export class World {
@@ -35,18 +38,18 @@ export class World {
     return ANALYZER_WORLD_ID;
   }
   /** Evaluate only after the current document owns an initialized analyzer. */
-  async evaluate<T = unknown>(view: NativePage, expression: string, { retry = true }: EvalOptions = {}): Promise<T> {
+  async evaluate<T = unknown>(view: NativePage, expression: string, opts: EvalOptions = {}): Promise<T> {
     try {
-      return await this.run<T>(view, `${this.bootstrap(false)}\n${expression}`);
+      return await this.run<T>(view, `${this.bootstrap(false)}\n${expression}`, opts.frame);
     } catch (error) {
-      return this.retry<T>(view, expression, error, retry);
+      return this.retry<T>(view, expression, error, { retry: opts.retry ?? true, frame: opts.frame });
     }
   }
   /** A frame discarded by navigation can be retried once; application exceptions are never replayed. */
-  private async retry<T>(view: NativePage, expression: string, error: unknown, enabled: boolean): Promise<T> {
+  private async retry<T>(view: NativePage, expression: string, error: unknown, opts: EvalOptions): Promise<T> {
     const message = error instanceof Error ? error.message : '';
-    if (!enabled || !/execution context was destroyed|render frame was disposed/i.test(message)) throw error;
-    return this.evaluate<T>(view, expression, { retry: false });
+    if (!opts.retry || !/execution context was destroyed|render frame was disposed/i.test(message)) throw error;
+    return this.evaluate<T>(view, expression, { retry: false, frame: opts.frame });
   }
   /** Initialization and the requested read share one native execution, so navigation cannot split them. */
   private bootstrap(force: boolean): string {
@@ -60,10 +63,11 @@ export class World {
     return this.deps.analyzerScript.replace('__OYA_ATTR__', attr).replace('__OYA_RECORD__', 'false');
   }
   /** The engine frame API avoids Electron’s load-completion wait; stock Electron goes through the tab preload for the same reason. */
-  private async run<T>(view: NativePage, code: string): Promise<T> {
+  private async run<T>(view: NativePage, code: string, target?: WebFrameMain): Promise<T> {
     if (view.webContents.isDestroyed()) throw new Error('View is destroyed');
-    const frame = view.webContents.mainFrame as NativeAgentFrame | undefined;
+    const frame = (target ?? view.webContents.mainFrame) as NativeAgentFrame | undefined;
     if (frame?._executeJavaScriptInOyaWorld) return evaluateFrame(frame, code) as Promise<T>;
-    return runInWorld<T>(view.webContents, ANALYZER_WORLD_ID, code);
+    if (target && target.detached) throw new Error('Native agent frame is detached');
+    return runInWorld<T>(view.webContents, ANALYZER_WORLD_ID, code, { frame: target });
   }
 }

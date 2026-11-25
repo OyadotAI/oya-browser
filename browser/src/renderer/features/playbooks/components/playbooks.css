@@ -36,7 +36,17 @@
   background: var(--surface);
   color: var(--text);
 }
+.pb-search {
+  width: 100%;
+  height: 32px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
 .pb-field input:focus-visible,
+.pb-search:focus-visible,
 .pb-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -44,14 +54,15 @@
 .pb-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  margin: -8px 0;
 }
 .pb-row {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
   text-align: left;
-  padding: 12px;
+  padding: 6px 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -59,17 +70,48 @@
   cursor: pointer;
 }
 .pb-row strong {
-  overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 .pb-row span {
   white-space: nowrap;
   color: var(--secondary);
+  font-size: var(--text-sm);
 }
 .pb-row:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
-.pb-row[aria-pressed='true'] {
+.pb-row[aria-pressed='true'],
+.pb-row[aria-pressed='true']:hover {
   background: var(--accent-soft);
+}
+/* The last-run dot: no fill when nothing is known, so an outage never reads as a result. */
+.pb-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.pb-dot.succeeded {
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
+}
+/* A failed run is a square, so it is told from a finished one by shape as well as colour. */
+.pb-dot.failed {
+  background: var(--danger);
+  border-radius: 1px;
+}
+/* Still going, or waiting on a person: a ring, where a finished run is a filled dot. Shape tells them apart, not hue. */
+.pb-dot.running,
+.pb-dot.attention {
+  border: 2px solid var(--accent);
+}
+.pb-dot.never {
+  border: 1px dashed var(--secondary);
 }
 .pb-details,
 .pb-run {

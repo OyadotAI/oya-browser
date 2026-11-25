@@ -17,6 +17,7 @@ import {
   metricsAccess,
   ownerScope,
   requireBrowser,
+  upgradeUrl,
   validData,
   validFile,
 } from '../../../src/app/http.ts';
@@ -260,5 +261,14 @@ describe('longJson', () => {
     assert.deepEqual([body.status, body.code], [500, 'internal_error']);
     assert.ok(!body.error.includes('boom'));
     assert.match(body.ref, /^[0-9a-f]{8}$/);
+  });
+});
+
+describe('upgradeUrl', () => {
+  it('parses an upgrade path against Host or localhost, and returns null when malformed', () => {
+    assert.equal(upgradeUrl({ url: '/ws?key=1', headers: { host: 'example.com' } })?.pathname, '/ws');
+    assert.equal(upgradeUrl({ url: '/connect', headers: {} })?.href, 'http://localhost/connect');
+    assert.equal(upgradeUrl({ url: '/ws', headers: { host: '[::1' } }), null);
+    assert.equal(upgradeUrl({ url: 'http://:bad', headers: { host: 'localhost' } }), null);
   });
 });

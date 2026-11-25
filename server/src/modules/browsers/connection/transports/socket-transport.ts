@@ -3,6 +3,8 @@
  * later by a `cmd_result` that pendingCommands settles.
  */
 import { randomUUID } from 'crypto';
+import { HttpError } from '../../../../platform/errors.ts';
+import { Status } from '../../../../platform/http-status.ts';
 import type { Call } from '../reporter.ts';
 import type { CommandResult, CommandTransport } from './transport.ts';
 import { pendingCommands } from './pending-commands.ts';
@@ -27,8 +29,8 @@ export class SocketTransport implements CommandTransport {
     console.log(`[ws] → cmd to ${call.browserId}: id=${id} action=${call.action}`);
     const failed = this.post(id, call, type);
     if (!failed) return answer;
-    pendingCommands.abandon(id);
-    return Promise.reject(failed);
+    pendingCommands.abandon(id, failed.message);
+    return Promise.reject(disconnectedError());
   }
 
   /** Writes the `cmd` message; returns the write error, if any. */
@@ -41,3 +43,9 @@ export class SocketTransport implements CommandTransport {
     }
   }
 }
+
+/** Clean 503 error raised when the browser socket fails before a command leaves the server. */
+const disconnectedError = () =>
+  new HttpError(Status.UNAVAILABLE, 'Browser disconnected before the command could be sent', {
+    code: 'browser_disconnected',
+  });

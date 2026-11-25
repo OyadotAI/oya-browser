@@ -22,18 +22,41 @@ type NodeProcess = {
   getBuiltinModule?: (name: string) => unknown;
   /** The environment, when there is one. */
   env?: Record<string, string | undefined>;
+  /** Process id, for unique sibling temp files. */
+  pid?: number;
 };
 
-/** The part of `node:fs` this file reads through. */
+/** The part of `node:fs` this file reads and writes through. */
 type Fs = {
+  /** Open flags for exclusive non-symlink creation. */
+  constants: {
+    /** Write-only open flag. */
+    O_WRONLY: number;
+    /** Create-if-missing flag. */
+    O_CREAT: number;
+    /** Fail-if-exists flag. */
+    O_EXCL: number;
+    /** Refuse-symlink flag where supported. */
+    O_NOFOLLOW?: number;
+  };
   /** Whether the config file is there at all. */
   existsSync(path: string): boolean;
   /** Its contents. */
   readFileSync(path: string, encoding: string): string;
   /** Makes the config folder. */
-  mkdirSync(path: string, options: { /** Parents too. */ recursive: boolean }): void;
-  /** Writes the file. */
-  writeFileSync(path: string, data: string, options: { /** Owner only: it holds a key. */ mode: number }): void;
+  mkdirSync(path: string, options: { /** Parents too. */ recursive: boolean; /** Folder mode. */ mode: number }): void;
+  /** Tightens an existing folder's permissions. */
+  chmodSync(path: string, mode: number): void;
+  /** Opens a file descriptor with explicit flags and mode. */
+  openSync(path: string, flags: number, mode: number): number;
+  /** Writes text to an open descriptor. */
+  writeFileSync(fd: number, data: string): void;
+  /** Closes an open descriptor. */
+  closeSync(fd: number): void;
+  /** Atomically replaces `dest` with `src`. */
+  renameSync(src: string, dest: string): void;
+  /** Removes a leftover temp file on failure. */
+  unlinkSync(path: string): void;
 };
 
 /** The part of `node:os` this file reads through. */
@@ -71,19 +94,69 @@ export function savedConfig(): SavedConfig {
   }
 }
 
+/** Owner access only on the config folder. */
+const PRIVATE_DIR = 0o700;
 /** Owner read and write only: the file holds a key. */
 const PRIVATE_FILE = 0o600;
 /** Indent of the saved JSON, as `oya login` writes it. */
 const JSON_INDENT = 2;
+
+/** Ensures the config folder exists and is owner-only where supported. */
+function ensurePrivateDir(fs: Fs, dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR });
+  try {
+    fs.chmodSync(dir, PRIVATE_DIR);
+  } catch {
+    /* Windows or read-only parent */
+  }
+}
+
+/** Opens a new owner-only temporary file exclusively, refusing symlinks. */
+function openTemp(fs: Fs, tmp: string): number {
+  const { O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW = 0 } = fs.constants;
+  return fs.openSync(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, PRIVATE_FILE);
+}
+
+/** Writes `text` to `fd` and closes it even if writing fails. */
+function writeFd(fs: Fs, fd: number, text: string): void {
+  try {
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/** Removes a leftover temporary file, ignoring missing-file errors. */
+function removeTemp(fs: Fs, tmp: string): void {
+  try {
+    fs.unlinkSync(tmp);
+  } catch {
+    /* already removed */
+  }
+}
+
+/** Sibling temporary path next to `file`, unique to this call. */
+const tempFile = (file: string): string =>
+  `${file.slice(0, file.lastIndexOf('/'))}/.config.json.${node()?.pid ?? 0}-${globalThis.crypto.randomUUID()}.tmp`;
+
+/** Atomically replaces `file` with a fresh owner-only regular file, never following a symlink. */
+function writePrivate(fs: Fs, file: string, text: string): void {
+  const tmp = tempFile(file);
+  try {
+    writeFd(fs, openTemp(fs, tmp), text);
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    removeTemp(fs, tmp);
+    throw err;
+  }
+}
 
 /** Saves a key where `oya login` would, unless one is there already. True when it wrote. */
 export function saveKey(apiKey: string, baseUrl: string): boolean {
   const fs = builtin<Fs>('node:fs');
   const file = configFile();
   if (!fs || !file || savedConfig().apiKey) return false;
-  fs.mkdirSync(file.slice(0, file.lastIndexOf('/')), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ ...savedConfig(), apiKey, baseUrl }, null, JSON_INDENT), {
-    mode: PRIVATE_FILE,
-  });
+  ensurePrivateDir(fs, file.slice(0, file.lastIndexOf('/')));
+  writePrivate(fs, file, JSON.stringify({ ...savedConfig(), apiKey, baseUrl }, null, JSON_INDENT));
   return true;
 }

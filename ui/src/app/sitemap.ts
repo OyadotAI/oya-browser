@@ -1,48 +1,63 @@
 /**
- * sitemap.xml for the public pages.
+ * sitemap.xml for canonical HTML pages. Markdown twins canonicalize to HTML;
+ * discovery files and the API viewer are omitted by policy and remain linked
+ * through alternate links and llms.txt. No editorial modification dates are known.
  */
 import type { MetadataRoute } from 'next';
 import { SITE_URL } from '@/lib/site';
-import { DOC_PAGES } from './docs/_docs/pages';
+import { DOC_TOPICS } from './docs/_docs/pages';
+import { ANSWER_PAGES } from './_answers/content';
+import { RESEARCH_POSTS } from './research/posts';
 
-/** One page of the sitemap. */
+/** One canonical HTML page in the sitemap. */
 interface Entry {
-  /** Its path. */
+  /** Site-relative path. */
   path: string;
-  /** How often it changes. */
+  /** How often the page changes. */
   changeFrequency: 'weekly' | 'monthly';
-  /** How much it matters next to the others. */
+  /** Relative priority within the site. */
   priority: number;
 }
 
-/**
- * Public pages only, plus the files written for agents: llms.txt and the docs'
- * Markdown twins (answer engines cite what they can find). /dashboard and /live/* are per-account and behind auth,
- * so listing them would just advertise redirects.
- */
+/** Named sitemap priorities to avoid scattered numeric literals. */
+const PRIORITY = { HOME: 1, CORE: 0.9, SECTION: 0.7, DETAIL: 0.6, LEGAL: 0.4 } as const;
+
+/** Canonical HTML pages without experiment or vendor-check dates presented as editorial updates. */
 const PAGES: Entry[] = [
-  { path: '/', changeFrequency: 'weekly', priority: 1 },
-  { path: '/docs', changeFrequency: 'weekly', priority: 0.9 },
-  { path: '/docs.md', changeFrequency: 'weekly', priority: 0.8 },
-  ...DOC_PAGES.map(({ slug }): Entry => ({ path: `/docs/${slug}.md`, changeFrequency: 'weekly', priority: 0.6 })),
-  { path: '/release-notes', changeFrequency: 'weekly', priority: 0.7 },
-  { path: '/trust', changeFrequency: 'monthly', priority: 0.6 },
-  { path: '/privacy', changeFrequency: 'monthly', priority: 0.4 },
-  { path: '/terms', changeFrequency: 'monthly', priority: 0.4 },
-  { path: '/llms.txt', changeFrequency: 'weekly', priority: 0.8 },
-  { path: '/llms-full.txt', changeFrequency: 'weekly', priority: 0.6 },
-  { path: '/openapi.json', changeFrequency: 'weekly', priority: 0.5 },
-  { path: '/signup', changeFrequency: 'monthly', priority: 0.5 },
-  { path: '/login', changeFrequency: 'monthly', priority: 0.3 },
+  { path: '/', changeFrequency: 'weekly', priority: PRIORITY.HOME },
+  { path: '/pricing', changeFrequency: 'weekly', priority: PRIORITY.CORE },
+  { path: '/docs', changeFrequency: 'weekly', priority: PRIORITY.CORE },
+  ...DOC_TOPICS.map(({ slug }): Entry => ({
+    path: `/docs/${slug}`,
+    changeFrequency: 'weekly',
+    priority: PRIORITY.SECTION,
+  })),
+  { path: '/release-notes', changeFrequency: 'weekly', priority: PRIORITY.SECTION },
+  { path: '/trust', changeFrequency: 'monthly', priority: PRIORITY.DETAIL },
+  ...ANSWER_PAGES.map(({ path }): Entry => ({
+    path,
+    changeFrequency: 'monthly',
+    priority: PRIORITY.SECTION,
+  })),
+  { path: '/vs', changeFrequency: 'monthly', priority: PRIORITY.SECTION },
+  { path: '/research', changeFrequency: 'monthly', priority: PRIORITY.SECTION },
+  ...RESEARCH_POSTS.map(({ path }): Entry => ({
+    path,
+    changeFrequency: 'monthly',
+    priority: PRIORITY.DETAIL,
+  })),
+  { path: '/privacy', changeFrequency: 'monthly', priority: PRIORITY.LEGAL },
+  { path: '/terms', changeFrequency: 'monthly', priority: PRIORITY.LEGAL },
 ];
 
-/** Every public page, stamped with now. */
+/** Converts one sitemap Entry into a Next.js MetadataRoute.Sitemap item. */
+const toSitemapItem = ({ path, changeFrequency, priority }: Entry) => ({
+  url: `${SITE_URL}${path}`,
+  changeFrequency,
+  priority,
+});
+
+/** Deterministic sitemap of canonical HTML pages. */
 export default function sitemap(): MetadataRoute.Sitemap {
-  const lastModified = new Date();
-  return PAGES.map(({ path, changeFrequency, priority }) => ({
-    url: `${SITE_URL}${path}`,
-    lastModified,
-    changeFrequency,
-    priority,
-  }));
+  return PAGES.map(toSitemapItem);
 }

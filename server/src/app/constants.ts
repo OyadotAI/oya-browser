@@ -57,3 +57,9 @@ export const RAW_HEADER_STRIDE = 2;
 
 /** Where a caller who hit no route is pointed. */
 export const API_DESCRIBED = 'The API is described at /openapi.json.';
+
+/** Public cache lifetime in seconds for static discovery files (/llms.txt, /openapi.json, /.well-known/*). */
+export const DISCOVERY_MAX_AGE_SECONDS = 300;
+
+/** Cache-Control header sent on public discovery documents. */
+export const DISCOVERY_CACHE_CONTROL = `public, max-age=${DISCOVERY_MAX_AGE_SECONDS}`;

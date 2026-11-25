@@ -6,7 +6,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, lstatSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Oya } from '../../../dist/index.js';
@@ -58,6 +58,18 @@ describe('Oya.signup', () => {
     const result = await Oya.signup({ email: 'e@x.test', baseUrl: BASE, fetch: signupRoutes().fetch, save: false });
     assert.equal(result.saved, false);
   });
+
+  it('replaces a world-readable file or a symlink with an owner-only regular file without following the link', async () => {
+    const target = join(home, 'target.json');
+    writeFileSync(target, '{}', { mode: 0o644 });
+    const cfg = join(home, 'config.json');
+    symlinkSync(target, cfg);
+    await Oya.signup({ email: 'me@x.test', baseUrl: BASE, fetch: signupRoutes().fetch });
+    assert.equal(readFileSync(target, 'utf8'), '{}', 'symlink target is untouched');
+    assert.equal(lstatSync(cfg).isSymbolicLink(), false);
+    assert.equal(statSync(cfg).mode & 0o777, 0o600);
+    assert.equal(statSync(home).mode & 0o777, 0o700);
+  });
 });
 
 /** A connected desktop app, as the fleet lists it. */
@@ -80,6 +92,35 @@ describe('oya.desktop.connect', () => {
       "stop() leaves the person's app connected",
     );
     assert.ok(!calls.some((c) => c.path === '/api/pairing'));
+  });
+
+  it('names one lane for the whole script on every call, so the desktop gives it one tab', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers': { body: [desktop] },
+      'GET /api/browsers/d1': { body: desktop },
+      'POST /api/browsers/d1/command': { body: { ok: true, data: {} } },
+      'POST /api/browsers/d1/chat': { body: { text: 'done' } },
+    });
+    const browser = await oya.desktop.connect();
+    calls.length = 0;
+    await browser.goto('https://portal.test/');
+    await browser.ask('file it');
+    const lanes = calls.map((c) => c.headers['X-Oya-Agent']);
+    assert.match(lanes[0], /^sdk-[0-9a-f-]{36}$/);
+    assert.deepEqual(lanes, [lanes[0], lanes[0]]);
+  });
+
+  it('ends its lane on stop(), so the desktop closes its tab', async () => {
+    const { oya, calls } = client({
+      'GET /api/browsers': { body: [desktop] },
+      'GET /api/browsers/d1': { body: desktop },
+      'POST /api/browsers/d1/lane/end': { body: { ok: true } },
+    });
+    const browser = await oya.desktop.connect();
+    await browser.stop();
+    const end = calls.find((c) => c.path === '/api/browsers/d1/lane/end');
+    assert.ok(end, 'the lane was ended');
+    assert.match(end.headers['X-Oya-Agent'], /^sdk-/);
   });
 
   it('pairs with the persona and waits until the app connects', async () => {

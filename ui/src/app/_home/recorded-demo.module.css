@@ -1,0 +1,75 @@
+/** The recording shares the editorial page tokens and keeps its full portal frame at every width. */
+.section {
+  --primary: var(--lime);
+  --muted: var(--night-muted);
+  --line-strong: var(--dark-line-strong);
+  --frame-padding: 12px;
+  --frame-radius: 28px;
+  --frame-inner-radius: 16px;
+  --frame-highlight: color-mix(in srgb, var(--ivory) 24%, transparent);
+  --frame-accent: color-mix(in srgb, var(--lime) 30%, transparent);
+  --frame-shadow: color-mix(in srgb, var(--shadow-ink) 60%, transparent);
+  min-width: 0;
+}
+.recovery p {
+  color: var(--muted);
+  font-size: 14px;
+}
+.recording {
+  width: 100%;
+}
+.chassis {
+  padding: var(--frame-padding);
+  border: 1px solid var(--dark-line-strong);
+  border-top-color: var(--frame-highlight);
+  border-bottom-color: var(--frame-accent);
+  border-radius: var(--frame-radius);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--forest) 85%, transparent),
+    color-mix(in srgb, var(--night) 90%, transparent)
+  );
+  box-shadow:
+    0 32px 100px var(--frame-shadow),
+    inset 0 1px 0 var(--frame-highlight);
+}
+.recording video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--frame-inner-radius);
+  background: var(--night);
+}
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-content);
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.links a {
+  gap: 8px;
+  color: var(--ivory);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.links svg {
+  width: 16px;
+  height: 16px;
+}
+.recovery {
+  margin-top: var(--space-content);
+}
+.retry {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+}
+@media (max-width: 767px) {
+  .section {
+    --frame-padding: 8px;
+    --frame-radius: 24px;
+  }
+}

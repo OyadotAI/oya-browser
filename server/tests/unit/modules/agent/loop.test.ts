@@ -49,6 +49,38 @@ describe('agentLoop', () => {
     delete process.env.CHAT_MAX_ITERATIONS;
   });
 
+  it('a run that outlives its request waits for a browser that dropped its socket, then runs the tool', async () => {
+    browser.disconnect();
+    stubLlm([toolReply(['click', { element_id: 1 }]), textReply('DONE: clicked')]);
+    setImmediate(() => (browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p))));
+    const result = await agentLoop(ctx({ awaitReconnect: true }), start());
+    assert.equal(result.failed, false);
+    assert.ok(browser.calls.some((call) => call.action === 'click'));
+  });
+
+  it('a run that outlives its request never carries on in a browser another key registered under its id', async () => {
+    browser.disconnect();
+    browser = scriptedBrowser(BROWSER, 'another-key', (a, p) => answer(a, p));
+    const llm = stubLlm([toolReply(['click', { element_id: 1 }]), textReply('FAILED: browser went away')]);
+    await agentLoop(ctx({ awaitReconnect: true }), start());
+    assert.match(llm.requests[1].messages.find((message) => message.role === 'tool').content, /not connected/);
+    assert.equal(
+      browser.calls.some((call) => call.action === 'click'),
+      false,
+    );
+    browser.disconnect();
+    browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p));
+  });
+
+  it('without that, a tool sent while the browser is away fails at once', async () => {
+    browser.disconnect();
+    const llm = stubLlm([toolReply(['click', { element_id: 1 }]), textReply('FAILED: browser went away')]);
+    await agentLoop(ctx(), start());
+    const reply = llm.requests[1].messages.find((message) => message.role === 'tool');
+    assert.match(reply.content, /^Error: /);
+    browser = scriptedBrowser(BROWSER, KEY, (a, p) => answer(a, p));
+  });
+
   it('offers local library tools to an Oya browser and feeds their results back to the model', async () => {
     browser.disconnect();
     const data = { entries: [{ url: 'https://a.test/', title: 'Saved page', time: 1 }], total: 1, next_offset: null };

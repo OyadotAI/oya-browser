@@ -45,6 +45,17 @@ function setup(over: Partial<ComponentProps<typeof FleetTable>> = {}) {
 }
 
 describe('FleetTable', () => {
+  it('hides each minor column on phones in its heading and its cells alike', () => {
+    setup();
+    const [head, first] = screen.getAllByRole('row');
+    const hidden = (r: HTMLElement, cls: string) =>
+      [...r.children].filter((cell) => cell.classList.contains(cls)).length;
+    expect(hidden(head, 'max-md:hidden')).toBe(4);
+    expect(hidden(first, 'max-md:hidden')).toBe(4);
+    expect(hidden(head, 'max-sm:hidden')).toBe(1);
+    expect(hidden(first, 'max-sm:hidden')).toBe(1);
+  });
+
   it('lists browsers needing attention first', () => {
     setup();
     const names = screen

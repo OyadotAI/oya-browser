@@ -1,41 +1,49 @@
 /**
- * The public landing page, in the order a buyer reads it: what it is and who it
- * is for, how to download and start, proof, the problems it solves, how it works, why it is different, how it
- * compares, questions, and the next step.
- * Each section lives in app/_home.
+ * The public landing page. Route-scoped styles and controls keep its presentation isolated
+ * from sign-in, documentation and the console. Each section lives in app/_home.
  */
-import styles from './page.module.css';
-import { SiteHeader } from './_home/site-header';
+import type { Metadata } from 'next';
+import { headers } from 'next/headers';
+import { Kit } from './_home/kit';
+import { Nav } from './_home/nav';
 import { Hero } from './_home/hero';
-import { GetStarted } from './_home/get-started';
-import { Proof } from './_home/proof';
-import { Problems } from './_home/problems';
-import { HowItWorks } from './_home/how-it-works';
-import { Benefits } from './_home/benefits';
-import { Compare } from './_home/compare';
+import { ProductDemo } from './_home/product-demo';
+import { Operations } from './_home/operations';
+import { WorkflowStory } from './_home/workflow-story';
+import { Statement } from './_home/statement';
+import { Pricing } from './_home/pricing';
+import { BringYourStack } from './_home/bring-your-stack';
 import { Faq } from './_home/faq';
 import { Closing } from './_home/closing';
-import { SiteFooter } from './_home/site-footer';
+import landing from './_home/landing.module.css';
 
-/** The landing page. */
-export default function Home() {
+/** Classifies the public page without changing document-wide presentation state. */
+export const metadata: Metadata = { other: { 'site-kind': 'software', 'page-type': 'software' } };
+
+/** The landing page reads the request's nonce for its locally scoped font declaration. */
+export default async function Home() {
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
   return (
-    <div className={styles.page}>
-      <div className={styles.container}>
-        <SiteHeader />
-        <main>
-          <Hero />
-          <GetStarted />
-          <Proof />
-          <Problems />
-          <HowItWorks />
-          <Benefits />
-          <Compare />
+    <div className={landing.page}>
+      <Kit nonce={nonce} />
+      <Nav />
+      <main id="top" tabIndex={-1}>
+        <Hero />
+        <div className={landing.workflowSection}>
+          <div className="wrap">
+            <ProductDemo />
+          </div>
+        </div>
+        <Statement />
+        <WorkflowStory />
+        <BringYourStack />
+        <Operations />
+        <div className={landing.trustSection}>
+          <Pricing />
           <Faq />
-          <Closing />
-        </main>
-        <SiteFooter />
-      </div>
+        </div>
+      </main>
+      <Closing launchBadge />
     </div>
   );
 }

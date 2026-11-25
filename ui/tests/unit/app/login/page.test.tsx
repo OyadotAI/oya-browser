@@ -31,10 +31,10 @@ afterEach(() => {
 const submit = (name: string) => userEvent.click(screen.getByRole('button', { name }));
 
 describe('LoginPage links', () => {
-  it('leads to a free account and, for teams, to the sales questions', () => {
+  it('leads to a free account, with no sales card of its own', () => {
     render(<LoginPage />);
     expect(screen.getByRole('link', { name: 'Create a free account' }).getAttribute('href')).toBe('/signup');
-    expect(screen.getByRole('link', { name: /Talk to sales/ }).getAttribute('href')).toBe('/signup?plan=enterprise');
+    expect(screen.queryByRole('link', { name: /Talk to sales/ })).toBeNull();
   });
 });
 
@@ -80,7 +80,7 @@ describe('LoginPage with an account', () => {
 describe('LoginPage with an API key', () => {
   it('needs a key', async () => {
     render(<LoginPage />);
-    await userEvent.click(screen.getByRole('button', { name: 'Machine' }));
+    await userEvent.click(screen.getByRole('button', { name: 'API' }));
     await submit('Continue');
     expect(screen.getByRole('alert').textContent).toBe('Enter an API key');
   });
@@ -88,7 +88,7 @@ describe('LoginPage with an API key', () => {
   it('verifies the key with the server before keeping it for this tab', async () => {
     fakeFetch({ body: {} });
     render(<LoginPage />);
-    await userEvent.click(screen.getByRole('button', { name: 'Machine' }));
+    await userEvent.click(screen.getByRole('button', { name: 'API' }));
     await userEvent.type(screen.getByLabelText('API key'), '  oya_k  ');
     await submit('Continue');
     expect(sessionStorage.getItem('oya_console_key')).toBe('oya_k');
@@ -98,7 +98,7 @@ describe('LoginPage with an API key', () => {
   it('says a rejected key was rejected, and any other failure with its status', async () => {
     fakeFetch({ status: 401, body: {} }, { status: 502, body: {} });
     render(<LoginPage />);
-    await userEvent.click(screen.getByRole('button', { name: 'Machine' }));
+    await userEvent.click(screen.getByRole('button', { name: 'API' }));
     await userEvent.type(screen.getByLabelText('API key'), 'bad');
     await submit('Continue');
     expect(screen.getByRole('alert').textContent).toBe('That key was rejected');
@@ -180,13 +180,11 @@ describe('LoginPage with the captcha on', () => {
   });
 });
 
-describe('LoginPage for an agent', () => {
-  it('tells the agent to sign itself up from this deployment, with no key and no form', async () => {
+describe('LoginPage modes', () => {
+  it('offers exactly Credentials and API, with Credentials first', () => {
     render(<LoginPage />);
-    await userEvent.click(screen.getByRole('button', { name: 'Agent' }));
-    expect(screen.getByText(new RegExp(`read ${window.location.origin}/llms.txt`))).toBeTruthy();
-    expect(screen.queryByText(/API key/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'What agents read' }).getAttribute('href')).toBe('/llms.txt');
+    const tabs = screen.getAllByRole('button', { name: /^(Credentials|API|Agent|Human|Machine)$/ });
+    expect(tabs.map((t) => t.textContent)).toEqual(['Credentials', 'API']);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
   });
 });

@@ -91,6 +91,11 @@ describe('buildEnv', () => {
     assert.equal(buildEnv({ ...BASE, fleet: 'k8s' }, {}, {}).values.OYA_BROWSER_PROVIDER, 'k8s');
   });
 
+  it('names no provider for Docker workers, so start() borrows a connected worker', () => {
+    const { values } = buildEnv({ ...BASE, fleet: 'docker-workers' }, {}, { OYA_BROWSER_PROVIDER: 'oya-selfhosted' });
+    assert.equal(values.OYA_BROWSER_PROVIDER, undefined);
+  });
+
   it('names any other fleet as the provider, and adds optional services', () => {
     const optional = { captcha: 'capsolver', recordingBucket: 'rec', metrics: true };
     const { values, extra } = buildEnv({ ...BASE, fleet: 'steel', optional }, {}, { OYA_METRICS_TOKEN: 'mt' });
@@ -99,5 +104,17 @@ describe('buildEnv', () => {
       ['steel', 'capsolver', 'rec', 'mt'],
     );
     assert.match(extra[2], /^# FLEET_TOKEN=/);
+  });
+
+  it('preserves existing secrets and custom keys on replay when new secrets are empty, while honoring overrides', () => {
+    const existing = {
+      DATABASE_URL: 'postgres://u:p#ss@h:5432/db',
+      OPENAI_API_KEY: 'sk-old',
+      CUSTOM_FLAG: 'keep-me',
+    };
+    const { values } = buildEnv(BASE, { DATABASE_URL: '', OPENAI_API_KEY: 'sk-new' }, existing);
+    assert.equal(values.DATABASE_URL, 'postgres://u:p#ss@h:5432/db');
+    assert.equal(values.OPENAI_API_KEY, 'sk-new');
+    assert.equal(values.CUSTOM_FLAG, 'keep-me');
   });
 });

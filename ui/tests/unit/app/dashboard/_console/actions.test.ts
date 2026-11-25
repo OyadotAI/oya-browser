@@ -11,7 +11,7 @@ import {
   stopToast,
   takeScreenshot,
 } from '@/app/dashboard/_console/actions';
-import { INITIAL_VIEW, NO_FILTER } from '@/app/dashboard/_console/view';
+import { INITIAL_VIEW, NO_FILTER, projectReset } from '@/app/dashboard/_console/view';
 import type { BrowserRow, Persona } from '@/components/dashboard/types';
 import { fakeFetch } from '../../../support';
 
@@ -88,6 +88,13 @@ describe('takeScreenshot', () => {
       ['Tab crashed', 'error'],
       ['No screenshot', 'error'],
     ]);
+  });
+
+  it('encodes special characters in browser ids and projectReset clears shot and showStart', async () => {
+    const fetchMock = fakeFetch({ body: { ok: true, data: { screenshot: 'data:y' } } });
+    await takeScreenshot('k', 'b/1?x', vi.fn(), vi.fn());
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain('/browsers/b%2F1%3Fx/command');
+    expect(projectReset()).toMatchObject({ shot: null, showStart: false });
   });
 });
 

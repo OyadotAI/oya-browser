@@ -275,12 +275,26 @@ describe('persona site routes', () => {
     assert.deepEqual([res.status, res.body.error], [400, 'domain is not a hostname']);
   });
 
-  it('clears a second factor, for one site or persona-wide', async () => {
+  it('clears a second factor, for one site or persona-wide, and refuses an invalid domain without wiping the default', async () => {
     const p = service.create(KEY);
+    await mfa.set(p.id, { type: 'totp', secret: 'JBSWY3DPEHPK3PXP' }, null);
+    for (const bad of ['?domain=not%20a%20host', '?domain=']) {
+      const res = await call('DELETE', `/personas/${p.id}/mfa${bad}`);
+      assert.deepEqual([res.status, res.body.error], [400, 'domain is not a hostname']);
+    }
+    const repeated = await callRoute(router, {
+      method: 'DELETE',
+      url: `/personas/${p.id}/mfa`,
+      key: KEY,
+      extra: { query: { domain: ['a.com', 'b.com'] } },
+    });
+    assert.deepEqual([repeated.status, repeated.body.error], [400, 'domain is not a hostname']);
+    assert.equal(mfa.describe(p.id).configured, true, 'default MFA factor stays intact');
     assert.deepEqual((await call('DELETE', `/personas/${p.id}/mfa?domain=a.com`)).body, { ok: true });
     assert.deepEqual(lastAudit('mfa.clear').meta, { domain: 'a.com' });
     await call('DELETE', `/personas/${p.id}/mfa`);
     assert.deepEqual(lastAudit('mfa.clear').meta, { domain: null });
+    assert.equal(mfa.describe(p.id).configured, false);
   });
 
   it("answers 404 for the second factor of another key's persona", async () => {

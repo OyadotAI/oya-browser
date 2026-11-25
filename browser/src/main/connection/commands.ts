@@ -101,6 +101,10 @@ const codeOf = (err: unknown): string | undefined => {
 /** A thrown value as the error text a result carries. */
 const messageOf = (err: unknown): string => (err as Error | null | undefined)?.message || String(err);
 
+/** Whether `action` skips racing newly opened dialogs because it is safe or already gated. */
+const skipsDialogRace = (action: unknown, hasDialog: boolean) =>
+  hasDialog || typeof action !== 'string' || DIALOG_SAFE_ACTIONS.has(action);
+
 /** Why no page answered: the agent's own tab is gone (it must pick another), or there is no tab at all. */
 function noPage(deps: Pick<CommandDeps, 'agentTab'>): string {
   return deps.agentTab.id !== null
@@ -135,17 +139,21 @@ export class CommandRunner {
    * settle on its own; sendResult drops its late answer.
    */
   async handleCommand(msg: CommandMessage): Promise<void> {
-    const { held, release } = this.deps.dialogs.held();
     // Each agent (chat run, MCP session, playbook run) is a lane with a tab of its own.
-    const ran = inLane(msg.lane, () => this.runSafely(msg));
-    const outcome = await Promise.race([ran, held]);
+    const run = () => inLane(msg.lane, () => this.runSafely(msg));
+    if (skipsDialogRace(msg.action, Boolean(this.deps.dialogs.current()))) return void (await run());
+    await this.raceDialog(msg.id, run());
+  }
+
+  /** Interrupts an in-flight command when a blocking dialog opens before it settles. */
+  private async raceDialog(id: CommandId | undefined, running: Promise<null>): Promise<void> {
+    const { held, release } = this.deps.dialogs.held();
+    const outcome = await Promise.race([running, held]);
     release();
-    if (outcome !== DIALOG_HELD) return;
-    // Answer first: marking the id before this would make sendResult drop the very
-    // result being sent, and the caller would wait out the timeout after all.
-    this.sendResult(msg.id, false, null, describeDialog(this.deps.dialogs.current()!, false));
-    // The interrupted command is still out there; drop its answer when it lands.
-    this.answeredCommands.add(msg.id);
+    const dialog = outcome === DIALOG_HELD ? this.deps.dialogs.current() : null;
+    if (!dialog) return void (await running);
+    this.sendResult(id, false, null, describeDialog(dialog, false));
+    this.answeredCommands.add(id);
   }
 
   /**

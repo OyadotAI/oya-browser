@@ -12,12 +12,14 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AppServices } from '../app/services.ts';
 import { answer } from './protocol.ts';
+import { inLane } from '../control/agent-tab.ts';
 import type { LocalResult } from '../connection/commands.ts';
 import { ensureToken } from './token.ts';
 import * as C from './constants.ts';
+import { releaseViewport, releaseAllViewports } from '../actions/viewport.ts';
 
-/** What the port uses: the command runner, control, and Electron for the token's keychain. */
-type Deps = Pick<AppServices, 'commands' | 'control' | 'electron'>;
+/** What the port uses: the command runner, control, agent tabs, and Electron for the token's keychain. */
+type Deps = Pick<AppServices, 'commands' | 'control' | 'electron' | 'agentTab'>;
 
 /** A finished HTTP answer. */
 interface Reply {
@@ -67,6 +69,7 @@ export class LocalMcp {
 
   /** Stops listening. */
   stop(): void {
+    releaseAllViewports();
     this.server?.close();
     this.server = null;
     this.bound = false;
@@ -83,9 +86,19 @@ export class LocalMcp {
   private async reply(req: IncomingMessage): Promise<Reply> {
     const refused = this.refusal(req);
     if (refused) return { status: refused };
-    if (req.method === 'DELETE') return { status: C.Status.OK };
+    if (req.method === 'DELETE') return this.endSession(req);
     if (req.method !== 'POST') return { status: C.Status.METHOD_NOT_ALLOWED, headers: { Allow: 'POST, DELETE' } };
     return this.rpc(req);
+  }
+
+  /** Releases the session's lane and closes tabs it opened when the MCP client ends its session. */
+  private endSession(req: IncomingMessage): Reply {
+    const given = validSessionId(req);
+    if (given) {
+      releaseViewport(`mcp-${given}`);
+      inLane(`mcp-${given}`, () => this.deps.agentTab?.release());
+    }
+    return { status: C.Status.OK };
   }
 
   /** The status that refuses this request, or 0 when it may go on. */
@@ -131,11 +144,17 @@ function isLocalHost(host: string | undefined): boolean {
   return host === `${C.MCP_HOST}:${C.MCP_PORT}` || host === `localhost:${C.MCP_PORT}`;
 }
 
+/** Valid Mcp-Session-Id header value, or empty string when missing or malformed. */
+function validSessionId(req: IncomingMessage): string {
+  const given = String(req.headers['mcp-session-id'] ?? '');
+  return /^[A-Za-z0-9-]{1,64}$/.test(given) ? given : '';
+}
+
 /** The session a request belongs to: a fresh one on initialize, else the one its header names. */
 function sessionOf(req: IncomingMessage, message: unknown): string {
-  const given = String(req.headers['mcp-session-id'] ?? '');
+  const given = validSessionId(req);
   const initializing = (message as Partial<Record<'method', unknown>> | null)?.method === 'initialize';
-  if (!initializing && /^[A-Za-z0-9-]{1,64}$/.test(given)) return given;
+  if (!initializing && given) return given;
   return randomBytes(C.MCP_SESSION_BYTES).toString('hex');
 }
 

@@ -4,6 +4,7 @@
  * digest ever reaches storage, never the key.
  */
 import { getConnection } from '../../platform/storage/index.ts';
+import { ENSURED_PROFILES_MAX } from './constants.ts';
 
 /** The api_keys table. */
 const KEYS = 'api_keys';
@@ -52,6 +53,35 @@ export async function ownedProjects() {
 
 /** Only the profile columns a person sees. */
 const visible = (row) => (row ? Object.fromEntries(PROFILE_COLUMNS.map((c) => [c, row[c] ?? null])) : null);
+
+/** What ensureProfile reads of a user Supabase signed in. */
+export type SessionUser = {
+  /** Their Supabase user id, which is also their profile's id. */
+  id: string;
+  /** Their email, when they have one. */
+  email?: string;
+  /** What they gave at sign-up, where a chosen display name lives. */
+  user_metadata?: Record<string, unknown>;
+};
+
+/** Users whose profile row this process has already ensured, so a request does not write on every call. */
+const ensured = new Set<string>();
+
+/**
+ * Creates a signed-in user's profile when it is missing, with what the old database trigger set: the id, the email,
+ * and the display name from sign-up (or the email's name before @). Supabase keeps the sign-in in its own database,
+ * so a trigger there can no longer reach this table; without this, a new account could not make a key or save a
+ * setting. An existing profile, its role included, is left as it is.
+ */
+export async function ensureProfile(user: SessionUser) {
+  if (ensured.has(user.id)) return;
+  const email = user.email ?? '';
+  const named = user.user_metadata?.display_name;
+  const display_name = typeof named === 'string' && named ? named : email.split('@')[0];
+  await getConnection().upsert('profiles', [{ id: user.id, email, display_name }]);
+  if (ensured.size >= ENSURED_PROFILES_MAX) ensured.clear();
+  ensured.add(user.id);
+}
 
 /** A user's profile, or null when there is none. */
 export async function findProfile(userId: string) {

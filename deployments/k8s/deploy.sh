@@ -45,6 +45,16 @@ require_context() {
   kubectl config get-contexts "$CONTEXT" >/dev/null 2>&1 || die "no kubectl context $CONTEXT"
 }
 
+# Keep the overlay one level below .overlays, including EKS contexts containing '/'.
+# Slash-free contexts keep their existing paths for deploy/destroy compatibility.
+overlay_path() {
+  local context=$CONTEXT
+  if [[ $context == */* ]]; then
+    context=$(printf '%s' "$context" | openssl dgst -sha256 | awk '{print $NF}')
+  fi
+  printf '%s\n' "$HERE/.overlays/$context-$NAMESPACE"
+}
+
 # Builds and pushes the deployment image; prints it pinned by digest.
 push_image() {
   local registry=$1 platform=$2 tag
@@ -60,16 +70,21 @@ push_image() {
 ensure_secrets() {
   local database_url=$1 in_cluster=$2 password
   if k get secret oya-secrets >/dev/null 2>&1; then
-    [ -n "$database_url" ] && k patch secret oya-secrets -p "{\"stringData\":{\"DATABASE_URL\":$(jq -Rn --arg u "$database_url" '$u')}}" >/dev/null
+    if [ -n "$database_url" ]; then
+      OYA_DEPLOY_DATABASE_URL="$database_url" jq -n '{stringData: {DATABASE_URL: env.OYA_DEPLOY_DATABASE_URL}}' |
+        k patch secret oya-secrets --type=merge --patch-file=/dev/stdin >/dev/null
+    fi
     return 0
   fi
   password=$(random_hex 24)
   [ "$in_cluster" = 1 ] && database_url="postgres://oya:${password}@oya-postgres:5432/oya"
   [ -n "$database_url" ] || die "--database-url or --in-cluster-postgres is required on the first deploy"
   log "Creating the oya-secrets Secret (API key, profile and cluster secrets, database URL)"
-  k create secret generic oya-secrets --from-literal=API_KEYS="$(random_hex 24)" \
-    --from-literal=OYA_PROFILE_SECRET="$(random_hex 32)" --from-literal=OYA_CLUSTER_SECRET="$(random_hex 32)" \
-    --from-literal=POSTGRES_PASSWORD="$password" --from-literal=DATABASE_URL="$database_url" >/dev/null
+  API_KEYS="$(random_hex 24)" OYA_PROFILE_SECRET="$(random_hex 32)" OYA_CLUSTER_SECRET="$(random_hex 32)" \
+    POSTGRES_PASSWORD="$password" DATABASE_URL="$database_url" OYA_DEPLOY_NAMESPACE="$NAMESPACE" \
+    jq -n '{apiVersion: "v1", kind: "Secret", metadata: {name: "oya-secrets", namespace: env.OYA_DEPLOY_NAMESPACE},
+      type: "Opaque", stringData: (env | {API_KEYS, OYA_PROFILE_SECRET, OYA_CLUSTER_SECRET, POSTGRES_PASSWORD, DATABASE_URL})}' |
+    k create -f - >/dev/null
 }
 
 # Writes the optional settings into the oya-settings Secret (or removes it) and prints a version of them.
@@ -135,7 +150,7 @@ sa_patch() {
 }
 
 cmd_deploy() {
-  local registry='' image='' platform=linux/amd64 database_url='' in_cluster=0 host='' tls_secret='' issuer='' class=''
+  local registry='' image='' platform=linux/amd64 database_url=${OYA_DEPLOY_DATABASE_URL:-} in_cluster=0 host='' tls_secret='' issuer='' class=''
   local replicas=2 ttl=60 browser_image=ghcr.io/oyadotai/oya-browser:latest env_file='' browser settings overlay
   COMPONENTS=() PATCHES=()
   [ -f "$HERE/oya.env" ] && env_file="$HERE/oya.env"
@@ -161,7 +176,7 @@ cmd_deploy() {
       *) die "unknown option $1 (see ./deploy.sh)" ;;
     esac
   done
-  need kubectl docker jq openssl git
+  need kubectl docker jq openssl git python3
   require_context
   [ -n "$image" ] || [ -n "$registry" ] || die "--registry (to build and push this checkout) or --image is required"
   [ -z "$host" ] || [ -n "$tls_secret" ] || [ -n "$issuer" ] || die "--host needs --tls-secret or --cluster-issuer"
@@ -174,7 +189,7 @@ cmd_deploy() {
   browser=$(pin_image "$browser_image")
   ensure_secrets "$database_url" "$in_cluster"
   settings=$(apply_settings "$env_file")
-  overlay="$HERE/.overlays/$CONTEXT-$NAMESPACE"
+  overlay=$(overlay_path)
   # Components are referenced relative to the overlay, as kustomize requires.
   for i in "${!COMPONENTS[@]}"; do COMPONENTS[i]=$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "${COMPONENTS[i]}" "$overlay"); done
   write_overlay "$overlay" "$image" "$browser" "$replicas" "$ttl" "$settings"
@@ -183,17 +198,16 @@ cmd_deploy() {
   log "Waiting for the control plane to roll out"
   k rollout status deployment/oya-control-plane --timeout=15m
   [ "$in_cluster" = 1 ] && k rollout status statefulset/oya-postgres --timeout=5m
-  log "Oya is up in $NAMESPACE${host:+ at https://$host}"
+  log "Control plane deployed in $NAMESPACE${host:+ at https://$host}; run smoke to verify a browser"
   log "API key: $(secret_key API_KEYS | cut -d, -f1)   (./deploy.sh keys --context $CONTEXT shows it again)"
 }
 
 # Runs the smoke test through a port-forward to the Service.
 cmd_smoke() {
-  local port=31${RANDOM:0:3} pid
-  k port-forward svc/oya-control-plane "$port:3100" >/dev/null 2>&1 &
-  pid=$!
-  trap 'kill $pid 2>/dev/null' RETURN
-  sleep 3
+  local port=31${RANDOM:0:3}
+  install_smoke_cleanup
+  kubectl --context "$CONTEXT" -n "$NAMESPACE" port-forward svc/oya-control-plane "$port:3100" >/dev/null 2>&1 &
+  SMOKE_FORWARD_PID=$!
   smoke_test "http://127.0.0.1:$port" "$(secret_key API_KEYS | cut -d, -f1)"
 }
 
@@ -207,13 +221,14 @@ cmd_status() {
 cmd_keys() { secret_key API_KEYS | tr ',' '\n'; }
 
 cmd_destroy() {
-  local data=0
+  local data=0 overlay
+  overlay=$(overlay_path)
   confirm "Remove Oya from $CONTEXT, namespace $NAMESPACE?"
   log "Stopping browser pods"
   k delete pods -l oya-browser=true --ignore-not-found --wait=false >/dev/null
-  if [ -d "$HERE/.overlays/$CONTEXT-$NAMESPACE" ]; then
-    kubectl --context "$CONTEXT" delete -k "$HERE/.overlays/$CONTEXT-$NAMESPACE" --ignore-not-found >/dev/null
-    rm -rf "$HERE/.overlays/$CONTEXT-$NAMESPACE"
+  if [ -d "$overlay" ]; then
+    kubectl --context "$CONTEXT" delete -k "$overlay" --ignore-not-found >/dev/null
+    rm -rf "$overlay"
   fi
   [ "${DELETE_DATA:-0}" = 1 ] && data=1
   if [ "$data" = 1 ]; then

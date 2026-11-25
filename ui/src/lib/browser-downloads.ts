@@ -1,10 +1,11 @@
 /**
- * The desktop browser's download links, one per platform. Release deployment
- * updates each platform independently from the shipped assets.
+ * The desktop browser's download links, one per platform. They use the server's
+ * version-free /download routes, which redirect to the newest installer, so a
+ * release never has to rewrite them (pinned names went stale and 404ed).
  */
 
 /** Platform, architecture and file for each desktop download. */
 export const browserDownloads = [
-  { platform: 'macOS', architecture: 'Intel + Apple Silicon', href: '/downloads/Oya.Browser-1.0.83-universal.dmg' },
-  { platform: 'Windows', architecture: 'x64', href: '/downloads/Oya.Browser-1.0.83-x64.exe' },
+  { platform: 'macOS', architecture: 'Intel + Apple Silicon', href: '/download/mac' },
+  { platform: 'Windows', architecture: 'x64', href: '/download/windows' },
 ] as const;

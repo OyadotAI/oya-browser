@@ -32,7 +32,17 @@ export function inLane<T>(lane: unknown, work: () => T): T {
 }
 
 /** The running command's lane. */
-const currentLane = (): string => lanes.getStore() ?? DEFAULT_LANE;
+export const currentLane = (): string => lanes.getStore() ?? DEFAULT_LANE;
+
+/**
+ * Whether `lane` is an SDK browser's: a script driving the person's desktop names one lane for its
+ * whole life. Its tab is one it opens, never the person's shown tab, and it closes when the lane ends.
+ */
+const sdkLane = (lane: string): boolean => lane.startsWith('sdk-');
+
+/** An open tab previously opened by `lane`, if one still exists. */
+const keptTab = (openers: Map<number, string>, lane: string, tabs: Deps['tabs']): number | undefined =>
+  [...openers].find(([id, opener]) => opener === lane && tabs.find(id))?.[0];
 
 /** The agents' tabs while control is scoped to them. */
 export class AgentTab {
@@ -75,29 +85,41 @@ export class AgentTab {
     if (!this.scoped(state) && this.claims.size) this.update(() => (this.claims.clear(), this.homes.clear()));
   }
 
+  /** Records the lane's starting tab once when alone, so open_tab never locks it out of returning. */
+  noteHome(id: number | null | undefined = this.deps.tabs.activeTabId): void {
+    const lane = currentLane();
+    if (!this.claims.size && id != null && !sdkLane(lane) && !this.homes.has(lane)) this.homes.set(lane, id);
+  }
+
   /**
    * An agent starts on a page with no tab of its own yet: alone, it takes the shown tab,
    * as one agent always has; beside other agents, it gets a fresh background tab on the start page, so it
    * never lands in another agent's tab or the one the person is using.
    */
   start(): void {
+    this.noteHome();
     if (!this.scoped() || this.claims.has(currentLane())) return;
+    if (sdkLane(currentLane())) return this.startSdk();
     const { tabs } = this.deps;
     if (this.claims.size) this.opened(tabs.createTab(HOME_URL, false));
     else this.claim(tabs.activeTabId);
   }
 
-  /**
-   * The running lane's run ended: its tab is the person's again, the tabs it opened
-   * close, and a person watching the agent is brought back to the tab it started in,
-   * so they never hunt for it among the agent's leftovers. Tabs the person opened stay.
-   */
+  /** An SDK lane starts in a kept tab of its own, else a new one, keeping the person's shown tab intact. */
+  private startSdk(): void {
+    const kept = keptTab(this.openers, currentLane(), this.deps.tabs);
+    if (kept !== undefined) return this.claim(kept);
+    this.opened(this.deps.tabs.createTab(HOME_URL, this.claims.size === 0));
+  }
+
+  /** Ends the running lane: frees its tab, closes tabs it opened, and restores its starting tab if watched. */
   release(): void {
     const lane = currentLane();
     const home = this.homes.get(lane);
     const watching = this.watching(lane);
     if (this.claims.has(lane)) this.update(() => this.forget(lane));
-    this.closeOpened(lane);
+    else this.homes.delete(lane);
+    this.closeOpened(lane, home);
     if (watching && home !== undefined && this.deps.tabs.find(home)) this.deps.tabs.activateTab(home);
   }
 
@@ -107,13 +129,13 @@ export class AgentTab {
     return shown !== null && (shown === this.claims.get(lane) || this.openers.get(shown) === lane);
   }
 
-  /** Closes every tab lane `lane` opened, but the one it started in, and forgets them. */
-  private closeOpened(lane: string): void {
-    const home = this.homes.get(lane);
+  /** Closes every tab lane `lane` opened, keeping a non-SDK lane's starting tab, and forgets them. */
+  private closeOpened(lane: string, home = this.homes.get(lane)): void {
+    const keep = sdkLane(lane) ? undefined : home;
     for (const [id, opener] of [...this.openers]) {
       if (opener !== lane) continue;
       this.openers.delete(id);
-      if (id !== home) this.deps.tabs.closeTab(id);
+      if (id !== keep) this.deps.tabs.closeTab(id);
     }
   }
 

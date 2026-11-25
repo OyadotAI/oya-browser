@@ -54,7 +54,9 @@ const MEASURE = `(() => {
         const root = node.getRootNode(), hit = root.elementFromPoint?.(x, y);
         // A disabled, pointer-transparent control hits its painted ancestor.
         // Accept only that ancestry, never an unrelated overlay or sibling.
-        if (!hit || (hit !== node && !node.contains(hit) && hit !== control && !(passThrough && hit.contains(node)))) return false;
+        // A floating label drawn over its own field focuses that field, so it does not cover it.
+        const ownLabel = hit?.closest?.('label')?.control === control;
+        if (!hit || (hit !== node && !node.contains(hit) && hit !== control && !ownLabel && !(passThrough && hit.contains(node)))) return false;
         node = root.host;
       }
       return true;

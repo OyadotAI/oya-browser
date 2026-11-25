@@ -1,0 +1,472 @@
+/** Shared landing tokens and editorial composition stay isolated from the application theme. */
+.page {
+  /* Oya's five colours (tooling/colours): the only colours this site names. Everything below is one of them or a mix. */
+  --night: #1a1a1a;
+  --ivory: #f7f5f0;
+  --lime: #cdf01e;
+  --red: #f2554a;
+  --amber: #f5b14c;
+  /* On dark: a raised charcoal, quieter text, and hairlines of paper. */
+  --forest: color-mix(in srgb, var(--ivory) 8%, var(--night));
+  --night-muted: color-mix(in srgb, var(--ivory) 72%, var(--night));
+  --dark-line: color-mix(in srgb, var(--ivory) 12%, transparent);
+  --dark-line-strong: color-mix(in srgb, var(--ivory) 25%, transparent);
+  /* On paper: ink text, quieter text, hairlines and sunken panels, all paper with ink in it. */
+  --ink: var(--night);
+  --muted: color-mix(in srgb, var(--night) 75%, var(--ivory));
+  --line: color-mix(in srgb, var(--night) 12%, var(--ivory));
+  --line-strong: color-mix(in srgb, var(--night) 20%, var(--ivory));
+  /* The outline of a control: 3:1 off what is behind it, on paper and on dark. Lines above are for dividers. */
+  --control-edge: color-mix(in srgb, var(--night) 56%, var(--ivory));
+  --dark-control-edge: color-mix(in srgb, var(--ivory) 45%, var(--night));
+  --surface: color-mix(in srgb, var(--night) 6%, var(--ivory));
+  --surface-soft: color-mix(in srgb, var(--night) 3%, var(--ivory));
+  --brand: var(--forest);
+  /* The accent that can always be read: ink on paper. Dark sections set it to lime, which on paper cannot be read. */
+  --primary: var(--night);
+  --foreground: var(--ink);
+  /* Lime as a surface: ink on it, a pale lime for success on paper, tints and lines of it on dark, a halo beside ink. */
+  --on-lime: var(--night);
+  --lime-soft: color-mix(in srgb, var(--lime) 30%, var(--ivory));
+  --lime-tint: color-mix(in srgb, var(--lime) 12%, transparent);
+  --lime-line: color-mix(in srgb, var(--lime) 30%, transparent);
+  --lime-ring: color-mix(in srgb, var(--lime) 70%, transparent);
+  --shadow-ink: var(--night);
+  --radius-control: 8px;
+  --radius-window: 20px;
+  --space-section: 104px;
+  --space-grid: 40px;
+  --space-content: 24px;
+  --space-panel: 32px;
+  --type-section: clamp(32px, 4.2vw, 52px);
+  --type-lead: 20px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  min-height: 100dvh;
+  background: var(--ivory);
+  color: var(--ink);
+  color-scheme: light;
+  font:
+    400 17px/1.7 var(--font-text),
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+.page :is(h1, h2, h3, h4, p, figure, ul, ol, dl, dd) {
+  margin: 0;
+}
+.page :is(ul, ol) {
+  padding: 0;
+  list-style: none;
+}
+.page button {
+  font-family: inherit;
+  cursor: pointer;
+}
+.page [hidden] {
+  display: none !important;
+}
+.page :focus-visible {
+  outline: 2px solid var(--focus, var(--primary));
+  outline-offset: 5px;
+}
+.page ::selection {
+  background: var(--lime);
+  color: var(--night);
+}
+.page :global(.wrap) {
+  width: min(1280px, calc(100% - 96px));
+  margin-inline: auto;
+}
+.page :global(.section) {
+  padding-block: var(--space-section);
+  scroll-margin-top: 112px;
+}
+.page :global(.grid) {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--space-grid);
+  align-items: start;
+}
+.page :global(.grid > *) {
+  min-width: 0;
+}
+.page :global(.span-2) {
+  grid-column: span 2;
+}
+.page :global(.span-4) {
+  grid-column: span 4;
+}
+.page :global(.span-5) {
+  grid-column: span 5;
+}
+.page :global(.span-6) {
+  grid-column: span 6;
+}
+.page :global(.start-7) {
+  grid-column: 7 / span 6;
+}
+.page h2 {
+  font-size: var(--type-section);
+  font-weight: 500;
+  line-height: 1.08;
+  letter-spacing: -0.055em;
+  text-wrap: balance;
+}
+.page :is(h3, h4) {
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: -0.025em;
+}
+.page :global(.t-lead) {
+  font-size: var(--type-lead);
+  line-height: 1.6;
+}
+.page :global(.link) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  text-underline-offset: 6px;
+}
+.page :global(.link:hover) {
+  text-decoration-color: currentColor;
+}
+.page :global(.btn-row) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.page :global(.btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 12px 24px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition:
+    transform 300ms var(--ease-out),
+    box-shadow 300ms var(--ease-out);
+}
+.page :global(.btn:hover) {
+  transform: translateY(-2px);
+}
+.page :global(.btn:active) {
+  transform: scale(0.98);
+}
+.page :global(.btn--primary) {
+  border-color: var(--button-edge, var(--button-fill, var(--lime)));
+  background: var(--button-fill, var(--lime));
+  color: var(--button-ink, var(--on-lime));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ivory) 19%, transparent),
+    0 4px 12px color-mix(in srgb, var(--shadow-ink) 7%, transparent);
+}
+.page :global(.btn--primary:has(svg)) {
+  padding-right: 12px;
+}
+.page :global(.btn--primary:hover) {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--ivory) 31%, transparent),
+    0 8px 24px color-mix(in srgb, var(--shadow-ink) 14%, transparent);
+}
+.page :global(.btn--secondary) {
+  border-color: var(--button-border, var(--control-edge));
+  color: var(--button-secondary-ink, var(--ink));
+  background: transparent;
+}
+.page :global(.m-arrow) {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.page :global(.btn .m-arrow) {
+  box-sizing: content-box;
+  padding: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  transition: transform 300ms var(--ease-out);
+}
+.page :global(.btn:hover .m-arrow) {
+  transform: rotate(-35deg);
+}
+.page :global(.nav__logo) {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 25px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+.workflowSection {
+  position: relative;
+  margin-top: -20px;
+  padding-block: var(--space-section);
+  border-radius: 32px 32px 0 0;
+  background: var(--ivory);
+}
+.operations {
+  border-block: 1px solid var(--line);
+  background: var(--surface-soft);
+}
+.operations :global(.section) {
+  padding-block: 56px;
+}
+.operations > :first-child {
+  padding-top: var(--space-section);
+}
+.operations > :last-child {
+  padding-bottom: var(--space-section);
+}
+.operations > section + section > :global(.wrap) {
+  padding-top: 48px;
+  border-top: 1px solid var(--line);
+}
+.trustSection :global(#faq),
+.page :global(#results) {
+  padding-top: 0;
+}
+.operations > section + section h3 {
+  font-size: clamp(28px, 3vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.04em;
+}
+.page :global(.comparison-layout) {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: 80px;
+}
+.page :global(.comparison-layout h2) {
+  max-width: 520px;
+}
+.page :global(.comparison) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+}
+.page :global(.comparison > div) {
+  padding-top: 24px;
+  border-top: 1px solid var(--line-strong);
+}
+.page :global(.comparison dt) {
+  margin-bottom: 24px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.page :global(.comparison dd) {
+  font-size: clamp(40px, 4.5vw, 64px);
+  font-weight: 500;
+  line-height: 1.05;
+  letter-spacing: -0.065em;
+  font-variant-numeric: tabular-nums;
+}
+.page :global(.comparison > div:last-child dd) {
+  color: var(--primary);
+}
+.page :global(.comparison-unit) {
+  display: block;
+  margin-top: 12px;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+.page :global(.comparison-label) {
+  margin-bottom: 28px;
+}
+.page :global(.comparison-note) {
+  margin-top: 32px;
+  color: var(--muted);
+  font-size: 16px;
+}
+.page :global(.comparison-note h3) {
+  color: var(--ink);
+  font-size: 16px;
+}
+.page :global(.comparison-note p) {
+  margin-top: 8px;
+}
+.page :global(#faq .span-5 .link) {
+  margin-top: 24px;
+}
+.page :global(.faq__item) {
+  border-bottom: 1px solid var(--line-strong);
+}
+.page :global(.faq__item:first-child) {
+  border-top: 1px solid var(--line-strong);
+}
+.page :global(.faq__item h3) {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+.page :global(.faq__item button) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+  min-height: 88px;
+  padding: 24px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.page :global(.faq__item button svg) {
+  flex: none;
+  stroke-width: 1.5;
+}
+.page :global(.faq__item p) {
+  padding-bottom: 28px;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.75;
+}
+.page :global(.deployment-lead) {
+  max-width: 620px;
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 19px;
+}
+.page :global(.deployment-columns) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 64px;
+  margin-block: 40px 24px;
+}
+.page :global(.deployment-columns > div) {
+  padding-top: 24px;
+  border-top: 1px solid var(--line-strong);
+}
+.page :global(.deployment-columns p) {
+  max-width: 470px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 17px;
+}
+.page :global(.control-links) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.page :global(.runtime-limits) {
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.page :global(.runtime-limits summary) {
+  width: fit-content;
+  min-height: 44px;
+  padding-block: 10px;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 500;
+}
+.page :global(.runtime-limits ul) {
+  display: grid;
+  gap: 12px;
+  max-width: 850px;
+  padding-block: 16px 8px;
+  color: var(--muted);
+  font-size: 15px;
+}
+@media (max-width: 1023px) {
+  .page :global(.wrap) {
+    width: calc(100% - 48px);
+  }
+  .page :global(.grid > *) {
+    grid-column: span 12;
+  }
+  .page :global(.comparison-layout) {
+    gap: 40px;
+  }
+}
+@media (max-width: 767px) {
+  .page {
+    --space-section: 64px;
+    --space-grid: 32px;
+    --type-section: 36px;
+  }
+  /* Twelve columns leave eleven gutters: at the full grid gap they alone are wider than a 360px phone. */
+  .page :global(.grid) {
+    column-gap: 16px;
+  }
+  .page :global(.wrap) {
+    width: calc(100% - 32px);
+  }
+  .workflowSection {
+    border-radius: 24px 24px 0 0;
+    padding-top: 64px;
+  }
+  .operations :global(.section) {
+    padding-block: var(--space-panel);
+  }
+  .operations > :first-child {
+    padding-top: var(--space-section);
+  }
+  .operations > :last-child {
+    padding-bottom: var(--space-section);
+  }
+  .operations > section + section > :global(.wrap) {
+    padding-top: var(--space-panel);
+  }
+  .page :global(.comparison-layout),
+  .page :global(.deployment-columns) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+  .page :global(.comparison-layout h2) {
+    max-width: 470px;
+  }
+  .page :global(.comparison dd) {
+    font-size: 42px;
+  }
+}
+@media (max-width: 374px) {
+  .page :global(.comparison) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .page :global(.hero .btn-row) {
+    width: 100%;
+  }
+  .page :global(.hero .btn) {
+    flex: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page *,
+  .page *::before,
+  .page *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.page :global(.deployment-columns h4) {
+  margin-top: 20px;
+  font-size: 26px;
+}
+.page :global(.deployment-columns svg) {
+  color: var(--primary);
+}

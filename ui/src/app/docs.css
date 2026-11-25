@@ -1,0 +1,118 @@
+/** Documentation keeps a quiet reading rhythm, solid scrolling chrome, and complete code and tables. */
+.docs-page main {
+  min-width: 0;
+}
+.docs-page main h1 {
+  font-size: clamp(36px, 4vw, 56px);
+  letter-spacing: -0.055em;
+  line-height: 1.1;
+}
+.docs-page main h2 {
+  font-size: clamp(28px, 3vw, 36px);
+  letter-spacing: -0.04em;
+}
+.docs-page main :is(h2, h3)[id] {
+  scroll-margin-top: 104px;
+}
+.docs-page main :is(p, li) {
+  font-size: 16px;
+  line-height: 1.75;
+}
+.docs-page main pre {
+  border-radius: 12px;
+}
+.docs-page main table {
+  min-width: 560px;
+}
+.docs-page aside {
+  background: var(--sunken);
+}
+.docs-page header {
+  background: var(--background);
+}
+.docs-page main > section {
+  border-color: var(--border);
+}
+@media (max-width: 767px) {
+  .docs-page header {
+    gap: 8px;
+    padding-inline: 16px;
+  }
+  .docs-page header > div {
+    gap: 8px;
+  }
+  .docs-page header :is(button, a.btn-ghost) {
+    min-height: 44px;
+  }
+  .docs-page header a.btn-ghost {
+    min-width: 44px;
+    padding-inline: 12px;
+  }
+  .docs-page main {
+    padding-inline: 16px;
+  }
+  .docs-page :is(input, select, textarea) {
+    font-size: 16px;
+  }
+}
+
+.docs-page main {
+  color: var(--secondary);
+}
+/* Docs prose: a comfortable size and a line short enough to read without losing your place. */
+.docs-page main p,
+.docs-page main li {
+  max-width: 70ch;
+  font-size: 16px;
+  line-height: 1.75;
+}
+.docs-page main .docs-lede {
+  font-size: 18px;
+  line-height: 1.65;
+}
+.docs-page main strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.docs-page main td {
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+/* The quickstart's steps, joined by a quiet line from one number to the next. */
+.docs-step::before {
+  content: '';
+  position: absolute;
+  top: 34px;
+  bottom: 6px;
+  left: 13.5px;
+  width: 1px;
+  background: var(--border);
+}
+.docs-step:last-of-type::before {
+  display: none;
+}
+@media (max-width: 640px) {
+  .docs-page main p,
+  .docs-page main li {
+    font-size: 16px;
+  }
+  .docs-page main pre {
+    font-size: 12.5px;
+  }
+  .docs-step {
+    padding-left: 38px;
+  }
+}
+.docs-page main table {
+  min-width: 560px;
+}
+.docs-page main h3 {
+  color: var(--foreground);
+  scroll-margin-top: 104px;
+}
+/* Links in the docs: in the light theme the accent is ink like the text, so an underline marks them. */
+.docs-page main a.text-accent {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}

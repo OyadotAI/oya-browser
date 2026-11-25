@@ -68,6 +68,9 @@ test('disabling automatic attachment preserves separately attached manual sessio
   await f.run('Target.setAutoAttach', { ...enabled, autoAttach: false });
   await f.run('DOM.getDocument', {}, manual.sessionId);
   assert.equal(f.events.filter((e) => e.method === 'Target.detachedFromTarget').length, 1);
+  f.change([]);
+  await assert.rejects(f.run('DOM.getDocument', {}, manual.sessionId), /outside/);
+  f.protocol.dispose();
   assert.equal(f.listeners.size, 0);
 });
 test('explicit detach forgets automatic ownership and discovery never duplicates detach events', async () => {
@@ -79,7 +82,9 @@ test('explicit detach forgets automatic ownership and discovery never duplicates
   f.change(f.backend.targets());
   assert.equal(f.events.filter((e) => e.method === 'Target.attachedToTarget').length, 2);
   f.change([]);
-  assert.equal(f.events.filter((e) => e.method === 'Target.detachedFromTarget').length, 1);
+  const detached = f.events.filter((e) => e.method === 'Target.detachedFromTarget');
+  assert.equal(detached.length, 2);
+  assert.equal(new Set(detached.map((event) => event.params.sessionId)).size, 2);
   f.protocol.dispose();
 });
 test('unsupported automatic attachment contracts fail without subscribing', async () => {
@@ -97,7 +102,9 @@ test('unsupported automatic attachment contracts fail without subscribing', asyn
 test("accepts Playwright's form: no filter, and waitForDebuggerOnStart:true, since nothing is ever paused", async () => {
   const f = fixture();
   await f.run('Target.setAutoAttach', { autoAttach: true, flatten: true, waitForDebuggerOnStart: true });
-  assert.equal(f.listeners.size, 1);
+  assert.equal(f.events[0].method, 'Target.attachedToTarget');
+  assert.equal(f.events[0].params.waitingForDebugger, false);
+  f.protocol.dispose();
 });
 test('capacity preflight rolls back initial setup and future overflow explicitly fails the transport', async () => {
   const f = fixture();
@@ -127,6 +134,6 @@ test('automatic sessions cannot be used by a different socket', async () => {
     /outside/,
   );
   other.dispose();
-  assert.equal(f.listeners.size, 1);
+  await f.run('DOM.getDocument', {}, f.events[0].params.sessionId);
   f.protocol.dispose();
 });

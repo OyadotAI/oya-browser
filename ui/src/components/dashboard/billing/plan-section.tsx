@@ -6,7 +6,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BILLING_PAGE, SALES_EMAIL, UPGRADES } from './constants';
+import { BILLING_PAGE, NEW_SUBSCRIPTION_PRICE_NOTE, FOUNDERS_CALL, UPGRADES } from './constants';
 import { hours, usePlan } from './use-plan';
 
 /** One line of use against an allowance. */
@@ -29,6 +29,25 @@ function Meter({
   );
 }
 
+/** Checkout choices explain the new rates without changing a subscriber's existing contract. */
+function UpgradeButtons({ upgrade }: Pick<ReturnType<typeof usePlan>, 'upgrade'>) {
+  return (
+    <>
+      {UPGRADES.map((plan) => (
+        <button
+          key={plan.id}
+          type="button"
+          onClick={() => void upgrade(plan.id)}
+          className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground"
+        >
+          {plan.label} — {plan.price}
+        </button>
+      ))}
+      <p className="basis-full text-xs text-text-secondary">{NEW_SUBSCRIPTION_PRICE_NOTE}</p>
+    </>
+  );
+}
+
 /** Your plan, your use this month, and upgrade or manage. */
 export default function PlanSection({ open }: { /** Whether the dialog is showing. */ open: boolean }) {
   const { billing, error, upgrade, manage } = usePlan(open);
@@ -47,15 +66,7 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
       <Meter label="Agent steps" used={billing.used?.agent_steps || 0} of={billing.included?.steps || 0} />
       <div className="flex flex-wrap gap-2 pt-1">
         {free ? (
-          UPGRADES.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => void upgrade(p.id)}
-              className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white"
-            >
-              {p.label} {p.price}
-            </button>
-          ))
+          <UpgradeButtons upgrade={upgrade} />
         ) : (
           <button
             onClick={() => void manage()}
@@ -70,8 +81,8 @@ export default function PlanSection({ open }: { /** Whether the dialog is showin
       </Link>
       <p className="text-[11px] text-text-dim">
         Need more?{' '}
-        <a className="underline" href={`mailto:${SALES_EMAIL}`}>
-          {SALES_EMAIL}
+        <a className="underline" href={FOUNDERS_CALL} target="_blank" rel="noreferrer">
+          Book a time with the founders
         </a>
       </p>
       {error && <p className="text-xs text-red">{error}</p>}

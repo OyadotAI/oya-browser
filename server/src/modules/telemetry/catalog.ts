@@ -177,25 +177,25 @@ export type EventProps = {
 /** An event name. */
 export type EventName = keyof EventProps;
 
-/** The channel an event's Slack line goes to. */
+/** The channel an event's Slack line goes to; only account, key and payment events belong in signups. */
 export const CHANNEL: Partial<Record<EventName, 'signups' | 'events'>> = {
   account_signed_up: 'signups',
   agent_signed_up: 'signups',
   agent_key_claimed: 'signups',
   api_key_created: 'signups',
-  desktop_connected: 'signups',
-  download_served: 'signups',
+  desktop_connected: 'events',
+  download_served: 'events',
   playbook_saved: 'events',
   cdp_attached: 'events',
   server_error: 'events',
   run_failed: 'events',
-  install_pinged: 'signups',
+  install_pinged: 'events',
   payment_received: 'signups',
   payment_failed: 'signups',
 };
 
 /** An amount in cents as money: $99.00, or 99.00 EUR in any other currency. */
-const money = (cents: number, currency: string) =>
+export const money = (cents: number, currency: string) =>
   currency === 'usd'
     ? `$${(cents / CENTS).toFixed(CENT_DIGITS)}`
     : `${(cents / CENTS).toFixed(CENT_DIGITS)} ${currency.toUpperCase()}`;
@@ -206,6 +206,9 @@ const REASONS: Record<string, string> = {
   subscription_cycle: 'renewal',
   subscription_update: 'plan change',
 };
+
+/** A payment reason shared by lines and cards, with unknown Stripe reasons preserved. */
+export const paymentReason = (reason: string) => (Object.hasOwn(REASONS, reason) ? REASONS[reason] : reason);
 
 /** `n step` or `n steps`. */
 const steps = (n: number) => `${n} step${n === 1 ? '' : 's'}`;
@@ -224,7 +227,7 @@ export const SLACK_LINES: { [K in EventName]?: (who: Who, props: EventProps[K]) 
       ? `⬇️ Desktop downloaded: ${p.platform} ${p.version} · from ${p.source}${p.client ? ` · 🤖 not a browser: ${p.client}` : ''}`
       : null,
   payment_received: (who, p) =>
-    `💰 Payment received: ${money(p.amount_cents, p.currency)} from ${who.label} (${Object.hasOwn(REASONS, p.reason) ? REASONS[p.reason] : p.reason})`,
+    `💰 Payment received: ${money(p.amount_cents, p.currency)} from ${who.label} (${paymentReason(p.reason)})`,
   payment_failed: (who, p) =>
     `⚠️ Payment failed: ${money(p.amount_cents, p.currency)} from ${who.label} (attempt ${p.attempt})`,
   // Only an unlicensed install past the free cap: that is a sales lead, the rest is a count.

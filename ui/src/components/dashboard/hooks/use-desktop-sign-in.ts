@@ -8,20 +8,31 @@ import { useState } from 'react';
 import { desktopSignInUrl } from '../config';
 import { useBusyAction } from './use-busy-action';
 import { APP_OPEN_WAIT_MS } from './constants';
+import type { DesktopReturn } from '../desktop-return';
 
 /** `open(profile?)` hands the desktop a pairing link; `busy` while the link is made; `notOpened` when no app took it. */
 export function useDesktopSignIn(apiKey: string) {
   const { busy, run } = useBusyAction();
   const [notOpened, setNotOpened] = useState(false);
-  const open = (profile?: string) => run(() => pair(apiKey, profile, setNotOpened));
+  const open = (profile?: string, returnTo?: DesktopReturn) => run(() => pair(apiKey, profile, setNotOpened, returnTo));
   return { busy, open, notOpened };
 }
 
 /** Follows a fresh pairing link, then watches whether an app took it. */
-async function pair(apiKey: string, profile: string | undefined, setNotOpened: (on: boolean) => void) {
+async function pair(
+  apiKey: string,
+  profile: string | undefined,
+  setNotOpened: (on: boolean) => void,
+  returnTo?: DesktopReturn,
+) {
   setNotOpened(false);
-  window.location.href = await desktopSignInUrl(apiKey, profile);
-  watchAppOpened(() => setNotOpened(true));
+  window.location.href = await signInAddress(apiKey, profile, returnTo);
+  if (!returnTo) watchAppOpened(() => setNotOpened(true));
+}
+
+/** Legacy callers retain their existing argument contract during a coordinated rollout. */
+function signInAddress(apiKey: string, profile: string | undefined, returnTo?: DesktopReturn) {
+  return returnTo ? desktopSignInUrl(apiKey, profile, returnTo) : desktopSignInUrl(apiKey, profile);
 }
 
 /** Calls `missing` when the page keeps focus for APP_OPEN_WAIT_MS: an app that opened would have taken it. */

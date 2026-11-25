@@ -51,6 +51,12 @@ import {
   WAIT_FOR_GRACE_MS,
 } from './constants.js';
 
+/** The header a lane is named in, read by the server for every route. */
+const LANE_HEADER = 'X-Oya-Agent';
+
+/** A lane name of this SDK's own: unique per browser object, and marked so a desktop gives it a fresh tab. */
+const sdkLane = (): string => `sdk-${globalThis.crypto.randomUUID()}`;
+
 /**
  * One running browser.
  *
@@ -74,19 +80,27 @@ export class Browser {
   /** True when `start()` handed over a browser that was already running, such as the desktop app. */
   readonly reused: boolean;
 
-  /** Wraps a started browser; `autoCaptcha` solves CAPTCHAs after every `goto()`. */
+  /** How this browser reaches the API: with its lane on every request when it shares someone's browser. */
+  private readonly http: Http;
+
+  /**
+   * Wraps a started browser; `autoCaptcha` solves CAPTCHAs after every `goto()`. A browser
+   * handed over already running (a person's desktop app) gets one lane for its whole life,
+   * so the desktop gives its goto, ask and play one tab of its own, never the person's.
+   */
   constructor(
-    private readonly http: Http,
+    http: Http,
     info: StartResult,
     private readonly autoCaptcha: boolean,
   ) {
     ({ id: this.id, provider: this.provider, persona: this.persona, cdpUrl: this.cdpUrl } = info);
     this.reused = info.reused === true;
+    this.http = this.reused ? http.withHeaders({ [LANE_HEADER]: sdkLane() }) : http;
   }
 
   /** Runs one browser command; a command that ran and failed throws. */
   private async command<T>(action: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
-    const path = `/api/browsers/${this.id}/command`;
+    const path = `/api/browsers/${segment(this.id)}/command`;
     const result = await this.http.request<CommandResult<T>>('POST', path, { action, params }, timeoutMs);
     if (result.ok === false) throw new OyaError(result.error || `${action} failed`, Status.UNPROCESSABLE, result);
     return result.data as T;
@@ -186,8 +200,13 @@ export class Browser {
    * Detect and clear a CAPTCHA. Providers that solve natively are left to do
    * it; everything else goes to the configured solver.
    */
-  solveCaptcha(): Promise<CaptchaResult> {
-    return this.http.request<CaptchaResult>('POST', `/api/browsers/${this.id}/captcha`, {}, CHALLENGE_TIMEOUT_MS);
+  async solveCaptcha(): Promise<CaptchaResult> {
+    return this.http.request<CaptchaResult>(
+      'POST',
+      `/api/browsers/${segment(this.id)}/captcha`,
+      {},
+      CHALLENGE_TIMEOUT_MS,
+    );
   }
 
   /**
@@ -195,7 +214,12 @@ export class Browser {
    * answer it, `liveViewUrl` is where a person finishes by hand.
    */
   async completeMfa(): Promise<MfaResult> {
-    const result = await this.http.request<MfaResult>('POST', `/api/browsers/${this.id}/mfa`, {}, CHALLENGE_TIMEOUT_MS);
+    const result = await this.http.request<MfaResult>(
+      'POST',
+      `/api/browsers/${segment(this.id)}/mfa`,
+      {},
+      CHALLENGE_TIMEOUT_MS,
+    );
     if (result.liveViewUrl) result.liveViewUrl = new URL(result.liveViewUrl, this.http.baseUrl).href;
     return result;
   }
@@ -208,7 +232,7 @@ export class Browser {
    */
   async ask(prompt: string, { data, secrets }: AskValues = {}): Promise<string> {
     const body = { messages: [{ role: 'user', content: prompt }], data, secrets };
-    const path = `/api/browsers/${this.id}/chat`;
+    const path = `/api/browsers/${segment(this.id)}/chat`;
     return agentAnswer(await this.http.request<AgentAnswer<AgentText>>('POST', path, body, AGENT_TIMEOUT_MS)).text;
   }
 
@@ -218,7 +242,7 @@ export class Browser {
    */
   async extract<T = unknown>(prompt: string, schema: Record<string, unknown>, values: AskValues = {}): Promise<T> {
     const body = { messages: [{ role: 'user', content: prompt }], ...values, schema };
-    const path = `/api/browsers/${this.id}/chat`;
+    const path = `/api/browsers/${segment(this.id)}/chat`;
     const res = agentAnswer(await this.http.request<AgentAnswer<AgentText>>('POST', path, body, AGENT_TIMEOUT_MS));
     if (res.failed || res.data === undefined) throw new OyaError(res.text, Status.UNPROCESSABLE, res);
     return res.data as T;
@@ -230,8 +254,13 @@ export class Browser {
    * `defaults`, so `play()` with nothing repeats the run and any one value can be
    * swapped. `code` is the same flow as a Playwright module, to read or run yourself.
    */
-  toPlaybook(name: string): Promise<Playbook> {
-    return this.http.request<Playbook>('POST', `/api/browsers/${this.id}/playbooks`, { name }, PLAYBOOK_TIMEOUT_MS);
+  async toPlaybook(name: string): Promise<Playbook> {
+    return this.http.request<Playbook>(
+      'POST',
+      `/api/browsers/${segment(this.id)}/playbooks`,
+      { name },
+      PLAYBOOK_TIMEOUT_MS,
+    );
   }
 
   /**
@@ -241,7 +270,7 @@ export class Browser {
    * replaces the broken steps in the playbook (`healed`); off, the step's error is thrown.
    */
   async play(name: string, data: RunData = {}, { autoHeal = true }: PlayOptions = {}): Promise<PlayResult> {
-    const path = `/api/browsers/${this.id}/playbooks/${segment(name, 'name')}/play`;
+    const path = `/api/browsers/${segment(this.id)}/playbooks/${segment(name, 'name')}/play`;
     return agentAnswer<PlayResult>(
       await this.http.request<AgentAnswer<PlayResult>>('POST', path, { variables: data, autoHeal }, AGENT_TIMEOUT_MS),
     );
@@ -255,7 +284,10 @@ export class Browser {
    */
   async submit(task: Task, options: SubmitOptions = {}): Promise<Run> {
     const { onSuccess, onFailure, onHumanAttention, onHealed, pollMs, ...body } = options;
-    const started = await this.http.request<RunInfo>('POST', `/api/browsers/${this.id}/runs`, { ...task, ...body });
+    const started = await this.http.request<RunInfo>('POST', `/api/browsers/${segment(this.id)}/runs`, {
+      ...task,
+      ...body,
+    });
     return new Run(this.http, started.id, { onSuccess, onFailure, onHumanAttention, onHealed }, pollMs);
   }
 
@@ -273,9 +305,9 @@ export class Browser {
    * 60 seconds. Mint one per viewer, the first connection spends it.
    */
   async liveStreamUrl(): Promise<string> {
-    const path = `/api/control/sessions/${encodeURIComponent(this.id)}/ticket`;
+    const path = `/api/control/sessions/${segment(this.id)}/ticket`;
     const { ticket } = await this.http.request<TicketData>('POST', path, {});
-    return `${this.http.baseUrl}/api/live/${this.id}?ticket=${encodeURIComponent(ticket)}`;
+    return `${this.http.baseUrl}/api/live/${segment(this.id)}?ticket=${encodeURIComponent(ticket)}`;
   }
 
   /**
@@ -290,7 +322,7 @@ export class Browser {
    * expires or you revoke it, so treat it like a password.
    */
   async shareUrl({ control = false, expiresInSeconds = 3600 }: ShareOptions = {}): Promise<ShareLink> {
-    const path = `/api/control/sessions/${encodeURIComponent(this.id)}/share`;
+    const path = `/api/control/sessions/${segment(this.id)}/share`;
     const c = await this.http.request<ShareCredential>('POST', path, { control, expiresIn: expiresInSeconds });
     return { url: shareLink(this.http.baseUrl, this.id, c.token), id: c.id, expiresAt: c.expiresAt };
   }
@@ -301,19 +333,31 @@ export class Browser {
   }
 
   /** Counters, health and the last 50 things this browser did. */
-  status(): Promise<BrowserDetail> {
-    return this.http.request<BrowserDetail>('GET', `/api/browsers/${this.id}`);
+  async status(): Promise<BrowserDetail> {
+    return this.http.request<BrowserDetail>('GET', `/api/browsers/${segment(this.id)}`);
   }
 
   /**
    * Stop it, whatever it is: a cloud sandbox is destroyed so billing ends, a
    * CDP session is handed back to its provider, a desktop browser disconnects.
    */
-  stop(): Promise<StopResult> {
+  async stop(): Promise<StopResult> {
     // A browser `start()` handed over was not ours to stop: disconnecting
     // someone's desktop browser at the end of a script is not what they meant.
-    if (this.reused) return Promise.resolve({ id: this.id, ok: true, reused: true });
-    return this.http.request<StopResult>('POST', `/api/browsers/${this.id}/stop`, {}, STOP_TIMEOUT_MS);
+    // Its tab is ours, though, so the lane ends and the desktop closes it.
+    if (this.reused) return this.endLane();
+    return this.http.request<StopResult>('POST', `/api/browsers/${segment(this.id)}/stop`, {}, STOP_TIMEOUT_MS);
+  }
+
+  /**
+   * Ends this browser's lane, best effort: a server too old to know lanes, or one out of reach,
+   * leaves the tab to lapse on its own, and `stop()` on someone's browser has never thrown.
+   */
+  private async endLane(): Promise<StopResult> {
+    await this.http
+      .request('POST', `/api/browsers/${segment(this.id)}/lane/end`, {}, STOP_TIMEOUT_MS)
+      .catch(() => undefined);
+    return { id: this.id, ok: true, reused: true };
   }
 
   /** `await using browser = await oya.browser.start()` stops it however the block exits, errors included. */
@@ -388,5 +432,5 @@ function consoleLink(baseUrl: string, id: string): string {
 
 /** The public live-view URL, with the token in the fragment so no server log sees it. */
 function shareLink(baseUrl: string, id: string, token: string): string {
-  return `${baseUrl}/live/${encodeURIComponent(id)}#t=${encodeURIComponent(token)}`;
+  return `${baseUrl}/live/${segment(id)}#t=${encodeURIComponent(token)}`;
 }

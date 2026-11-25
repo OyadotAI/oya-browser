@@ -1,5 +1,7 @@
 /** Terminate server-relayed external protocol frames directly in authorized native operations. */
 import { nativeCommand } from './command.ts';
+import { resolvesRequest } from './request-resolution.ts';
+import { ConcurrentCommands } from './concurrent-commands.ts';
 import { NativeProtocol, ProtocolError } from './protocol.ts';
 import { NATIVE_DOOR } from './constants.ts';
 import type { NativeBackend, NativeCommand } from './types.ts';
@@ -18,6 +20,8 @@ interface RelayOptions {
 
 /** All remote clients share bounded serial admission without acquiring the server's lease twice. */
 export class NativeRelayQueue {
+  /** Independent page responses retain bounds without blocking native management. */
+  readonly concurrent = new ConcurrentCommands();
   /** Preserve native focus and navigation ordering across remote clients. */
   private tail = Promise.resolve();
   /** Waiting and executing work both consume capacity. */
@@ -67,7 +71,8 @@ export class NativeRelayConnection {
   /** Held native requests must resolve while the navigation that owns them is waiting. */
   private schedule(message: NativeCommand): Promise<void> {
     const operation = () => this.execute(message);
-    if (message.method === 'Fetch.continueRequest' || message.method === 'Fetch.failRequest') return operation();
+    if (resolvesRequest(message.method)) return operation();
+    if (this.protocol.passesThrough(message)) return this.queue.concurrent.run(operation);
     return this.queue.run(operation);
   }
   /** Recheck ownership after queueing; the server already holds its actor-specific command lease. */

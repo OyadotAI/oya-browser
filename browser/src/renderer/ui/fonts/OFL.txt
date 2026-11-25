@@ -1,5 +1,5 @@
 DM Sans: Copyright 2014 The DM Sans Project Authors (https://github.com/googlefonts/dm-fonts)
-Archivo Black: Copyright 2017 The Archivo Black Project Authors (https://github.com/Omnibus-Type/ArchivoBlack)
+Anton: Copyright 2020 The Anton Project Authors (https://github.com/googlefonts/AntonFont.git)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

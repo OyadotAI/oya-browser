@@ -15,7 +15,7 @@
 .profiles-card {
   width: 300px;
   padding: 8px;
-  border-radius: 14px;
+  border-radius: 0;
   background: var(--surface);
   color: var(--text);
   box-shadow:
@@ -70,7 +70,7 @@
   width: 100%;
   padding: 7px 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: none;
   font: inherit;
   font-size: 13px;
@@ -129,23 +129,26 @@
   height: 52px;
   font-size: 22px;
 }
+/*
+ * Four more looks, so profiles side by side are not all alike. They differ by how the circle is
+ * filled, not by hue: there are only five colours, and red beside a name would read as an error.
+ */
 .profiles-avatar[data-tone='1'] {
-  background: color-mix(in srgb, #4f8cff 18%, transparent);
-  color: #4f8cff;
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1px var(--accent-edge);
+  color: var(--on-accent);
 }
 .profiles-avatar[data-tone='2'] {
-  background: color-mix(in srgb, #b26bff 18%, transparent);
-  color: #b26bff;
+  background: var(--amber);
+  box-shadow: 0 0 0 1px var(--accent-edge);
+  color: var(--ink);
 }
 .profiles-avatar[data-tone='3'] {
-  background: color-mix(in srgb, #ff8a3d 18%, transparent);
-  color: #ff8a3d;
+  background: var(--text);
+  color: var(--surface);
 }
 .profiles-avatar[data-tone='4'] {
-  background: color-mix(in srgb, #ff5c8a 18%, transparent);
-  color: #ff5c8a;
-}
-.profiles-avatar[data-tone='5'] {
-  background: color-mix(in srgb, #2ec4b6 18%, transparent);
-  color: #2ec4b6;
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--text);
+  color: var(--text);
 }

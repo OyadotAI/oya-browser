@@ -9,13 +9,7 @@ import { askLlm } from './llm.ts';
 import type { Answers, Interview, Secrets } from './types.ts';
 
 /** Where the control plane may run. */
-const HOST_OPTIONS: Option[] = [
-  { id: 'docker', label: 'Docker on this machine', note: 'one command, no cluster' },
-  { id: 'k8s', label: 'Kubernetes', disabled: 'not in this build yet' },
-  { id: 'ecs', label: 'Amazon ECS', disabled: 'not in this build yet' },
-  { id: 'fly', label: 'Fly.io', disabled: 'coming soon' },
-  { id: 'exe', label: 'exe.dev', disabled: 'coming soon' },
-];
+const HOST_OPTIONS: Option[] = [{ id: 'docker', label: 'Docker on this machine', note: 'one command, no cluster' }];
 
 /** The databases on offer. */
 const DB_OPTIONS: Option[] = [

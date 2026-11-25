@@ -22,6 +22,7 @@ async function seed(owner: string, project: string, persona: string, user: strin
   await db.upsert('persona_credentials', [{ id: `${persona}|example.com`, value: 's', updated_at: T }]);
   await db.upsert('mfa_factors', [{ id: persona, value: 's', updated_at: T }]);
   await db.upsert('routines', [{ owner, id: 'r', value: 's', version: 1, updated_at: T }]);
+  await db.upsert('playbook_runs', [{ owner, playbook: 'p', value: 's', version: 1, updated_at: T }]);
   await db.upsert('persona_groups', [{ owner, name: 'g', persona_ids: [persona], created_at: T, updated_at: T }]);
   await db.upsert('key_settings', [{ owner, key: 'model', value: 'x', updated_at: T }]);
   await db.upsert('usage', [{ api_key: owner, hour: T, commands: 1, updated_at: T }]);
@@ -33,6 +34,7 @@ async function seed(owner: string, project: string, persona: string, user: strin
 /** How many rows each table holds. */
 async function counts() {
   const tables = ['personas', 'persona_logins', 'persona_credentials', 'mfa_factors', 'routines', 'persona_groups'];
+  tables.push('playbook_runs');
   const more = ['key_settings', 'usage', 'api_keys', 'profiles', 'subscriptions'];
   const out = {};
   for (const t of [...tables, ...more]) out[t] = (await getConnection().select(t)).length;
@@ -43,6 +45,7 @@ beforeEach(async () => {
   for (const t of ['personas', 'persona_logins', 'persona_credentials', 'mfa_factors', 'routines', 'key_settings'])
     await getConnection().delete(t, {});
   await getConnection().delete('persona_groups', {});
+  await getConnection().delete('playbook_runs', {});
   for (const t of ['usage', 'api_keys', 'profiles', 'subscriptions']) await getConnection().delete(t, {});
   await seed('mine0000mine0000', 'prj_mine', 'per_mine', 'u-mine');
   await seed('them0000them0000', 'prj_them', 'per_them', 'u-them');
@@ -54,7 +57,7 @@ describe('erasure rows', () => {
     const left = await counts();
     for (const t of ['personas', 'persona_logins', 'persona_credentials', 'mfa_factors', 'routines', 'persona_groups'])
       assert.equal(left[t], 1, t);
-    for (const t of ['key_settings', 'usage', 'api_keys']) assert.equal(left[t], 1, t);
+    for (const t of ['key_settings', 'usage', 'api_keys', 'playbook_runs']) assert.equal(left[t], 1, t);
     assert.equal((await getConnection().select('personas'))[0].id, 'per_them');
     assert.equal((await getConnection().select('api_keys'))[0].project, 'prj_them');
   });

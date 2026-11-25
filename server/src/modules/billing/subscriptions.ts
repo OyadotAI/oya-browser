@@ -8,7 +8,7 @@ import { HttpError, invalid, notFound } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { MS_PER_SECOND } from '../../platform/constants.ts';
 import { portalConfiguration, pricesFor, planOfPrice } from './config.ts';
-import { CHECKOUT_BRANDING, PAID_PLANS, type PlanName } from './constants.ts';
+import { CHECKOUT_BRANDING, LICENSE_KIND, PAID_PLANS, type PlanName } from './constants.ts';
 import { includedFor, type CreditReader } from './adjustments.ts';
 import { standingOf, type Standing } from './standing.ts';
 import type { Stripe } from './stripe.ts';
@@ -142,10 +142,10 @@ export class Subscriptions {
     await this.sync(sub, FOLLOWED[event.type], Number(event.created) || 0);
   }
 
-  /** Writes what Stripe says of a subscription to its person's row, unless the row already knows better. */
+  /** Writes what Stripe says of a plan subscription to its person's row, unless the row already knows better; a self-hosted license is not a plan. */
   async sync(sub: StripeSubscription, ended: boolean, eventAt: number) {
     const userId = sub.metadata?.user_id;
-    if (!userId) return;
+    if (!userId || sub.metadata?.kind === LICENSE_KIND) return;
     if (superseded(await this.deps.find(userId), sub, ended, eventAt)) return;
     await this.deps.saveStripe(userId, { ...fromStripe(sub, ended), stripe_event_at: eventAt });
   }

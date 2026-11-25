@@ -94,6 +94,14 @@ describe('DesktopControl', () => {
     assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().localClients], ['offline', 0]);
   });
 
+  it('settles a takeover and clears busy even when a change listener throws', async () => {
+    ctx.snapshots.push = () => {
+      throw new Error('a listener threw');
+    };
+    await holdConnected(ctx);
+    assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().busy], ['human', false]);
+  });
+
   it('shows a running local command as agent control', async () => {
     const finish = await ctx.control.beginLocalCommand();
     assert.deepEqual([ctx.control.snapshot().mode, ctx.control.snapshot().mine], ['agent', false]);
@@ -129,6 +137,19 @@ describe('DesktopControl', () => {
     }
     await refused;
     assert.equal(ctx.control.snapshot().busy, false);
+  });
+
+  it('settles locally to human control when the socket drops while draining a local command', async () => {
+    ctx.control.connect({ mode: 'agent', mine: false, revision: 1 });
+    const finishLocal = await ctx.control.beginLocalCommand();
+    const taking = ctx.control.change('acquire');
+    await flush();
+    ctx.control.disconnect();
+    finishLocal();
+    mock.timers.tick(50);
+    await flush();
+    const settled = await taking;
+    assert.deepEqual([settled.mode, settled.mine, settled.interactive], ['human', true, true]);
   });
 
   it('refuses an unknown action and a second handoff', async () => {

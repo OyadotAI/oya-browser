@@ -10,9 +10,10 @@ import type { Event, MessageBoxOptions, MessageBoxReturnValue } from 'electron';
 import type { AppServices } from './services.ts';
 import { pairFromLink, type Paired } from '../connection/pairing.ts';
 import { LINK_SCHEME } from './constants.ts';
+import { AgentConnectLink, isAgentConnectLink, type Endpoint } from '../local-mcp/index.ts';
 
 /** The services deep links use. */
-type Deps = Pick<AppServices, 'electron' | 'shell' | 'config' | 'socket' | 'mirror' | 'tabs' | 'agentTab'>;
+type Deps = Pick<AppServices, 'electron' | 'shell' | 'config' | 'socket' | 'mirror' | 'tabs' | 'agentTab' | 'localMcp'>;
 
 /** Logs a link that could not be applied. */
 const reportLinkFailure = (e: Error): void => console.error('[deeplink]', e.message);
@@ -23,10 +24,37 @@ export class DeepLinks {
   readonly pending: string[] = [];
   /** The main-process services. */
   private readonly deps: Deps;
+  /**
+   * The connect-an-agent link's flow. Built here, not in main.ts: it needs only this class's own
+   * dialog and window, and the MCP port, which is read when a link arrives because it starts last.
+   */
+  private readonly agentLink: AgentConnectLink;
 
   /** `deps` is the main-process services (see src/main/main.ts). */
   constructor(deps: Deps) {
     this.deps = deps;
+    this.agentLink = new AgentConnectLink({
+      ask: (options) => this.ask(options),
+      show: () => this.deps.shell.window?.show(),
+      endpoint: () => this.mcpEndpoint(),
+    });
+  }
+
+  /** This app's MCP address and token, or null while its port is not up or not offered. */
+  private mcpEndpoint(): Endpoint | null {
+    const mcp = this.deps.localMcp;
+    return mcp?.token ? { url: mcp.url, token: mcp.token } : null;
+  }
+
+  /**
+   * Where a link from the OS goes: a connect-an-agent link to its dialog, anything else to pairing
+   * or a new tab. Only the OS routes reach this. A link a page inside Oya opens goes to
+   * applyDeepLink, which does not know the connect link, so Oya's own tabs can never raise it.
+   */
+  private route(url: string): Promise<unknown> {
+    if (!isAgentConnectLink(url)) return this.applyDeepLink(url);
+    this.agentLink.open(url).catch(reportLinkFailure);
+    return Promise.resolve(true);
   }
 
   /** Pair from an oya:// link (see src/main/connection/pairing.ts), then reconnect as the paired browser. */
@@ -81,7 +109,11 @@ export class DeepLinks {
     // id, close 4003, which the client treats as fatal and never retries, so the
     // desktop sits offline until a full restart happens to mint a fresh id. Rebind
     // to a new session on any key/server change; an unchanged target keeps its id.
-    if (config.apiKey !== apiKey || config.serverUrl !== serverUrl) this.deps.socket.browserId = null;
+    // The remembered account (whoami) and claim page belong to the old key too: drop them, or the
+    // account page keeps naming the previous person, and Claim opens their page, after pairing as someone else.
+    const moved = config.apiKey !== apiKey || config.serverUrl !== serverUrl;
+    if (moved) Object.assign(config, { account: null, claimUrl: '' });
+    if (moved) this.deps.socket.browserId = null;
     this.deps.socket.disconnect();
     Object.assign(config, { serverUrl, apiKey, persona, signedOut: false, keyFromApp: true });
     this.deps.config.save();
@@ -96,14 +128,14 @@ export class DeepLinks {
   /** macOS delivers it as an event, which can fire before the app is ready. */
   onOpenUrl(event: Pick<Event, 'preventDefault'>, url: string): void {
     event.preventDefault();
-    if (this.deps.shell.window) this.applyDeepLink(url).catch(reportLinkFailure);
+    if (this.deps.shell.window) this.route(url).catch(reportLinkFailure);
     else this.pending.push(url);
   }
 
   /** Once the window exists: the links that were waiting, then any on the command line. */
   async drain(argv: string[]): Promise<void> {
     const queued = this.pending.splice(0).concat(argv.filter(isLaunchLink));
-    for (const link of queued) await this.applyDeepLink(link).catch(reportLinkFailure);
+    for (const link of queued) await this.route(link).catch(reportLinkFailure);
   }
 }
 

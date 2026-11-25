@@ -1,33 +1,37 @@
-/* The release notes: one readable column of releases. */
+/** The release notes: one readable column of releases. */
 .main {
-  max-width: 760px;
-  padding: 64px 0 96px;
+  max-width: 800px;
+  padding: 80px 0 96px;
 }
 .main h1 {
-  font-size: 44px;
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 1.08;
   font-weight: 500;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.055em;
 }
 .lead {
   margin-top: 12px;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1.6;
 }
 .release {
   margin-top: 56px;
   padding-top: 32px;
-  border-top: 1px solid #e5e9e1;
+  border-top: 1px solid var(--border);
 }
 .release h2 {
-  font-size: 24px;
+  font-size: 30px;
   font-weight: 500;
   letter-spacing: -0.01em;
+}
+.indexLink {
+  display: block;
 }
 .release p {
   margin-top: 12px;
   color: var(--muted);
-  line-height: 1.65;
+  line-height: 1.75;
 }
 .group {
   margin-top: 24px;
@@ -46,7 +50,7 @@
 }
 .group li {
   margin-top: 10px;
-  line-height: 1.65;
+  line-height: 1.75;
 }
 .release a {
   color: var(--primary);
@@ -56,7 +60,7 @@
 .release code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: #f1f4ee;
+  background: var(--elevated);
   font-family: var(--font-mono, ui-monospace), monospace;
   font-size: 0.88em;
 }
@@ -65,6 +69,6 @@
     padding: 40px 0 64px;
   }
   .main h1 {
-    font-size: 34px;
+    font-size: 36px;
   }
 }

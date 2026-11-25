@@ -8,13 +8,13 @@
 import { HttpError } from '../../platform/errors.ts';
 import { Status } from '../../platform/http-status.ts';
 import { hosted } from './config.ts';
-import { MODEL_PRICES, PLANS, SALES_EMAIL, type Plan, TRIAL_AGENT_STEPS, TRIAL_WINDOW_HOURS } from './constants.ts';
+import { MODEL_PRICES, PLANS, type Plan, TRIAL_AGENT_STEPS, TRIAL_WINDOW_HOURS } from './constants.ts';
 import { includedFor, type CreditReader } from './adjustments.ts';
 import { priced } from './cost.ts';
 import { Reservations, SERVER } from './reservations.ts';
 import { standingOf, type Standing } from './standing.ts';
 import type { Subscription } from './repository.ts';
-import type { Admission } from '../../platform/license/index.ts';
+import { FOUNDERS_CALL, LICENSE_URL, type Admission } from '../../platform/license/index.ts';
 
 /** What admission needs from the rest of the server. */
 export type EntitlementDeps = CreditReader & {
@@ -119,7 +119,12 @@ export class Entitlements {
   admitSelfHosted(requested: number) {
     const running = this.deps.cloudKeys().length + this.reservations.count(SERVER);
     const { ok, message } = this.deps.licenseAdmit(running + requested);
-    if (!ok) throw new HttpError(Status.PAYMENT_REQUIRED, message, { code: 'license_required', contact: SALES_EMAIL });
+    if (!ok)
+      throw new HttpError(Status.PAYMENT_REQUIRED, message, {
+        code: 'license_required',
+        upgrade_url: LICENSE_URL,
+        contact: FOUNDERS_CALL,
+      });
   }
 
   /** The key's owner's standing, or null for a key nobody owns; a late payment is refused here. */
@@ -167,8 +172,8 @@ export class Entitlements {
   /** The 402 a plan refusal answers with: what ran out, where to upgrade, and who to write to for more. */
   refuse(code: string, why: string, details: Record<string, unknown> = {}) {
     const upgrade_url = this.deps.upgradeUrl();
-    const message = `${why} Upgrade at ${upgrade_url}, or write to ${SALES_EMAIL} for more.`;
-    return new HttpError(Status.PAYMENT_REQUIRED, message, { ...details, code, upgrade_url, contact: SALES_EMAIL });
+    const message = `${why} Upgrade at ${upgrade_url}, or for more book a time with the founders: ${FOUNDERS_CALL}`;
+    return new HttpError(Status.PAYMENT_REQUIRED, message, { ...details, code, upgrade_url, contact: FOUNDERS_CALL });
   }
 }
 

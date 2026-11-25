@@ -16,20 +16,17 @@ import {
 } from './live-session';
 
 /**
- * The credential, resolved exactly once: it reads the fragment and then
- * strips it, so a second run (React StrictMode double-invokes effects in dev)
- * would see no fragment and wrongly fall back to the empty console
- * credential, blanking the token.
+ * The credential for `browserId`: reads and strips any `#t=` fragment into tab
+ * storage so reloads and React StrictMode re-runs keep the scoped share token.
  */
-function useCredential() {
+function useCredential(browserId: string) {
   const [apiKey, setApiKey] = useState<string | null>(null);
-  const resolved = useRef(false);
+  const resolvedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (resolved.current) return;
-    resolved.current = true;
-    // The fragment only exists in the browser, so it is read after hydration.
-    setApiKey(takeSharedCredential());
-  }, []);
+    if (resolvedFor.current === browserId) return;
+    resolvedFor.current = browserId;
+    setApiKey(takeSharedCredential(browserId));
+  }, [browserId]);
   return apiKey;
 }
 
@@ -38,22 +35,26 @@ function usePicture() {
   const [frame, setFrame] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [age, setAge] = useState<number | null>(null);
-  const setters = useMemo(() => ({ frame: setFrame, fps: setFps, age: setAge }), []);
-  return { frame, fps, age, setters };
+  const [canControl, setCanControl] = useState(false);
+  const setters = useMemo(() => ({ frame: setFrame, fps: setFps, age: setAge, canControl: setCanControl }), []);
+  return { frame, fps, age, setters, canControl };
 }
 
 /** The stream's state and the sink that writes it. */
-function useLiveFields() {
+function useLiveFields(setMode: (mode: string) => void) {
   const [name, setName] = useState('Live browser');
   const [error, setError] = useState('');
   const { setters, ...picture } = usePicture();
-  const sink = useMemo<LiveSink>(() => ({ ...setters, name: setName, error: setError }), [setters]);
+  const sink = useMemo<LiveSink>(
+    () => ({ ...setters, name: setName, error: setError, mode: setMode }),
+    [setters, setMode],
+  );
   return { name, ...picture, error, setError, sink };
 }
 
 /** The stream, reopened whenever the credential, browser or attempt changes. */
-function useLiveState(apiKey: string | null, browserId: string, attempt: number) {
-  const live = useLiveFields();
+function useLiveState(apiKey: string | null, browserId: string, attempt: number, setMode: (mode: string) => void) {
+  const live = useLiveFields(setMode);
   const { sink } = live;
   useEffect(() => (apiKey ? restart(browserId, apiKey, sink) : undefined), [apiKey, browserId, attempt, sink]);
   return live;
@@ -61,6 +62,7 @@ function useLiveState(apiKey: string | null, browserId: string, attempt: number)
 
 /** Clears the last stream's state and opens a new one. */
 function restart(browserId: string, apiKey: string, sink: LiveSink) {
+  sink.canControl(false);
   sink.frame(null);
   sink.error('');
   sink.fps(0);
@@ -68,9 +70,22 @@ function restart(browserId: string, apiKey: string, sink: LiveSink) {
   return openLiveView(browserId, apiKey, sink);
 }
 
+/** State needed to toggle human/agent control. */
+interface ControlArgs {
+  /** Active credential. */
+  apiKey: string | null;
+  /** Target browser id. */
+  browserId: string;
+  /** Current mode. */
+  mode: string;
+  /** Updates the mode. */
+  setMode: (mode: string) => void;
+  /** Surfaces a control error. */
+  setError: (e: string) => void;
+}
+
 /** Who drives the browser, and the button that changes it. */
-function useControl(apiKey: string | null, browserId: string, setError: (e: string) => void) {
-  const [mode, setMode] = useState('agent');
+function useControl({ apiKey, browserId, mode, setMode, setError }: ControlArgs) {
   const toggle = () =>
     apiKey ? changeControl(browserId, apiKey, mode).then(setMode, (e) => setError(errorMessage(e))) : Promise.resolve();
   return { mode, toggle, label: controlFor(mode).label };
@@ -97,10 +112,11 @@ function useSend(apiKey: string | null, browserId: string, setError: (e: string)
 
 /** Everything the live page renders from. */
 export function useLivePage(browserId: string) {
-  const apiKey = useCredential();
+  const apiKey = useCredential(browserId);
   const [attempt, setAttempt] = useState(0);
-  const live = useLiveState(apiKey, browserId, attempt);
-  const control = useControl(apiKey, browserId, live.setError);
+  const [mode, setMode] = useState('agent');
+  const live = useLiveState(apiKey, browserId, attempt, setMode);
+  const control = useControl({ apiKey, browserId, mode, setMode, setError: live.setError });
   const send = useSend(apiKey, browserId, live.setError);
   return { apiKey, live, control, send, reconnect: () => setAttempt((a) => a + 1) };
 }

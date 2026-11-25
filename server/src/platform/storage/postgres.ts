@@ -1,7 +1,7 @@
 /**
  * The Postgres driver: every table in the oya_browser schema, through one pg
- * pool on DATABASE_URL. The schema comes from server/migrations (run.mjs),
- * which the container applies on every start.
+ * pool per database URL (DATABASE_URL, and KEEL_DATABASE_URL for Keel's own
+ * database). The schema comes from server/migrations.
  */
 import { HttpError } from '../errors.ts';
 import { Status } from '../http-status.ts';
@@ -11,13 +11,18 @@ import {
   DEFAULT_POOL_MAX,
   PG_CONNECT_TIMEOUT_MS,
   PG_IDLE_TIMEOUT_MS,
+  PG_KEEPALIVE_DELAY_MS,
+  pgQueryTimeoutMs,
 } from '../constants.ts';
 import { rowFromStored, TABLES } from './schema.ts';
 import { whereSql, tailSql, conflictSql, setSql, type Bind } from './sql.ts';
 import type { Connection, ControlRemote, Row, SelectOptions, Where } from './connection.ts';
 
-/** The process-wide pg pool, opened on first use and shared by every table and the control plane. */
-let pool = null;
+/**
+ * The pg pools, one per database URL, each opened on first use and shared by every table on it. One per URL,
+ * not one per process: a second database (Keel's) handed the first pool would write its rows there, silently.
+ */
+const pools = new Map<string, any>();
 
 /** The pg module, which only this driver needs, loaded on demand. */
 async function loadPg() {
@@ -30,16 +35,24 @@ async function loadPg() {
   }
 }
 
-/** The pool, opened on first use. */
+/** The pool for this database, opened on first use. */
 async function getPool(connectionString: string) {
-  if (pool) return pool;
-  pool = new (await loadPg()).Pool(poolOptions(connectionString));
+  if (pools.has(connectionString)) return pools.get(connectionString);
+  const pool = new (await loadPg()).Pool(poolOptions(connectionString));
   // A pool that emits an unhandled 'error' takes the process down with it.
   pool.on('error', (err) => console.error('[pg] idle client error:', err.message));
+  pools.set(connectionString, pool);
   return pool;
 }
 
-/** Pool settings: size from DATABASE_POOL_MAX, and bounded connect and idle times. */
+/** Close one database's pool, if it was opened. */
+async function closePool(connectionString: string) {
+  const pool = pools.get(connectionString);
+  pools.delete(connectionString);
+  await pool?.end();
+}
+
+/** Pool settings: size from DATABASE_POOL_MAX, and bounded connect, idle and query times. */
 function poolOptions(connectionString: string) {
   return {
     connectionString: pgConnectionString(connectionString),
@@ -47,8 +60,22 @@ function poolOptions(connectionString: string) {
     // Storage is on the request path; a hung connect must not hang a request.
     connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS,
     idleTimeoutMillis: PG_IDLE_TIMEOUT_MS,
+    ...liveness(),
   };
 }
+
+/**
+ * How a connection that stopped answering is let go. A statement whose answer
+ * never comes fails and the pool drops that connection; keepalive probes idle
+ * sockets as a backstop for a peer that vanished outright. Without these, lost answers (a
+ * database restart behind Supabase's proxy) held every slot and storage stayed
+ * down until the server was restarted.
+ */
+const liveness = () => ({
+  query_timeout: pgQueryTimeoutMs(),
+  keepAlive: true,
+  keepAliveInitialDelayMillis: PG_KEEPALIVE_DELAY_MS,
+});
 
 /**
  * The connection string with sslmode read as libpq reads it, the way psql and
@@ -97,10 +124,9 @@ export function verifyFull(connectionString: string, ca = process.env.PGSSLROOTC
   return `${base}?${params}`;
 }
 
-/** Close the pool, if one was opened. */
+/** Close every pool that was opened. */
 export async function closePgPool() {
-  await pool?.end();
-  pool = null;
+  await Promise.all([...pools.keys()].map(closePool));
 }
 
 /** Rows of a parameterized statement. */
@@ -210,8 +236,8 @@ export class PostgresConnection implements Connection {
     return pgRemote(this.url);
   }
 
-  /** Releases what the driver holds. */
+  /** Releases this database's pool; another database's stays open. */
   async close() {
-    await closePgPool();
+    await closePool(this.url);
   }
 }

@@ -2,9 +2,11 @@
  * The public release notes: CHANGELOG.md from the repository root, read when the
  * site is built, so the page and the file in the code base never disagree.
  */
+import { Reveal } from '@/components/ui/reveal';
 import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { repoFile } from '@/lib/repo-file';
 import type { Metadata } from 'next';
+import { SITE_ALTERNATE_TYPES } from '@/lib/site';
 import styles from '../page.module.css';
 import notes from './release-notes.module.css';
 import { SiteHeader } from '../_home/site-header';
@@ -17,12 +19,13 @@ export const dynamic = 'force-static';
 /** The page's title and description for search and link previews. */
 export const metadata: Metadata = {
   title: 'Release notes',
-  description: 'What changed in each Oya Browser release: the server, the desktop app, the SDK and the CLI.',
-  alternates: { canonical: '/release-notes' },
+  description:
+    'Track what changed in every Oya Browser release. The server, desktop app, SDK and CLI ship together under one version, with new features, fixes and updates.',
+  alternates: { canonical: '/release-notes', types: SITE_ALTERNATE_TYPES },
 };
 
 /** The changelog at the repository root; the site is built from ui/, one folder down. */
-const CHANGELOG = path.join(process.cwd(), '..', 'CHANGELOG.md');
+const CHANGELOG = repoFile('CHANGELOG.md');
 
 /** One line's text with its bold, code and links. */
 function Line({ line }: { /** The line as written. */ line: string }) {
@@ -76,19 +79,21 @@ export default function ReleaseNotes() {
   const releases = parseChangelog(readFileSync(CHANGELOG, 'utf8'));
   return (
     <div className={styles.page}>
+      <SiteHeader />
       <div className={styles.container}>
-        <SiteHeader />
-        <main className={notes.main}>
-          <h1>Release notes</h1>
-          <p className={notes.lead}>
-            The server, the desktop app, the SDK and the CLI ship together under one version.
-          </p>
+        <main id="top" tabIndex={-1} className={notes.main}>
+          <Reveal preset="public">
+            <h1>Release notes</h1>
+            <p className={notes.lead}>
+              The server, the desktop app, the SDK and the CLI ship together under one version.
+            </p>
+          </Reveal>
           {releases.filter(hasNews).map((release) => (
             <ReleaseEntry key={release.title} release={release} />
           ))}
         </main>
-        <SiteFooter />
       </div>
+      <SiteFooter />
     </div>
   );
 }

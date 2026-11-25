@@ -32,6 +32,14 @@ interface RunContext {
   evaluate: (expr: string) => Promise<any>;
   /** The key's own LLM settings, with a live credential, read when a step needs them. */
   llm: () => Promise<LlmConfig>;
+  /** The run brought its own login (secrets to type), so a site with none stored is the run's to sign in to. */
+  ownLogin: boolean;
+}
+
+/** What a run tells its checkpoint about itself. */
+interface CheckpointOptions {
+  /** The run carries its own login: a login page with no stored credentials is left to the run. */
+  ownLogin?: boolean;
 }
 
 /** Who the page is signed in as, and where it is. */
@@ -45,13 +53,13 @@ interface PageContext {
 }
 
 /** What every step of one run shares, before a person is involved. */
-function runContext(apiKey, browserId, requestHuman?): RunContext {
+function runContext(apiKey, browserId, requestHuman?, { ownLogin = false }: CheckpointOptions = {}): RunContext {
   const liveViewUrl = `/dashboard/?browser=${encodeURIComponent(browserId)}`;
   const evaluate = (expr) => evaluateIn(browserId, expr);
   // Read when a step needs it (an MFA code), not up front: a ChatGPT plan's
   // access token is refreshed on the way, so a long run never holds a stale one.
   const llm = () => resolveFresh(apiKey);
-  return { apiKey, browserId, requestHuman, liveViewUrl, evaluate, llm };
+  return { apiKey, browserId, requestHuman, liveViewUrl, evaluate, llm, ownLogin };
 }
 
 /** Who the page is signed in as, and where it is. */
@@ -63,11 +71,15 @@ function pageOf(run: RunContext): PageContext {
 
 /**
  * Between page-changing steps of a run: clear a CAPTCHA, sign in, or answer an
- * MFA prompt, or park the run on a person.
+ * MFA prompt, or park the run on a person. A run that brought its own login
+ * (`ownLogin`) is not parked on a login page with nothing stored: its agent or
+ * its recorded steps type that login. Without this, a run given `secrets` waited
+ * forever for a person to sign in. The cost: such a run whose secrets are not a
+ * login reaches a person through the agent or healing instead of here.
  * ponytail: three detection evals per page-changing step.
  */
-export function checkpointFor(apiKey, browserId, requestHuman) {
-  const run = runContext(apiKey, browserId, requestHuman);
+export function checkpointFor(apiKey, browserId, requestHuman, options: CheckpointOptions = {}) {
+  const run = runContext(apiKey, browserId, requestHuman, options);
   return () => checkpoint(run);
 }
 
@@ -154,14 +166,17 @@ async function clearCaptcha(run: RunContext, page: PageContext) {
 async function trySignIn(run: RunContext, page: PageContext) {
   const where = { domain: page.domain, browserId: run.browserId, liveViewUrl: run.liveViewUrl };
   const l = await siteLogin.complete(run.evaluate, page.personaId, where).catch(() => null);
-  if (l?.present) announceLogin(run, page, l);
+  if (l?.present && !leftToRun(run, l)) announceLogin(run, page, l);
   return l;
 }
+
+/** Whether a login with nothing stored is the run's own to type, so neither a person nor the event log hears of it. */
+const leftToRun = (run: RunContext, l) => run.ownLogin && !!l.missing;
 
 /** Completes a sign-in form with the persona's credentials, or hands it to a person. */
 async function signIn(run: RunContext, page: PageContext) {
   const l = await trySignIn(run, page);
-  if (l?.present && !l.completed) {
+  if (l?.present && !l.completed && !leftToRun(run, l)) {
     const message = l.error || 'A sign-in needs completing in the live view.';
     await run.requestHuman({ reason: 'login', message, liveViewUrl: run.liveViewUrl });
   }

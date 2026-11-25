@@ -39,19 +39,29 @@ describe('useShortcuts', () => {
 
   it('matches mod as Ctrl off a Mac, and requires exactly the modifiers asked for', () => {
     const one = bind('mod+1');
-    renderHook(() => useShortcuts([one]));
+    const bare = bind('n');
+    renderHook(() => useShortcuts([one, bare]));
     press('1');
     press('1', { ctrlKey: true, altKey: true });
+    press('1', { ctrlKey: true, shiftKey: true });
+    press('n', { shiftKey: true });
+    press('n', { metaKey: true });
     expect(one.handler).not.toHaveBeenCalled();
+    expect(bare.handler).not.toHaveBeenCalled();
     press('1', { ctrlKey: true });
     expect(one.handler).toHaveBeenCalledOnce();
   });
 
-  it("does not require shift twice for '?'", () => {
+  it("does not require shift twice for '?' and accepts Shift+'?' on '?'", () => {
     const help = bind('shift+?');
+    const plainHelp = bind('?');
     renderHook(() => useShortcuts([help]));
     press('?');
     expect(help.handler).toHaveBeenCalledOnce();
+    cleanup();
+    renderHook(() => useShortcuts([plainHelp]));
+    press('?', { shiftKey: true });
+    expect(plainHelp.handler).toHaveBeenCalledOnce();
   });
 
   it('maps up and down to the arrow keys', () => {

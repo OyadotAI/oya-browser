@@ -58,7 +58,7 @@ body.mode-browsing .bookmarks-bar:not([hidden]) {
   height: 24px;
   padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
   background: none;
   color: var(--text);
   font: inherit;

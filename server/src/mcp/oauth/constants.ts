@@ -22,8 +22,8 @@ export const CLIENT_TTL_MS = 7_776_000_000;
 export const MAX_CLIENT_NAME = 80;
 /** Most redirect URIs one client may register. */
 export const MAX_REDIRECT_URIS = 5;
-/** Registrations the whole server takes per hour, whoever asks: bounds the store whatever addresses are claimed. */
-export const REGISTRATIONS_PER_HOUR = 200;
+/** Registrations the whole server takes per hour: a backstop above the per-address limit that bounds how fast the client store can fill. */
+export const REGISTRATIONS_PER_HOUR = 2_000;
 /** The window that limit counts over. */
 export const REGISTRATION_WINDOW_MS = 3_600_000;
 /** What /authorize must carry before anything is redirected anywhere. */
@@ -32,3 +32,7 @@ export const AUTHORIZE_REQUIRED = { response_type: 'code', code_challenge_method
 export const CONNECTOR_MAX_ROLE = 'operator';
 /** The error a refused or used-up code answers, as OAuth names it. */
 export const INVALID_GRANT = 'Authorization code is invalid, expired or already used';
+/** The grants the token endpoint honours: refresh tokens are never issued, so the metadata must not offer them. */
+export const GRANT_TYPES = ['authorization_code'];
+/** How a connector's credential label ends. Connectors issued before they carried their own mark are known by it. */
+export const CONNECTOR_SUFFIX = ' connector';

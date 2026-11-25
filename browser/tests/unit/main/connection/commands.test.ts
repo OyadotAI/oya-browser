@@ -241,6 +241,20 @@ describe('CommandRunner', () => {
     await ctx.dialogs.answer(true);
   });
 
+  it('lets handle_dialog and dialog-safe commands run while a confirm dialog is already held', async () => {
+    const page = new FakeWebContents();
+    ctx.dialogs.watch(page);
+    ctx.tabs.createTab('https://a.test/');
+    page.nativeDialog('confirm', 'Proceed?');
+    await ctx.commands.handleCommand({ id: 'blocked', action: 'click' });
+    assert.match(resultOf('blocked')[0].error, /A JavaScript confirm dialog is open: "Proceed\?"/);
+    await ctx.commands.handleCommand({ id: 'tabs', action: 'list_tabs' });
+    assert.equal(resultOf('tabs')[0].ok, true);
+    await ctx.commands.handleCommand({ id: 'ans', action: 'handle_dialog', params: { accept: true } });
+    assert.deepEqual(resultOf('ans')[0].data, { type: 'confirm', message: 'Proceed?', accepted: true });
+    assert.equal(ctx.dialogs.current(), null);
+  });
+
   it('attaches a dialog that fired during a command to its result', async () => {
     const page = new FakeWebContents();
     ctx.dialogs.watch(page);

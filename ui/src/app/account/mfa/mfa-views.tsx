@@ -67,7 +67,7 @@ export function SetupView({ s }: ViewProps) {
       <img
         src={s.enrolment.qr_code}
         alt="QR code for your authenticator app"
-        className="mx-auto h-44 w-44 bg-white p-2"
+        className="mx-auto h-44 w-44 bg-paper p-2"
       />
       <p className="text-xs text-text-dim">
         Cannot scan? Enter this key: <code className="break-all font-mono text-text">{s.enrolment.secret}</code>

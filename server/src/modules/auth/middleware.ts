@@ -6,7 +6,7 @@
 
 import { control, projectId } from '../control/service.ts';
 import { dbAuth as supabaseAuth } from '../../platform/db.ts';
-import { findKey } from './repository.ts';
+import { ensureProfile, findKey } from './repository.ts';
 import { HttpError, sendError } from '../../platform/errors.ts';
 import { audit } from '../../platform/audit.ts';
 import { Status } from '../../platform/http-status.ts';
@@ -18,7 +18,8 @@ import { owesSecondFactor } from './mfa.ts';
 /** Methods that only read. */
 const READ_METHODS = ['GET', 'HEAD'];
 /** Settings paths only an administrator may change. */
-const ADMIN_PATHS = /^\/(config|personas|proxies|gateway\/(providers|strategy|profiles))/i;
+const ADMIN_PATHS =
+  /^\/(config|personas|persona-groups|proxies|pairing|pool\/cookies|browsers\/[^/]+\/credentials\/import|gateway\/(providers|strategy|profiles))(?=\/|$)/i;
 /**
  * Secrets and recordings are not part of the sanitized viewer surface.
  * Both guards are case-insensitive to match however the router is configured.
@@ -89,6 +90,8 @@ async function withUser(req, res, next, token) {
   if (!user) return res.status(Status.UNAUTHORIZED).json({ error: 'Invalid or expired token' });
   if (owesSecondFactor(user, token)) return res.status(Status.UNAUTHORIZED).json(MFA_REQUIRED);
   Object.assign(req, { user, authAal: claimOf(token, 'aal') });
+  // A missing profile is created, never awaited into a refusal: sign-in does not depend on this write.
+  await ensureProfile(user).catch((err) => console.error('[auth] could not ensure profile:', err.message));
   next();
 }
 
@@ -245,9 +248,19 @@ const sharePaths = (sid) => ({
   ticket: `/api/control/sessions/${sid}/ticket`,
 });
 
+/** Decodes a request path, or null when its percent-encoding is malformed. */
+function decodedPath(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a share credential may reach this path. */
 function shareAllows(principal, req) {
-  const full = decodeURIComponent(req.baseUrl + req.path);
+  const full = decodedPath(req.baseUrl + req.path);
+  if (!full) return false;
   const { viewRead, act, ticket } = sharePaths(principal.sessionId);
   // Method is pinned so a view share can never reach a mutating verb that a
   // whitelisted path grows.

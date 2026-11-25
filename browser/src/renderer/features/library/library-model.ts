@@ -42,10 +42,13 @@ export function fileSize(bytes: number): string {
   const shown = unit === 0 || value >= WHOLE_FROM ? Math.round(value) : value.toFixed(1);
   return `${shown} ${SIZE_UNITS[unit]}`;
 }
-/** Most-used sites come first, with stable alphabetical ties. */
+/** Most-used sites come first, with stable alphabetical ties; hostless URLs stay under All websites. */
 export function sites(pages: SavedPage[]): [string, number][] {
   const counts = new Map<string, number>();
-  for (const page of pages) counts.set(host(page), (counts.get(host(page)) ?? 0) + 1);
+  for (const page of pages) {
+    const name = host(page);
+    if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
