@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { BROWSER_TOOL_NAMES } from '../../../src/mcp/browser-tools.ts';
-import { POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
+import { CONNECTOR_TOOL_NAMES, POOL_TOOL_NAMES } from '../../../src/mcp/pool-server.ts';
 
 /** The repository root, from this file. */
 const ROOT = resolve(import.meta.dirname, '../../../..');
@@ -49,6 +49,23 @@ describe('public documents', () => {
       const offered = new RegExp(`^\\s*${name}\\b`, 'm').test(pool);
       assert.equal(offered, false, `the pool section offers ${name}, which the pool does not serve`);
     }
+  });
+
+  it('llms.txt names every tool a chat connector gets', () => {
+    const llms = read('server/src/public/llms.txt');
+    const pool = llms.slice(llms.indexOf('### Pool MCP Endpoint'), llms.indexOf('### Cookie Sync'));
+    for (const name of CONNECTOR_TOOL_NAMES) assert.ok(pool.includes(name), `the pool section omits ${name}`);
+  });
+
+  it('the tool counts in the docs and llms.txt are the counts the code serves', () => {
+    const [chat, keyed] = [CONNECTOR_TOOL_NAMES.length, POOL_TOOL_NAMES.length];
+    const llms = read('server/src/public/llms.txt');
+    assert.ok(llms.includes(`serves ${chat} tools`), `llms.txt does not say ${chat} connector tools`);
+    assert.ok(llms.includes(`serves ${keyed} model-visible tools`), `llms.txt does not say ${keyed} pool tools`);
+    const docs = read('ui/src/app/docs/_sections/ai-integration.tsx');
+    assert.ok(docs.includes(`the endpoint offers ${chat} tools`), `the docs do not say ${chat} connector tools`);
+    assert.ok(docs.includes(`it offers ${keyed} tools`), `the docs do not say ${keyed} pool tools`);
+    assert.ok(docs.includes(`all ${chat} tools listed without signing in`), 'the try-it prompt has a stale count');
   });
 
   it('every tool name in llms.txt is a tool that exists', () => {

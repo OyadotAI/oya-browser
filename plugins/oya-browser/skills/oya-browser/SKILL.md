@@ -17,6 +17,18 @@ If the tools are missing, ask the user to finish the sign-in or Connect step and
 
 ## Over MCP
 
+**Signed in with your Oya account (the plugin, claude.ai, ChatGPT):** there is nothing to start. Ten tools on one cloud browser that starts itself on the first call (up to 2 minutes) and stops when idle.
+
+1. `open_tab(url)` to start; the person gets a live view of it. `navigate(url)` loads a URL in your tab, and takes `"back"` or `"forward"`.
+2. `analyze_page()`, then act: `click(element_id)`, `type(element_id, text)`, `press_key(key)`, `scroll(direction, amount?)`.
+3. `analyze_page()` again after anything that changes the page. Element ids are reassigned on every analysis.
+4. `wait_for(text?, url?, network_idle?)` for slow pages, `screenshot()` to look, `list_tabs()` then `open_tab(tab_id)` to switch tabs.
+5. Dialogs are dismissed for you with Cancel and reported in the result. If the person needs to accept one, tell them.
+
+The rest of this section is for an Oya API key, which serves the larger set below.
+
+**With an Oya API key:**
+
 1. `start_browser`, starts a browser and makes every other tool drive it. Optional: `persona` (`"auto"`, `"default"` or an id), `provider`, `url`.
 2. `navigate(url)`, then `analyze_page()`.
 3. Act: `click(element_id)`, `type(element_id, text)`, `press_key(key)`, `scroll(direction, amount?)`.
@@ -40,7 +52,7 @@ every other command fails immediately with the dialog's message until you call
 `handle_dialog(accept, prompt_text?)`. Accept only what the task asks for, a
 confirm is often guarding something destructive.
 
-If a tool says no browser is running, call `start_browser`. Remote MCP lists and drives cloud browsers only. Desktop browsing uses the local MCP connection.
+With an API key, if a tool says no browser is running, call `start_browser`. Remote MCP lists and drives cloud browsers only. Desktop browsing uses the local MCP connection.
 
 ## Over the CLI
 

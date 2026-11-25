@@ -19,7 +19,8 @@ import {
 } from './pool-state.ts';
 import { selfApi, type Self } from './self-api.ts';
 import { attempt, fail, text } from './replies.ts';
-import { MAX_NAME, NAVIGATE_TIMEOUT_MS, START_POLL_MS, START_WAIT_MS } from './constants.ts';
+import { MAX_NAME, NAVIGATE_TIMEOUT_MS } from './constants.ts';
+import { connects } from './dial-in.ts';
 import { toolConfig } from './annotations.ts';
 
 /** Whose pool the tools act on, and how they reach the public API. */
@@ -99,13 +100,6 @@ const booting = (started: Started) =>
     text(`Started ${started.id} on ${started.provider}; it is still booting. Check pool_status, then retry.`),
     started,
   );
-
-/** Cloud browsers dial in after they boot; the tools need it connected. */
-async function connects(id) {
-  const deadline = Date.now() + START_WAIT_MS;
-  while (!registry.isConnected(id) && Date.now() < deadline) await new Promise((r) => setTimeout(r, START_POLL_MS));
-  return registry.isConnected(id);
-}
 
 /** Navigates to `url` when one was given, then says the browser is ready. */
 async function startedAt(id, started, url) {

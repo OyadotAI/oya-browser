@@ -32,3 +32,7 @@ export const AUTHORIZE_REQUIRED = { response_type: 'code', code_challenge_method
 export const CONNECTOR_MAX_ROLE = 'operator';
 /** The error a refused or used-up code answers, as OAuth names it. */
 export const INVALID_GRANT = 'Authorization code is invalid, expired or already used';
+/** The grants the token endpoint honours: refresh tokens are never issued, so the metadata must not offer them. */
+export const GRANT_TYPES = ['authorization_code'];
+/** How a connector's credential label ends. Connectors issued before they carried their own mark are known by it. */
+export const CONNECTOR_SUFFIX = ' connector';

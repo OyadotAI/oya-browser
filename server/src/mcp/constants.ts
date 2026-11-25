@@ -39,3 +39,20 @@ export const CARD_MIME = 'text/html;profile=mcp-app';
 export const CARD_QUALITY = 55;
 /** How long one card snapshot may take before the card counts it as failed. */
 export const CARD_TIMEOUT_MS = 10_000;
+/**
+ * How long a chat connector's first tool call waits for its browser before answering "still
+ * starting": under the tool-call timeouts of chat apps, while the boot carries on behind it.
+ */
+export const CONNECTOR_START_REPLY_MS = 45_000;
+/**
+ * How long a connector waits for its remembered browser to redial after a dropped socket or a
+ * deploy before starting another: twice the browser's longest redial backoff.
+ */
+export const REJOIN_WAIT_MS = 20_000;
+/**
+ * How long a refused start is answered from memory instead of tried again: a model repeating
+ * its step would otherwise spend the project's start allowance, which SDK clients share.
+ */
+export const START_RETRY_AFTER_MS = 30_000;
+/** How long a connector waits for a held dialog to be cancelled after a failed call: short, so a wedged browser is not waited on twice. */
+export const DIALOG_DISMISS_MS = 5_000;

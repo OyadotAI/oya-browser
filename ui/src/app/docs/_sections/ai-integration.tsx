@@ -1,6 +1,8 @@
 /**
- * Docs: AI integration: MCP setup for the desktop app, Cursor, Claude Desktop
- * and Claude Code, and the prompts that prove the setup works.
+ * Docs: AI integration: MCP setup for the desktop app, Cursor, Claude Code,
+ * Codex, claude.ai and ChatGPT, and the prompts that prove the setup works.
+ * The tool counts here are checked against the code by the server's
+ * docs/claims test.
  */
 'use client';
 
@@ -22,8 +24,8 @@ const TRY_PROMPTS: [string, string, string, string][] = [
   [
     'Prompt 2 \u00b7 connector, no key',
     'Add https://oyabrowser.com/mcp/pool as a connector with no key, then:',
-    'List every tool the Oya connector offers and what each one does. Do not call any of them yet.\n\nNow call pool_status.',
-    'Expected: all 33 tools listed without signing in, then a sign-in prompt on pool_status.',
+    'List every tool the Oya connector offers and what each one does. Do not call any of them yet.\n\nNow open https://example.com.',
+    'Expected: all 10 tools listed without signing in, then a sign-in prompt before the page opens.',
   ],
   [
     'Prompt 3 \u00b7 human handback',
@@ -58,9 +60,13 @@ function CloudSetup() {
       </p>
       <CodeBlock>{'https://oyabrowser.com/mcp/pool'}</CodeBlock>
       <p className={PARA}>
-        Thirty-three tools: twenty-nine that act on a page, round-robined across your browsers, plus{' '}
+        Signed in with OAuth (claude.ai, ChatGPT), the endpoint offers 10 tools and starts one browser for each
+        connection on first use: nothing to start, pick or stop.
+      </p>
+      <p className={PARA}>
+        With an API key it offers 33 tools: 29 that act on a page, round-robined across your browsers, plus{' '}
         <InlineCode>show_browser</InlineCode>, <InlineCode>start_browser</InlineCode>,{' '}
-        <InlineCode>stop_browser</InlineCode> and <InlineCode>pool_status</InlineCode>. Tab tools,{' '}
+        <InlineCode>stop_browser</InlineCode> and <InlineCode>pool_status</InlineCode>. With a key, tab tools,{' '}
         <InlineCode>read_elements</InlineCode>, <InlineCode>read_console</InlineCode>,{' '}
         <InlineCode>read_network</InlineCode> and the browser-specific tools marked in{' '}
         <InlineLink href="/docs#more-tools">More tools</InlineLink> are not on this endpoint; to use those, point at one
@@ -123,6 +129,7 @@ claude plugin install oya-browser@oya`}</CodeBlock>
       <CodeBlock label="Agent skill">{'npx skills add OyadotAI/oya-browser'}</CodeBlock>
       <Codex />
       <ClaudeAi />
+      <ChatGpt />
     </>
   );
 }
@@ -152,9 +159,30 @@ function ClaudeAi() {
       <p className={PARA}>
         On a Pro, Max, Team or Enterprise plan you need no API key. Open Settings, then Connectors, then{' '}
         <strong>Add custom connector</strong>, paste <InlineCode>https://oyabrowser.com/mcp/pool</InlineCode>, and sign
-        in to Oya when asked. Pick the project to connect and allow it. The Claude plan pays for the model; Oya is the
-        browser. The connection shows as a credential in the project&apos;s settings, where it can be revoked. Any MCP
-        client that signs in with OAuth works the same way.
+        in to Oya when asked. With one project that is a single Allow click; with several, pick the one to connect. The
+        Claude plan pays for the model; Oya is the browser. The connection shows as a credential in the project&apos;s
+        settings, where it can be revoked. Any MCP client that signs in with OAuth works the same way.
+      </p>
+    </>
+  );
+}
+
+/** ChatGPT signs in the same way; its menu names change often, so the steps name what to do, not where. */
+function ChatGpt() {
+  return (
+    <>
+      <SubHeading id="chatgpt">ChatGPT</SubHeading>
+      <p className={PARA}>
+        You need no API key. In ChatGPT, turn on developer mode and add a custom connector with the server URL{' '}
+        <InlineCode>https://oyabrowser.com/mcp/pool</InlineCode> and OAuth sign-in. Sign in to Oya when asked and allow
+        it (with several projects, pick one first). In a new chat, turn the connector on and ask it to open a site; the
+        browser starts by itself. The ChatGPT plan pays for the model; Oya is the browser. Revoke it from the credential
+        in the project&apos;s settings.
+      </p>
+      <p className={PARA}>
+        What happens next, in claude.ai and ChatGPT alike: turn the connector on in a chat and ask it to open a site.
+        The first time it uses each tool, your app asks you to approve it; choose to always allow it to stop being
+        asked. There are 10 tools, and 4 of them only read.
       </p>
     </>
   );

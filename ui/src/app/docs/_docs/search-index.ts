@@ -99,6 +99,12 @@ const ITEMS: [string, string, string][] = [
   ],
   ['claude.ai and Claude Desktop', 'claude-ai', 'H3'],
   ['Add custom connector, paste the pool URL, sign in to Oya. No API key.', 'claude-ai', 'P'],
+  ['ChatGPT', 'chatgpt', 'H3'],
+  [
+    'Turn on developer mode, add a custom connector with the pool URL and OAuth, sign in to Oya. No API key.',
+    'chatgpt',
+    'P',
+  ],
   ['Try it', 'try-it', 'H3'],
   ['Paste one of these into your agent. Each one proves a different part of the setup.', 'try-it', 'P'],
   ['analyze_page', 'analyze_page', 'H2'],

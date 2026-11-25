@@ -13,10 +13,19 @@ import { registry } from '../modules/browsers/registry.ts';
 import { analysis, type Page } from './analysis.ts';
 import { elementList, PAGE_FORMAT } from '../modules/agent/chat.ts';
 import * as pageRender from '../../../browser/src/page/render.ts';
-import { DEFAULT_SCROLL_PX, MAX_NAME, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS, SCREENSHOT_URI } from './constants.ts';
+import {
+  CARD_URI,
+  DEFAULT_SCROLL_PX,
+  MAX_NAME,
+  NAVIGATE_TIMEOUT_MS,
+  SCROLL_TIMEOUT_MS,
+  SCREENSHOT_URI,
+} from './constants.ts';
 import { fail } from './replies.ts';
 import { AGENT_TOOL_NAMES, PAGE_TOOL_NAMES, registerAgentTools } from './agent-tools.ts';
 import { toolConfig } from './annotations.ts';
+import { dismissDialog, noted, targetOf, type Acquired, type Found } from './target.ts';
+import { cardContent } from './browser-card.ts';
 
 /** The keys press_key may press: navigation only, never modifiers or F-keys. */
 const KEYS = [
@@ -74,7 +83,18 @@ type Tool = {
   command: (args: any) => [action: string, params?: object, timeoutMs?: number];
   /** Turns the browser's result into the reply. */
   text: (data: any, args: any) => Reply;
+  /** Why these arguments are refused before anything is sent, or undefined. */
+  refuse?: (args: any) => string | undefined;
+  /** Whether a call with these arguments opens a page: only such a call may start a connector's browser. */
+  opens?: (args: any) => boolean;
 };
+
+/** The words navigate takes instead of a URL, and the history command each sends. */
+const HISTORY: Record<string, string> = { back: 'back', forward: 'forward' };
+
+/** navigate's command: a history move for "back" or "forward", else loading the URL. */
+const navigation = ({ url }): [string, object?, number?] =>
+  Object.hasOwn(HISTORY, url) ? [HISTORY[url], {}, NAVIGATE_TIMEOUT_MS] : ['navigate', { url }, NAVIGATE_TIMEOUT_MS];
 
 /** Every browser tool, by name. */
 const TOOLS: Record<string, Tool> = {
@@ -93,11 +113,12 @@ format picks how it is written: toon (default; one table of blocks, fewer tokens
     text: (data) => analysis(data),
   },
   navigate: {
-    description: 'Navigate the browser to a URL.',
-    schema: { url: z.string().describe('The URL to navigate to') },
+    description: 'Load a URL in your tab, or pass "back" or "forward" to move through its history.',
+    schema: { url: z.string().describe('A full URL including https://, or "back" or "forward".') },
     advance: true,
-    command: ({ url }) => ['navigate', { url }, NAVIGATE_TIMEOUT_MS],
-    text: (_, { url }) => `Navigated to ${url}`,
+    opens: ({ url }) => !Object.hasOwn(HISTORY, url),
+    command: navigation,
+    text: (_, { url }) => (Object.hasOwn(HISTORY, url) ? `Went ${url}` : `Navigated to ${url}`),
   },
   click: {
     description: 'Click an interactive element by its ID number (from analyze_page results).',
@@ -210,17 +231,24 @@ format picks how it is written: toon (default; one table of blocks, fewer tokens
     text: (_, { from_x, from_y, to_x, to_y }) => `Dragged from (${from_x}, ${from_y}) to (${to_x}, ${to_y})`,
   },
   list_tabs: {
-    description: 'List all open tabs in the browser. Returns tab ID, title, URL, and which is active.',
+    description: 'List the open tabs with their ids, titles and URLs, and which one you are on.',
     schema: {},
     command: () => ['list_tabs'],
     text: (data) =>
       `Tabs:\n${(data.tabs || []).map((t) => `${t.active ? '→ ' : '  '}[tab ${t.id}] ${t.title}, ${t.url}`).join('\n')}`,
   },
   open_tab: {
-    description: 'Open a new browser tab, optionally navigating to a URL.',
-    schema: { url: z.string().optional().describe('URL to open (default: blank tab)') },
-    command: ({ url }) => ['open_tab', { url }, NAVIGATE_TIMEOUT_MS],
-    text: (data, { url }) => `Opened tab ${data.tab_id}${url ? ' at ' + url : ''}`,
+    description: 'Open a new tab on a URL, or switch to an open tab by its id from list_tabs.',
+    schema: {
+      url: z.string().optional().describe('URL to open (default: blank tab)'),
+      tab_id: z.number().optional().describe('An open tab to switch to instead, from list_tabs'),
+    },
+    refuse: ({ url, tab_id }) => (url && tab_id !== undefined ? 'Give either url or tab_id, not both.' : undefined),
+    opens: ({ tab_id }) => tab_id === undefined,
+    command: ({ url, tab_id }) =>
+      tab_id !== undefined ? ['switch_tab', { tab_id }] : ['open_tab', { url }, NAVIGATE_TIMEOUT_MS],
+    text: (data, { url, tab_id }) =>
+      tab_id !== undefined ? `Switched to tab ${tab_id}` : `Opened tab ${data.tab_id}${url ? ' at ' + url : ''}`,
   },
   switch_tab: {
     description:
@@ -262,6 +290,13 @@ type Options = {
   noBrowser?: string;
   /** Whether pick always names the same browser (the per-browser endpoint), so tools it cannot run are left out. */
   oneBrowser?: boolean;
+  /** A chat connector's own browser, acquired on each call instead of picked from the pool; see Targeting. */
+  acquire?: (start: boolean) => Promise<Acquired>;
+  /**
+   * Whether this serves a chat connector: a dialog left holding the page is cancelled for it
+   * (it has no handle_dialog), and open_tab shows the live browser card.
+   */
+  connector?: boolean;
 };
 
 /** Every tool the per-browser MCP endpoint serves, for the docs drift test. */
@@ -279,9 +314,10 @@ export function registerBrowserTools(server: McpServer, options: Options) {
   const { pick, tag = () => '', noBrowser = 'no browser is connected', oneBrowser } = options;
   const names = options.only || BROWSER_TOOL_NAMES;
   const only = oneBrowser ? availableTools(names, pick) : names;
-  registerAgentTools(server, only, { pick: () => pick(false), noBrowser, oneBrowser });
+  const { acquire, connector } = options;
+  registerAgentTools(server, only, { pick: () => pick(false), noBrowser, oneBrowser, acquire, connector });
   for (const name of only.filter((n) => Object.hasOwn(TOOLS, n))) {
-    registerDirectTool(server, name, { pick, tag, noBrowser }, options.screenshotCard);
+    registerDirectTool(server, name, { pick, tag, noBrowser, acquire, connector }, options.screenshotCard);
   }
 }
 
@@ -293,26 +329,44 @@ function availableTools(names: string[], pick: Options['pick']): string[] {
 }
 
 /** Where runTool sends a call and how it labels the reply. */
-type Routing = Required<Pick<Options, 'pick' | 'tag' | 'noBrowser'>>;
+type Routing = Required<Pick<Options, 'pick' | 'tag' | 'noBrowser'>> & Pick<Options, 'acquire' | 'connector'>;
 
-/** Sends the tool's command to the picked browser and turns the result into a reply. */
-async function runTool(name: string, tool: Tool, args, { pick, tag, noBrowser }: Routing) {
-  const id = pick(!!tool.advance);
-  if (!id) return fail(noBrowser);
+/** Sends the tool's command to its browser and turns the result into a reply. */
+async function runTool(name: string, tool: Tool, args, routing: Routing) {
+  const refusal = tool.refuse?.(args);
+  if (refusal) return fail(refusal);
+  const opens = Boolean(tool.opens?.(args));
+  const target = await targetOf(opens, { ...routing, pick: () => routing.pick(!!tool.advance) });
+  return 'error' in target ? fail(target.error) : sendTo(target, name, tool, args, routing);
+}
+
+/** Sends the command to the browser found for it; the reply leads with any note about that browser's start. */
+async function sendTo({ id, note }: Found, name: string, tool: Tool, args, routing: Routing) {
   const [action, params, timeout] = tool.command(args);
   track.mcpToolCalled(registry.get(id)?.apiKey ?? '', { tool: name });
   const result = await sendCommand(id, action, params, timeout);
-  if (!result.ok) return fail(result.error);
-  return reply(tool.text(result.data, args), () => tag(id));
+  if (!result.ok) return fail(noted(note, await failure(routing, id, result.error)));
+  const said = reply(tool.text(result.data, args), () => routing.tag(id), note);
+  return withCard(name, routing, id, said);
 }
 
-/** An image reply, or text prefixed with the answering browser's tag. */
-function reply(out: Reply, prefix: () => string) {
+/** A failed call's error; for a connector, with any dialog holding the page cancelled. */
+const failure = (routing: Routing, id: string, error: string) =>
+  routing.connector ? dismissDialog(id, error) : Promise.resolve(error);
+
+/** A connector's open_tab carries the browser the live card shows. */
+function withCard<R extends object>(name: string, routing: Routing, id: string, out: R) {
+  if (!routing.connector || name !== 'open_tab') return out;
+  return { ...out, structuredContent: cardContent(id, registry.get(id)?.name) };
+}
+
+/** An image reply, or text prefixed with the answering browser's tag and any note about its start. */
+function reply(out: Reply, prefix: () => string, note?: string) {
   if (typeof out === 'object' && 'image' in out)
     return { content: [{ type: 'image' as const, data: out.image, mimeType: out.mimeType }] };
   const tag = prefix();
   const text = typeof out === 'object' ? (tag ? `${tag}\n` : '') + out.page : (tag ? `${tag} ` : '') + out;
-  return { content: [{ type: 'text' as const, text }] };
+  return { content: [{ type: 'text' as const, text: noted(note, text) }] };
 }
 
 /** Register one direct command without duplicating its routing or result encoder. */
@@ -320,7 +374,9 @@ function registerDirectTool(server: McpServer, name: string, routing: Routing, s
   const tool = TOOLS[name];
   const isCapture = screenshotCard && name === 'screenshot';
   if (isCapture) return registerCapture(server, tool, routing);
-  server.registerTool(name, toolConfig(name, tool.description, tool.schema), (args) =>
+  // A connector's live card opens beside open_tab, the tool its instruction starts with.
+  const _meta = routing.connector && name === 'open_tab' ? { ui: { resourceUri: CARD_URI } } : undefined;
+  server.registerTool(name, { ...toolConfig(name, tool.description, tool.schema), _meta }, (args) =>
     runTool(name, tool, args, routing),
   );
 }

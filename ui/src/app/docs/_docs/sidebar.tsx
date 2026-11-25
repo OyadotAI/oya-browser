@@ -83,6 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
       ['claude-code', 'Claude Code'],
       ['codex', 'Codex'],
       ['claude-ai', 'claude.ai and Claude Desktop'],
+      ['chatgpt', 'ChatGPT'],
       ['try-it', 'Try it'],
     ],
   },

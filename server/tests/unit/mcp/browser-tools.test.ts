@@ -6,7 +6,7 @@ import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerBrowserTools } from '../../../src/mcp/browser-tools.ts';
 import { canonical, supportedOn } from '../../../src/drivers/vocabulary.ts';
-import { NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from '../../../src/mcp/constants.ts';
+import { CARD_URI, NAVIGATE_TIMEOUT_MS, SCROLL_TIMEOUT_MS } from '../../../src/mcp/constants.ts';
 import { disconnectBrowser } from '../support/fakes.ts';
 import { FakeMcpServer, driveBrowser, stubControl } from '../support/browsers.ts';
 
@@ -204,5 +204,119 @@ describe('browser tools', () => {
     const server = new FakeMcpServer();
     registerBrowserTools(server as any, { pick: () => null, noBrowser: 'start one first' });
     assert.equal(textOf(await server.call('click', { element_id: 1 })), 'Error: start one first');
+  });
+
+  it('moves through history when navigate is given "back" or "forward"', async () => {
+    const { server, driver } = tools(() => ({ ok: true }));
+    assert.equal(textOf(await server.call('navigate', { url: 'back' })), 'Went back');
+    assert.equal(textOf(await server.call('navigate', { url: 'forward' })), 'Went forward');
+    assert.deepEqual(
+      driver.sent.map((c) => c.action),
+      ['back', 'forward'],
+    );
+  });
+
+  it('switches to an open tab when open_tab is given its id', async () => {
+    const { server, driver } = tools(() => ({ ok: true, data: {} }));
+    assert.equal(textOf(await server.call('open_tab', { tab_id: 4 })), 'Switched to tab 4');
+    assert.deepEqual([driver.sent[0].action, driver.sent[0].params], ['switch_tab', { tab_id: 4 }]);
+  });
+
+  it('refuses open_tab given both a URL and a tab, sending nothing', async () => {
+    const { server, driver } = tools(() => ({ ok: true, data: {} }));
+    const reply = await server.call('open_tab', { url: 'https://a.test', tab_id: 4 });
+    assert.deepEqual([reply.isError, textOf(reply)], [true, 'Error: Give either url or tab_id, not both.']);
+    assert.equal(driver.sent.length, 0);
+  });
+});
+
+describe('browser tools for a chat connector', () => {
+  beforeEach(() => stubControl());
+  afterEach(() => {
+    mock.restoreAll();
+    disconnectBrowser(B);
+  });
+
+  /** A connector's server whose browser is acquired, with `note` said on the first reply. */
+  const connector = (answer: (action: string, params: any) => any, note?: string) =>
+    tools(answer, { pick: () => null, connector: true, acquire: async () => ({ id: B, note }) });
+
+  it('runs on its acquired browser and leads the reply with the start note', async () => {
+    const { server, driver } = connector(() => ({ ok: true }), 'Started a browser for this chat.');
+    const reply = await server.call('navigate', { url: 'https://a.test' });
+    assert.equal(textOf(reply), 'Started a browser for this chat.\nNavigated to https://a.test');
+    assert.equal(driver.sent[0].action, 'navigate');
+  });
+
+  it('answers with the reason when no browser could be acquired', async () => {
+    const acquire = async () => ({ error: 'The browser is still starting. Repeat this step shortly.' });
+    const { server, driver } = tools(() => ({ ok: true }), { pick: () => null, connector: true, acquire });
+    const reply = await server.call('click', { element_id: 1 });
+    assert.deepEqual(
+      [reply.isError, textOf(reply)],
+      [true, 'Error: The browser is still starting. Repeat this step shortly.'],
+    );
+    assert.equal(driver.sent.length, 0);
+  });
+
+  it('cancels a dialog holding the page after a failed call, and reports it', async () => {
+    const answer = (action: string) =>
+      action === 'handle_dialog' ? { ok: true, data: {} } : { ok: false, error: 'The page asked "Leave?"' };
+    const { server, driver } = connector(answer);
+    const reply = await server.call('click', { element_id: 1 });
+    assert.match(textOf(reply), /^Error: The page asked "Leave\?"\nOya dismissed it with Cancel\./);
+    assert.deepEqual([driver.sent[1].action, driver.sent[1].params], ['handle_dialog', { accept: false }]);
+  });
+
+  it('never answers a dialog for a caller that is not a connector', async () => {
+    const { server, driver } = tools(() => ({ ok: false, error: 'The page asked "Leave?"' }));
+    assert.equal(textOf(await server.call('click', { element_id: 1 })), 'Error: The page asked "Leave?"');
+    assert.deepEqual(
+      driver.sent.map((c) => c.action),
+      ['click'],
+    );
+  });
+
+  it('lets only a call that opens a page start the browser: not a read, a click, a history move or a tab switch', async () => {
+    const asked: Record<string, boolean> = {};
+    const acquire = (label: string) => async (start: boolean) => ((asked[label] = start), { id: B });
+    const run = async (label: string, name: string, args: object) => {
+      const { server } = tools(() => ({ ok: true, data: {} }), {
+        pick: () => null,
+        connector: true,
+        acquire: acquire(label),
+      });
+      await server.call(name, args);
+    };
+    await run('navigate', 'navigate', { url: 'https://a.test' });
+    await run('open_tab', 'open_tab', { url: 'https://a.test' });
+    await run('back', 'navigate', { url: 'back' });
+    await run('switch', 'open_tab', { tab_id: 2 });
+    await run('screenshot', 'screenshot', {});
+    await run('click', 'click', { element_id: 1 });
+    await run('wait_for', 'wait_for', { text: 'x' });
+    assert.deepEqual(asked, {
+      navigate: true,
+      open_tab: true,
+      back: false,
+      switch: false,
+      screenshot: false,
+      click: false,
+      wait_for: false,
+    });
+  });
+
+  it('opens the live card beside open_tab, naming the browser it shows', async () => {
+    const { server } = connector(() => ({ ok: true, data: { tab_id: 2 } }));
+    assert.deepEqual(server.tools.get('open_tab')!.meta, { ui: { resourceUri: CARD_URI } });
+    assert.equal(server.tools.get('navigate')!.meta, undefined);
+    const reply = await server.call('open_tab', { url: 'https://a.test' });
+    assert.deepEqual(reply.structuredContent, { browserId: B, name: 'Driven' });
+  });
+
+  it('shows no card on open_tab for other callers', async () => {
+    const { server } = tools(() => ({ ok: true, data: { tab_id: 2 } }));
+    assert.equal(server.tools.get('open_tab')!.meta, undefined);
+    assert.equal((await server.call('open_tab', {})).structuredContent, undefined);
   });
 });

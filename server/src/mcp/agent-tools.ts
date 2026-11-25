@@ -25,6 +25,7 @@ import { track } from '../modules/telemetry/index.ts';
 import { fail, text, attempt } from './replies.ts';
 import { JSON_INDENT } from './constants.ts';
 import { toolConfig } from './annotations.ts';
+import { dismissDialog, noted, targetOf, type Acquired } from './target.ts';
 
 /** The agent's browser tools served as they are. */
 const PAGE_TOOLS = [
@@ -174,13 +175,22 @@ export const PAGE_TOOL_NAMES = [...PAGE_TOOLS];
 /** Every tool this file serves, by name. */
 export const AGENT_TOOL_NAMES = [...PAGE_TOOLS, ...CHALLENGES, 'list_playbooks', 'run_playbook', 'run_task'];
 
-/** Runs a tool on the picked browser; an `Error:` answer, or a throw, is a failed call. */
-async function call(name: string, browserId: string, args) {
+/** How a tool run ended. */
+interface Ran {
+  /** False when it threw or answered `Error:`. */
+  ok: boolean;
+  /** Its reply, or the error without the `Error:` prefix. */
+  text: string;
+}
+
+/** Runs a tool on the browser; its text, or the error when it threw or answered `Error:`. */
+async function call(name: string, browserId: string, args): Promise<Ran> {
   const apiKey = registry.get(browserId)?.apiKey ?? '';
   track.mcpToolCalled(apiKey, { tool: name });
   const done = await attempt(() => agentTools()[name].run(browserId, apiKey, args));
-  if ('error' in done) return fail(done.error?.message || String(done.error));
-  return done.value.startsWith('Error: ') ? fail(done.value.slice('Error: '.length)) : text(done.value);
+  if ('error' in done) return { ok: false, text: done.error?.message || String(done.error) };
+  const failed = done.value.startsWith('Error: ');
+  return { ok: !failed, text: failed ? done.value.slice('Error: '.length) : done.value };
 }
 
 /** A tool's argument shape, as the MCP server takes it. */
@@ -194,15 +204,21 @@ type Target = {
   noBrowser: string;
   /** Whether pick always names one browser, so the tools it cannot run can be left out. A pool's pick moves on, so it is not asked. */
   oneBrowser?: boolean;
+  /** A chat connector's own browser, acquired on each call instead of picked; see Targeting. */
+  acquire?: (start: boolean) => Promise<Acquired>;
+  /** Whether a dialog left holding the page is cancelled after a failed call (a connector has no handle_dialog). */
+  connector?: boolean;
 };
 
-/** The MCP handler for a tool: run on the picked browser, or refuse. */
-const handlerFor =
-  (name: string, { pick, noBrowser }: Target) =>
-  async (args) => {
-    const id = pick();
-    return id ? call(name, id, args) : fail(noBrowser);
-  };
+/** The MCP handler for a tool: run on its browser, or refuse; any note about the browser's start leads the reply. */
+const handlerFor = (name: string, target: Target) => async (args) => {
+  // None of these tools opens a page, so none may start a connector's browser.
+  const found = await targetOf(false, target);
+  if ('error' in found) return fail(found.error);
+  const { ok, text: said } = await call(name, found.id, args);
+  if (ok) return text(noted(found.note, said));
+  return fail(noted(found.note, target.connector ? await dismissDialog(found.id, said) : said));
+};
 
 /**
  * Whether a tool can run on the browser the target picks now: a page tool the

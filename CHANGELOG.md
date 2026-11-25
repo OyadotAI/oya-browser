@@ -6,6 +6,21 @@ Add what a change does under **Unreleased** as it lands. `make release` refuses 
 
 ## Unreleased
 
+### Changed
+
+- claude.ai and ChatGPT connectors on `/mcp/pool` now work like the desktop app's MCP: ten tools, and one cloud browser that starts itself the first time a page is opened. There is no start, stop or pool tool to call. Only six tools act on a page, so there are fewer approvals to give. API keys keep the full pool tool set, unchanged.
+- A connector keeps its own browser, apart from other connectors and API clients in the same project, and finds it again after a deploy or a dropped connection.
+- Connecting an app to Oya is one Allow click when you have one project. With several, the last project you connected is preselected. A new account gets its first project on that screen.
+
+### Fixed
+
+- The OAuth server no longer advertises refresh tokens it does not issue.
+- An expired connection request has its own screen, and a failed one can be tried again.
+
+### Documentation
+
+- Added ChatGPT setup steps. The tool counts in the docs and llms.txt are checked against the code.
+
 ## [1.0.294](https://github.com/OyadotAI/oya-browser/releases/tag/v1.0.294) · 2026-11-24
 
 ### Fixed

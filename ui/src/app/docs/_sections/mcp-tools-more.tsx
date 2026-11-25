@@ -204,7 +204,7 @@ const GROUPS: Group[] = [
   {
     id: 'pool-tools',
     title: 'Pool',
-    note: 'These four exist only on /mcp/pool.',
+    note: 'These four exist only on /mcp/pool, for an API key. A chat connector signed in with OAuth needs none of them.',
     rows: [
       tool(
         'start_browser',

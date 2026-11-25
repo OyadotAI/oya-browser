@@ -5,6 +5,7 @@
  */
 import { registry } from '../modules/browsers/registry.ts';
 import { nextBrowser, ownsCloudBrowser } from '../modules/browsers/pool.ts';
+import { releaseBrowser } from './connector-seat.ts';
 
 /** Pool pinned browser state: apiKey → browserId */
 export const poolPinned = new Map();
@@ -23,11 +24,13 @@ function dropValue(map: Map<unknown, unknown>, value) {
 
 /**
  * Clean up when browser disconnects. Servers are created per-request
- * (stateless), so there is nothing to destroy; only its pool pins are cleared.
+ * (stateless), so there is nothing to destroy; only its pool pins and any
+ * connector seat holding it are cleared.
  */
 export function destroyMcpServer(browserId) {
   dropValue(poolPinned, browserId);
   dropValue(poolSticky, browserId);
+  releaseBrowser(browserId);
 }
 
 /** Reserve a starting browser until its registered cloud connection is ready. */

@@ -38,6 +38,7 @@ const SECTIONS = [
   'cursor',
   'codex',
   'claude-ai',
+  'chatgpt',
   'try-it',
   'more-tools',
   'tabs',
@@ -95,10 +96,11 @@ describe('DocsPage', () => {
     }
   });
 
-  it('states the pool serves thirty-three tools and lists them without a key', () => {
+  it('states what the pool serves a chat connector and an API key, and lists them without a key', () => {
     render(<DocsPage />);
     const setup = document.getElementById('mcp-setup')!.parentElement!;
-    expect(setup.textContent).toContain('Thirty-three tools');
+    expect(setup.textContent).toContain('the endpoint offers 10 tools');
+    expect(setup.textContent).toContain('With an API key it offers 33 tools');
     expect(setup.textContent).toContain('without a key');
     expect(setup.textContent).toContain('http://127.0.0.1:47321/mcp');
   });
@@ -114,7 +116,7 @@ describe('DocsPage', () => {
     for (const pre of prompts) expect(pre.querySelector('code')?.getAttribute('data-language')).toBe('plain');
     expect(prompts[0].textContent).toContain('instead of Chrome');
     expect(prompts[2].textContent).toContain('hand the tab back');
-    expect(section.textContent).toContain('Expected: all 33 tools listed without signing in');
+    expect(section.textContent).toContain('Expected: all 10 tools listed without signing in');
   });
 
   it("leads with the one line each existing stack changes, without taking the quickstart's place", () => {

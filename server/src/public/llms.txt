@@ -28,7 +28,7 @@ If tools are missing, open Oya and check Connect, then start a new agent session
 For servers, containers, CI or teams (HIPAA mode + BAA on Oya Cloud and enterprise):
 
 - Claude Code cloud MCP: `claude mcp add --transport http oya https://oyabrowser.com/mcp/pool --header "Authorization: Bearer $OYA_API_KEY"`
-- `claude.ai` / Claude Desktop / OAuth clients: add custom connector `https://oyabrowser.com/mcp/pool` (`initialize` and `tools/list` answer without a key).
+- `claude.ai` / Claude Desktop / ChatGPT / OAuth clients: add custom connector `https://oyabrowser.com/mcp/pool` (`initialize` and `tools/list` answer without a key).
 - Agent skill (`SKILL.md`): `npx skills add OyadotAI/oya-browser`
 - Claude Code plugin (cloud MCP + skill, signs in with your Oya account): `claude plugin marketplace add OyadotAI/oya-browser` then `claude plugin install oya-browser@oya`
 - TypeScript SDK: `npm install @oya-ai/browser` (Node 22.3+; supports `Oya.signup({ email })` and `oya.desktop.connect()` for optional desktop pairing)
@@ -39,10 +39,12 @@ For servers, containers, CI or teams (HIPAA mode + BAA on Oya Cloud and enterpri
 
 ### Pool MCP Endpoint
 
+Over OAuth (claude.ai, ChatGPT) it serves 10 tools on a self-starting browser: navigate (URL/back/forward), click, type, press_key, scroll, open_tab (URL/tab id), analyze_page, screenshot, list_tabs, wait_for.
+
 `POST https://oyabrowser.com/mcp/pool` (`Authorization: Bearer $OYA_API_KEY`) serves 33 model-visible tools:
 analyze_page, navigate, click, type, screenshot, press_key, handle_dialog, scroll, wait, click_coordinates, mouse_move, double_click, keyboard_type, drag, select_option, run_script, wait_for, find, hover, go_back, go_forward, reload, solve_captcha, sign_in, complete_mfa, list_saved_logins, list_playbooks, run_playbook, run_task, show_browser, start_browser, stop_browser, pool_status.
 
-After browsing, call show_browser once with the final browser ID. The pool and /mcp/{BROWSER_ID} use cloud browsers only. Desktop MCP is local at http://127.0.0.1:47321/mcp. Tab tools, read_elements, read_console and read_network are per-browser tools. See https://oyabrowser.com/docs/mcp-tools
+There, after browsing call show_browser once with the final browser ID. The pool and /mcp/{BROWSER_ID} use cloud browsers only. Desktop MCP is local at http://127.0.0.1:47321/mcp. Other tab tools, read_elements, read_console and read_network are per-browser tools. See https://oyabrowser.com/docs/mcp-tools
 
 Cloud calls require an Oya API key or supported OAuth sign-in. Tool discovery is public. Claim a signup key before starting cloud browsers. In SDK code, stop cloud browsers in finally.
 

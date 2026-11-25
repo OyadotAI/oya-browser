@@ -97,6 +97,16 @@ describe('OAuth router', () => {
     );
   });
 
+  it('advertises only the grants it honours: no refresh_token, which the token endpoint refuses', async () => {
+    process.env.OYA_CONSOLE_URL = 'https://oya.example';
+    await withServer(async (base) => {
+      const meta = await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json();
+      assert.deepEqual(meta.grant_types_supported, ['authorization_code']);
+      assert.equal(meta.token_endpoint, 'https://oya.example/token');
+      assert.equal(meta.registration_endpoint, 'https://oya.example/register');
+    });
+  });
+
   it('never redirects a malformed /authorize to the client: that would make this origin a redirector', async () => {
     process.env.OYA_CONSOLE_URL = 'https://oya.example';
     await withServer(async (base) => {

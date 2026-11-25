@@ -6,13 +6,19 @@
  */
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import {
+  createOAuthMetadata,
+  getOAuthProtectedResourceMetadataUrl,
+  mcpAuthRouter,
+} from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { metadataHandler } from '@modelcontextprotocol/sdk/server/auth/handlers/metadata.js';
 import { clientAddress } from '../../modules/auth/service.ts';
 import { consoleUrl } from '../../modules/slack/service.ts';
 import { Status } from '../../platform/http-status.ts';
 import {
   AUTHORIZE_REQUIRED,
   CONNECT_PAGE,
+  GRANT_TYPES,
   REGISTRATIONS_PER_HOUR,
   REGISTRATION_WINDOW_MS,
   RESOURCE_NAME,
@@ -95,12 +101,22 @@ export function oauthRouter() {
   }
 }
 
+/**
+ * The authorization server's metadata, as the SDK builds it but naming only the
+ * grants this server honours. The SDK always lists refresh_token, and a client
+ * that believes it tries a refresh that is refused instead of keeping its token.
+ */
+const serverMetadata = (issuerUrl: URL) =>
+  metadataHandler({ ...createOAuthMetadata({ provider, issuerUrl }), grant_types_supported: GRANT_TYPES });
+
 /** The SDK's router for this issuer; throws when the issuer is not HTTPS or localhost. */
 function mount(issuerUrl: URL) {
   const resourceServerUrl = new URL(RESOURCE_PATH, issuerUrl);
   const sdk = mcpAuthRouter({ provider, issuerUrl, resourceServerUrl, resourceName: RESOURCE_NAME, ...LIMITS });
   metadataUrl = getOAuthProtectedResourceMetadataUrl(resourceServerUrl);
-  return Router().use('/register', registrations).get('/authorize', wellFormedAuthorize).use(sdk).use(badJson);
+  // Before the SDK's own, so this answer is the one a client reads.
+  const metadata = Router().use('/.well-known/oauth-authorization-server', serverMetadata(issuerUrl));
+  return metadata.use('/register', registrations).get('/authorize', wellFormedAuthorize).use(sdk).use(badJson);
 }
 
 /** The WWW-Authenticate value a 401 from the pool carries, or '' when OAuth is off. */

@@ -21,20 +21,12 @@ const primary =
 const secondary =
   'flex-1 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-text hover:bg-text/5 disabled:cursor-not-allowed disabled:opacity-60';
 
-/** The project picker and the two answers. */
-function Answer({ state, project, setProject, allow, deny }: Connect) {
-  const busy = state.status === 'working';
-  if (!state.projects?.length)
-    return (
-      <>
-        <p className="mb-5 text-sm text-text-muted">
-          You have no project you can connect: that takes an operator or administrator.
-        </p>
-        <button type="button" className={secondary} disabled={busy} onClick={deny}>
-          Cancel
-        </button>
-      </>
-    );
+/** The app's name, or a plain stand-in when the request did not carry one. */
+const appName = (client?: string) => client || 'the app';
+
+/** The project dropdown, shown only when there is a choice to make; preselected to the last one connected. */
+function ProjectPicker({ state, project, setProject }: Connect) {
+  if (!state.projects?.[1]) return null;
   return (
     <>
       <label htmlFor="connect-project" className="mb-1.5 block text-[13px] font-medium text-text">
@@ -46,12 +38,29 @@ function Answer({ state, project, setProject, allow, deny }: Connect) {
         value={project}
         onChange={(e) => setProject(e.target.value)}
       >
-        {state.projects.map((p) => (
+        {state.projects?.map((p) => (
           <option key={p.id} value={p.id}>
             {p.name}
           </option>
         ))}
       </select>
+    </>
+  );
+}
+
+/** The project picker when needed, and the two answers. */
+function Answer(connect: Connect) {
+  const { state, project, allow, deny } = connect;
+  const busy = state.status === 'working';
+  if (!state.projects?.length)
+    return (
+      <button type="button" className={secondary} disabled={busy} onClick={deny}>
+        Back to {appName(state.client)}
+      </button>
+    );
+  return (
+    <>
+      <ProjectPicker {...connect} />
       <div className="flex gap-3">
         <button type="button" className={secondary} disabled={busy} onClick={deny}>
           Cancel
@@ -64,15 +73,42 @@ function Answer({ state, project, setProject, allow, deny }: Connect) {
   );
 }
 
+/** The heading and line while the request waits for an answer: one project is named, several are chosen from. */
+function asking({ client, redirectHost, projects }: Connect['state']): [string, string] {
+  const app = appName(client);
+  if (!projects?.length)
+    return [
+      'No project to connect',
+      `Connecting needs an operator or administrator on a project. Ask one to add you, then start again from ${app}.`,
+    ];
+  const where = projects.length === 1 ? projects[0].name : 'the project you choose';
+  return [
+    `Allow ${app} to use Oya Browser?`,
+    `${app} can open and drive browsers in ${where}. You return to ${redirectHost}.`,
+  ];
+}
+
 /** The heading and line for each state. */
-function content({ status, client, redirectHost, error }: Connect['state']): [string, string] {
+function content(state: Connect['state']): [string, string] {
+  const { status, client, error } = state;
   if (status === 'signed-out') return ['Connect an app to Oya', 'Sign in or create an account to continue.'];
   if (status === 'missing') return ['No request in this link', 'Start connecting again from the app.'];
-  if (status === 'failed') return ['Could not connect', error || 'Something went wrong'];
-  return [
-    `Allow ${client} to use Oya?`,
-    `${client} will be able to start and drive browsers in the project you choose. You return to ${redirectHost}.`,
-  ];
+  if (status === 'expired') return ['This request has expired', `Start connecting again from ${appName(client)}.`];
+  if (status === 'failed')
+    return [
+      'Could not connect',
+      `${(error || 'Something went wrong').replace(/\.$/, '')}. Try again, or start again from ${appName(client)}.`,
+    ];
+  return asking(state);
+}
+
+/** A failed answer can be tried again from the same link. */
+function Retry() {
+  return (
+    <button type="button" className={primary} onClick={() => window.location.reload()}>
+      Try again
+    </button>
+  );
 }
 
 /** The way on: sign in when signed out, else back to the dashboard. */
@@ -102,13 +138,17 @@ export default function ConnectPage() {
   const { status } = connect.state;
   if (status === 'loading') return <AuthLoading />;
   const [title, body] = content(connect.state);
+  const answering = status === 'ready' || status === 'working';
+  // While the person is answering, Allow is the only way on: the dashboard link would be a second.
+  const footer = answering ? null : <Footer signedOut={status === 'signed-out'} />;
   return (
-    <AuthShell glow="accent" footer={<Footer signedOut={status === 'signed-out'} />}>
+    <AuthShell glow="accent" footer={footer}>
       <h1 className="mb-2 font-display text-2xl font-bold text-text">{title}</h1>
       <p className="mb-6 text-sm text-text-muted" role={status === 'failed' ? 'alert' : undefined}>
         {body}
       </p>
-      {(status === 'ready' || status === 'working') && <Answer {...connect} />}
+      {answering && <Answer {...connect} />}
+      {status === 'failed' && <Retry />}
     </AuthShell>
   );
 }

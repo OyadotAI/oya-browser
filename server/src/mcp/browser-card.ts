@@ -76,16 +76,24 @@ async function watchBrowser(self: Self, id: string) {
   }
 }
 
-/** Registers presentation on the pool only, where the host has the authenticated session context. */
-export function registerBrowserCard(server: McpServer, apiKey: string, self: Self = {}) {
+/**
+ * Registers presentation on the pool only, where the host has the authenticated session context.
+ * A chat connector leaves show_browser out (`withShow` false): its card opens beside open_tab instead,
+ * so the model has no step to remember after each turn.
+ */
+export function registerBrowserCard(server: McpServer, apiKey: string, self: Self = {}, withShow = true) {
   registerPage(server, 'browser-card', CARD_URI, CARD_HTML);
   registerPage(server, 'screenshot', SCREENSHOT_URI, SCREENSHOT_HTML);
-  const schema = BROWSER_ID;
-  const show = toolConfig('show_browser', 'Show this browser once at the end of each browsing turn.', schema);
+  if (withShow) registerShow(server, apiKey);
+  registerCardActions(server, apiKey, self, BROWSER_ID);
+}
+
+/** show_browser: the tool an API-key client's model calls to put the card in the chat. */
+function registerShow(server: McpServer, apiKey: string) {
+  const show = toolConfig('show_browser', 'Show this browser once at the end of each browsing turn.', BROWSER_ID);
   server.registerTool('show_browser', { ...show, _meta: CARD_META }, async ({ browser_id }) =>
     showBrowser(apiKey, browser_id),
   );
-  registerCardActions(server, apiKey, self, schema);
 }
 
 /** These tools serve the component's refresh loop and its explicit Watch live action. */
